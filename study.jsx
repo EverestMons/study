@@ -77,31 +77,45 @@ class StudyErrorBoundary extends Component {
 // --- DB Layer ---
 const DB = {
   async get(k) {
-    try {
-      const r = await window.storage.get(k);
-      return r ? JSON.parse(r.value) : null;
-    } catch (e) {
-      console.error("DB get:", k, e);
-      return null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await window.storage.get(k);
+        return r ? JSON.parse(r.value) : null;
+      } catch (e) {
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 500 * (attempt + 1))); continue; }
+        console.error("DB get: all retries failed for", k, e);
+        return null;
+      }
     }
+    return null;
   },
   async set(k, v) {
-    try {
-      await window.storage.set(k, JSON.stringify(v));
-      return true;
-    } catch (e) {
-      console.error("DB set:", k, e);
-      return false;
+    var payload = JSON.stringify(v);
+    if (payload.length > 4000000) console.warn("DB set: large payload", k, (payload.length / 1024 / 1024).toFixed(2) + "MB");
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await window.storage.set(k, payload);
+        return true;
+      } catch (e) {
+        console.warn("DB set attempt " + (attempt + 1) + " failed:", k, e.message || e);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
     }
+    console.error("DB set: all retries failed for", k);
+    return false;
   },
   async del(k) {
-    try {
-      await window.storage.delete(k);
-      return true;
-    } catch (e) {
-      console.error("DB del:", k, e);
-      return false;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await window.storage.delete(k);
+        return true;
+      } catch (e) {
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 500 * (attempt + 1))); continue; }
+        console.error("DB del: all retries failed for", k, e);
+        return false;
+      }
     }
+    return false;
   },
 
   async getCourses() { return (await this.get("study-courses")) || []; },
@@ -131,9 +145,6 @@ const DB = {
     return (await this.get("study-profile:" + cid)) || { skills: {}, sessions: 0 };
   },
 
-  async saveDocSummary(cid, did, s) { await this.set("study-sum:" + cid + ":" + did, s); },
-  async getDocSummary(cid, did) { return await this.get("study-sum:" + cid + ":" + did); },
-
   async saveChat(cid, m) { await this.set("study-chat:" + cid, m); },
   async getChat(cid) { return (await this.get("study-chat:" + cid)) || []; },
 
@@ -151,7 +162,6 @@ const DB = {
       }
       // Legacy: also try flat doc ID
       await this.del("study-doc:" + cid + ":" + mat.id);
-      await this.del("study-sum:" + cid + ":" + mat.id);
     }
     await this.del("study-skills:" + cid);
     await this.del("study-reftax:" + cid);
@@ -160,6 +170,11 @@ const DB = {
     await this.del("study-profile:" + cid);
     await this.del("study-chat:" + cid);
     await this.del("study-journal:" + cid);
+    // Clean up practice sets
+    try {
+      var keys = await window.storage.list("study-practice:" + cid + ":");
+      if (keys?.keys) for (var pk of keys.keys) await this.del(pk);
+    } catch (e) { /* practice cleanup non-critical */ }
   }
 };
 
@@ -212,12 +227,21 @@ const parseEpub = async (buf) => {
     const html = await f.async("text");
     const text = stripHtml(html);
     if (text.length < 20) return;
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i)
-      || html.match(/<h1[^>]*>([^<]+)<\/h1>/i)
-      || html.match(/<h2[^>]*>([^<]+)<\/h2>/i);
+    // Try multiple title extraction strategies (allow nested HTML inside tags)
+    var titleRaw = null;
+    var tm;
+    // 1. <title> tag
+    tm = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    if (tm && stripHtml(tm[1]).length > 0 && stripHtml(tm[1]).length < 200) titleRaw = stripHtml(tm[1]);
+    // 2. <h1> tag (may contain spans, links, etc.)
+    if (!titleRaw) { tm = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i); if (tm && stripHtml(tm[1]).length > 0) titleRaw = stripHtml(tm[1]); }
+    // 3. <h2> tag
+    if (!titleRaw) { tm = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i); if (tm && stripHtml(tm[1]).length > 0) titleRaw = stripHtml(tm[1]); }
+    // 4. First line of text content (if short enough to be a title)
+    if (!titleRaw) { var firstLine = text.split("\n")[0]?.trim(); if (firstLine && firstLine.length > 2 && firstLine.length < 120) titleRaw = firstLine; }
     chs.push({
       id: "ch-" + (chs.length + 1),
-      title: titleMatch ? stripHtml(titleMatch[1]) : fallbackTitle,
+      title: titleRaw || fallbackTitle,
       content: text,
       charCount: text.length
     });
@@ -226,7 +250,7 @@ const parseEpub = async (buf) => {
   if (spineIds.length) {
     for (const id of spineIds) {
       const it = manifest[id];
-      if (it?.type?.includes("html")) await proc(opfDir + it.href, "Chapter " + (chs.length + 1));
+      if (it?.type?.includes("html")) await proc(opfDir + it.href, "Section " + (chs.length + 1));
     }
   } else {
     const htmlFiles = Object.keys(zip.files)
@@ -234,7 +258,142 @@ const parseEpub = async (buf) => {
       .sort();
     for (const p of htmlFiles) await proc(p, "Section " + (chs.length + 1));
   }
-  return chs;
+
+  // --- Smart chapter merging ---
+  // Many EPUBs split subchapters into separate HTML files (13.1, 13.2, etc.)
+  // Merge them into logical parent chapters and group front/back matter.
+  if (chs.length <= 1) return chs;
+
+  var FRONT_MATTER = /^(front\s*matter|title\s*page|half\s*title|copyright|dedication|epigraph|table\s*of\s*contents|contents|foreword|preface|acknowledgment|acknowledgement|about\s*the\s*author|cover|halftitle|also\s*by)/i;
+  var BACK_MATTER = /^(index|glossary|bibliography|references|further\s*reading|endnotes|notes|colophon|back\s*cover|afterword)/i;
+  var APPENDIX = /^appendix/i;
+
+  // Detect chapter number from title: "Chapter 13", "13.4 Reactions", "13 Alcohols", "CHAPTER XIII"
+  var getChapterNum = function(title) {
+    if (!title) return null;
+    var t = title.trim();
+    // "Chapter 13" or "CHAPTER 13" or "Chapter XIII"
+    var m1 = t.match(/^chapter\s+(\d+)/i);
+    if (m1) return parseInt(m1[1]);
+    // "13.4 Something" or "13.4.1 Something" -- extract parent number
+    var m2 = t.match(/^(\d+)\.\d+/);
+    if (m2) return parseInt(m2[1]);
+    // "13 Something" (number followed by space and text, not a date or year)
+    var m3 = t.match(/^(\d{1,3})\s+[A-Z]/);
+    if (m3 && parseInt(m3[1]) < 200) return parseInt(m3[1]);
+    // "Part 3" stays separate (don't merge across parts)
+    return null;
+  };
+
+  var merged = [];
+  var frontMatter = [];
+  var backMatter = [];
+  var currentGroup = null; // { num, title, sections: [] }
+
+  var flushGroup = function() {
+    if (!currentGroup) return;
+    var combined = currentGroup.sections.map(function(s) { return s.content; }).join("\n\n");
+    var label = currentGroup.sections[0].title || "Chapter " + currentGroup.num;
+    // If the first title is a subchapter (e.g. "6.1 Something"), synthesize a parent label
+    if (currentGroup.sections.length > 1 && /^\d+\.\d+/.test(label)) {
+      // Look for a section whose title is just "Chapter N" or "N Title"
+      var chapterHeading = currentGroup.sections.find(function(s) {
+        return /^chapter\s+\d+/i.test(s.title || "") || /^\d+\s+[A-Z]/.test(s.title || "");
+      });
+      if (chapterHeading) {
+        label = chapterHeading.title;
+      } else {
+        label = "Chapter " + currentGroup.num + " (" + currentGroup.sections.length + " sections)";
+      }
+    }
+    merged.push({
+      id: "ch-" + (merged.length + 1),
+      title: label,
+      content: combined,
+      charCount: combined.length,
+      mergedFrom: currentGroup.sections.length
+    });
+    currentGroup = null;
+  };
+
+  for (var ci = 0; ci < chs.length; ci++) {
+    var sec = chs[ci];
+    var title = sec.title || "";
+
+    // Front matter detection
+    if (FRONT_MATTER.test(title)) {
+      frontMatter.push(sec);
+      continue;
+    }
+
+    // Back matter detection (but not appendices -- those stay separate)
+    if (BACK_MATTER.test(title)) {
+      backMatter.push(sec);
+      continue;
+    }
+
+    // Try to detect chapter number
+    var num = getChapterNum(title);
+
+    if (num !== null) {
+      // Same parent chapter as current group -- merge
+      if (currentGroup && currentGroup.num === num) {
+        currentGroup.sections.push(sec);
+      } else {
+        // Different chapter -- flush previous, start new
+        flushGroup();
+        currentGroup = { num: num, title: title, sections: [sec] };
+      }
+    } else {
+      // No detectable chapter number
+      // If we have an active group and this looks like a continuation (no number, short gap), merge it
+      if (currentGroup && !APPENDIX.test(title)) {
+        currentGroup.sections.push(sec);
+      } else {
+        // Standalone section (appendix, unnumbered chapter, etc.)
+        flushGroup();
+        merged.push({
+          id: "ch-" + (merged.length + 1),
+          title: title,
+          content: sec.content,
+          charCount: sec.charCount,
+          mergedFrom: 1
+        });
+      }
+    }
+  }
+  flushGroup();
+
+  // Prepend front matter as single chunk if any
+  if (frontMatter.length > 0) {
+    var fmContent = frontMatter.map(function(s) { return s.content; }).join("\n\n");
+    merged.unshift({
+      id: "ch-0-fm",
+      title: "Front Matter",
+      content: fmContent,
+      charCount: fmContent.length,
+      mergedFrom: frontMatter.length
+    });
+  }
+
+  // Append back matter as single chunk if any
+  if (backMatter.length > 0) {
+    var bmContent = backMatter.map(function(s) { return s.content; }).join("\n\n");
+    merged.push({
+      id: "ch-" + (merged.length + 1) + "-bm",
+      title: "Back Matter",
+      content: bmContent,
+      charCount: bmContent.length,
+      mergedFrom: backMatter.length
+    });
+  }
+
+  // Re-number IDs sequentially
+  for (var ri = 0; ri < merged.length; ri++) {
+    merged[ri].id = "ch-" + (ri + 1);
+  }
+
+  return merged;
 };
 
 // --- File Reader ---
@@ -485,6 +644,64 @@ const callClaude = async (system, messages, maxTokens) => {
   }
 };
 
+// Streaming version for chat -- calls onChunk with partial text as tokens arrive
+const callClaudeStream = async (system, messages, onChunk, maxTokens) => {
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: maxTokens || 8192,
+        system,
+        messages,
+        stream: true
+      }),
+    });
+    if (!r.ok) {
+      var errBody = await r.text();
+      throw new Error("API " + r.status + ": " + errBody.substring(0, 200));
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let full = "";
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Parse SSE events from buffer
+      var lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+      for (var line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        var data = line.substring(6).trim();
+        if (data === "[DONE]") continue;
+        try {
+          var evt = JSON.parse(data);
+          if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
+            full += evt.delta.text;
+            onChunk(full);
+          }
+          if (evt.type === "error") {
+            throw new Error(evt.error?.message || "Stream error");
+          }
+        } catch (parseErr) {
+          // Skip non-JSON lines (event type lines, etc.)
+          if (data !== "[DONE]" && !data.startsWith("{")) continue;
+        }
+      }
+    }
+    return full || "No response.";
+  } catch (e) {
+    console.error("Stream API:", e);
+    return "Error: " + e.message;
+  }
+};
+
 // --- JSON Extractor ---
 const extractJSON = (text) => {
   try { return JSON.parse(text); } catch {}
@@ -535,7 +752,6 @@ const verifyDocument = async (courseId, mat) => {
   const result = await callClaude(verifyPrompt, [{ role: "user", content: "Verify this document extraction." }]);
   const parsed = extractJSON(result);
   const verification = parsed || { status: "verified", summary: result.substring(0, 300), keyItems: [], issues: [], questions: [] };
-  await DB.saveDocSummary(courseId, mat.id, verification);
   return verification;
 };
 
@@ -584,25 +800,27 @@ const storeAsChunks = async (courseId, file, docIdPrefix) => {
       var ch = file.chapters[i];
       var chunkId = docIdPrefix + "-ch-" + i;
       var content = ch.content || "";
-      await DB.saveDoc(courseId, chunkId, { content: content });
+      var saved = await DB.saveDoc(courseId, chunkId, { content: content });
       mat.chunks.push({
         id: chunkId,
         label: ch.title || "Chapter " + (i + 1),
         charCount: content.length,
-        status: "pending"
+        status: saved ? "pending" : "failed"
       });
+      if (!saved) console.error("storeAsChunks: failed to save chunk", chunkId);
     }
     mat.totalChars = file.totalChars || mat.chunks.reduce((s, c) => s + c.charCount, 0);
   } else if (file.content) {
     // Non-textbook: always one chunk per file
     var chunkId = docIdPrefix + "-c0";
-    await DB.saveDoc(courseId, chunkId, { content: file.content });
+    var saved = await DB.saveDoc(courseId, chunkId, { content: file.content });
     mat.chunks.push({
       id: chunkId,
       label: file.name,
       charCount: file.content.length,
-      status: "pending"
+      status: saved ? "pending" : "failed"
     });
+    if (!saved) console.error("storeAsChunks: failed to save chunk", chunkId);
     mat.charCount = file.content.length;
   }
   return mat;
@@ -722,11 +940,13 @@ const extractSkillTree = async (courseId, materialsMeta, onStatus, retryOnly) =>
   }
 
   if (!materialBlocks.length) {
+    console.error("extractSkillTree: 0 material blocks. Materials:", materialsMeta.map(m => ({ id: m.id, name: m.name, chunks: (m.chunks || []).map(c => ({ id: c.id, status: c.status, chars: c.charCount })) })));
     if (retryOnly) { onStatus("No failed chunks to retry."); return await DB.getSkills(courseId) || []; }
-    onStatus("No parseable content found.");
+    onStatus("No content found â€” chunk storage may have failed. Try deleting this course and re-uploading.");
     await DB.saveSkills(courseId, []);
     return [];
   }
+
 
   onStatus((retryOnly ? "Retrying " : "Processing ") + materialBlocks.length + " chunk" + (materialBlocks.length !== 1 ? "s" : "") + "...");
 
@@ -1449,6 +1669,223 @@ const applySkillUpdates = async (courseId, updates) => {
   return profile;
 };
 
+// =================================================================
+// PRACTICE MODE - Problem set engine
+// =================================================================
+
+const TIERS = [
+  null, // index 0 unused
+  { name: "Predict", desc: "What does this output/evaluate to?", basePoints: 3, instruction: "Show a code snippet or expression. Ask what it outputs or evaluates to. The student answers with the expected output only. Do NOT include starter code." },
+  { name: "Fill", desc: "Complete the missing piece", basePoints: 5, instruction: "Provide code with a clearly marked blank (use ___ as placeholder). The student fills in the missing part to make the code work correctly. Include the template as starterCode." },
+  { name: "Write", desc: "Write a function/solution from scratch", basePoints: 8, instruction: "Describe what a function or solution should do. The student writes it from scratch. Do NOT include starter code." },
+  { name: "Debug", desc: "Find and fix the error", basePoints: 10, instruction: "Provide code with exactly one bug. The student must identify and fix it. Include the buggy code as starterCode." },
+  { name: "Combine", desc: "Use multiple concepts together", basePoints: 13, instruction: "Create a problem that requires this skill PLUS a prerequisite or related skill. Describe the task. May or may not include starter code." },
+  { name: "Apply", desc: "Mini-program / complex problem", basePoints: 16, instruction: "Create a multi-step problem or mini-program with a real-world-ish scenario. The student builds a small but complete solution." },
+];
+
+const ATTEMPT_MULTIPLIERS = [0, 1.0, 0.6, 0.35, 0.2]; // index = attempt number, 4+ = 0.2
+const attemptMultiplier = (n) => n <= 0 ? 1.0 : n < ATTEMPT_MULTIPLIERS.length ? ATTEMPT_MULTIPLIERS[n] : 0.2;
+const attemptRating = (n) => n <= 1 ? "strong" : n === 2 ? "developing" : "struggling";
+
+const strengthToTier = (strength) => {
+  if (strength >= 0.80) return 6;
+  if (strength >= 0.65) return 5;
+  if (strength >= 0.50) return 4;
+  if (strength >= 0.30) return 3;
+  if (strength >= 0.15) return 2;
+  return 1;
+};
+
+const detectLanguage = (courseName, skillName, skillDesc) => {
+  var combined = " " + (courseName + " " + skillName + " " + (skillDesc || "")).toLowerCase() + " ";
+  // Word-boundary match helper: checks pattern appears as whole word (surrounded by non-alpha)
+  var wb = (pat) => { var re = new RegExp("(?<![a-z])" + pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z])"); return re.test(combined); };
+  var langs = [
+    { id: "java", match: () => wb("java") && !wb("javascript") },
+    { id: "python", match: () => wb("python") || wb("pip") || wb("pytest") || wb("django") || wb("flask") },
+    { id: "javascript", match: () => wb("javascript") || wb("typescript") || (wb("react") && !combined.includes("reaction")) || wb("node.js") || wb("nodejs") },
+    { id: "c++", match: () => combined.includes("c++") || wb("cpp") },
+    { id: "c#", match: () => combined.includes("c#") || wb("csharp") || (wb(".net") && !combined.includes("network")) },
+    { id: "c", match: () => wb("c programming") || wb("ansi c") || wb("gcc") || (/ c (?:language|program|code|compiler)/.test(combined)) },
+    { id: "rust", match: () => wb("rustc") || wb("cargo") || wb("rust programming") || wb("rust language") || (wb("rust") && (wb("fn") || wb("struct") || wb("impl") || wb("crate"))) },
+    { id: "go", match: () => wb("golang") || wb("go programming") || wb("go language") },
+    { id: "sql", match: () => wb("sql") || wb("mysql") || wb("postgres") || wb("sqlite") },
+    { id: "r", match: () => wb("rstudio") || wb("tidyverse") || wb("ggplot") || wb("r programming") || wb("r language") },
+    { id: "matlab", match: () => wb("matlab") || wb("simulink") },
+    { id: "swift", match: () => wb("swift") || wb("swiftui") || wb("xcode") },
+    { id: "kotlin", match: () => wb("kotlin") },
+    { id: "ruby", match: () => wb("ruby") || wb("rails") },
+  ];
+  for (var l of langs) {
+    if (l.match()) return l.id;
+  }
+  return null;
+};
+
+// DB helpers for practice sets
+DB.savePractice = async function(cid, skillId, data) { await this.set("study-practice:" + cid + ":" + skillId, data); };
+DB.getPractice = async function(cid, skillId) { return await this.get("study-practice:" + cid + ":" + skillId); };
+
+const createPracticeSet = (courseId, skill, courseName) => {
+  var strength = skill.strength || 0;
+  return {
+    id: "prac-" + Date.now(),
+    skillId: skill.id,
+    courseId: courseId,
+    detectedLanguage: detectLanguage(courseName, skill.name, skill.description),
+    currentTier: strengthToTier(strength),
+    tiers: {},
+    problemSignatures: [],
+    startedAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+  };
+};
+
+const generateProblems = async (practiceSet, skill, courseName, materialCtx) => {
+  var tier = practiceSet.currentTier;
+  var tierInfo = TIERS[tier];
+  var lang = practiceSet.detectedLanguage;
+  var sigList = practiceSet.problemSignatures.length > 0
+    ? practiceSet.problemSignatures.join("\n")
+    : "None yet";
+
+  var prompt = "Generate 5 practice problems for the skill: " + skill.name + "\n" +
+    "Description: " + (skill.description || "N/A") + "\n" +
+    "Course: " + courseName + "\n" +
+    "Language: " + (lang || "use pseudocode or general notation") + "\n" +
+    "Tier " + tier + " (" + tierInfo.name + "): " + tierInfo.desc + "\n\n" +
+    "TIER INSTRUCTIONS:\n" + tierInfo.instruction + "\n\n" +
+    (skill.prerequisites?.length ? "This skill has prerequisites: " + skill.prerequisites.join(", ") + ". For Tier 5 (Combine), reference these.\n\n" : "") +
+    (materialCtx ? "SOURCE MATERIAL FOR REFERENCE:\n" + materialCtx.substring(0, 8000) + "\n\n" : "") +
+    "ALREADY USED PROBLEMS (generate COMPLETELY DIFFERENT scenarios, variable names, and structures):\n" + sigList + "\n\n" +
+    "Return ONLY a JSON array of exactly 5 problems:\n" +
+    "[{\n" +
+    "  \"id\": \"p1\",\n" +
+    "  \"prompt\": \"the problem statement shown to the student\",\n" +
+    "  \"starterCode\": \"code template if applicable, or null\",\n" +
+    "  \"expectedApproach\": \"what a correct answer looks like â€” for evaluation only, never shown to student\",\n" +
+    "  \"signature\": \"one-line unique summary of this problem for dedup\"\n" +
+    "}]\n\n" +
+    "Rules:\n" +
+    "- Each problem must be distinct from the others and from ALREADY USED.\n" +
+    "- Problems should be focused solely on " + skill.name + ".\n" +
+    "- Difficulty should be appropriate for Tier " + tier + " (" + tierInfo.name + ").\n" +
+    "- Use " + (lang || "pseudocode") + " for all code snippets.\n" +
+    "- For starterCode: use \\n for newlines within the string.";
+
+  var result = await callClaude(prompt, [{ role: "user", content: "Generate the practice problems." }], 8192);
+  var parsed = extractJSON(result);
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error("Failed to parse problem generation response");
+  }
+
+  // Normalize and build attempt
+  var problems = parsed.slice(0, 5).map((p, i) => ({
+    id: p.id || ("p" + (i + 1)),
+    prompt: p.prompt || "Problem " + (i + 1),
+    starterCode: p.starterCode || null,
+    expectedApproach: p.expectedApproach || "",
+    studentAnswer: null,
+    evaluation: null,
+    passed: null,
+  }));
+
+  // Store signatures
+  var newSigs = parsed.slice(0, 5).map(p => p.signature || p.prompt.substring(0, 80)).filter(Boolean);
+  practiceSet.problemSignatures.push(...newSigs);
+
+  // Determine attempt number for this tier
+  var tierData = practiceSet.tiers[tier] || { attempts: [], passed: false, pointsAwarded: 0 };
+  var attemptNum = tierData.attempts.length + 1;
+
+  tierData.attempts.push({
+    problems: problems,
+    passCount: 0,
+    attemptNumber: attemptNum,
+    completed: false,
+  });
+  practiceSet.tiers[tier] = tierData;
+  practiceSet.lastActiveAt = new Date().toISOString();
+
+  return practiceSet;
+};
+
+const evaluateAnswer = async (skill, problem, studentAnswer, tier) => {
+  var prompt = "Evaluate this student's answer.\n\n" +
+    "Skill: " + skill.name + "\n" +
+    "Problem: " + problem.prompt + "\n" +
+    (problem.starterCode ? "Starter code:\n" + problem.starterCode + "\n\n" : "") +
+    "Expected approach: " + problem.expectedApproach + "\n\n" +
+    "Student's answer:\n" + studentAnswer + "\n\n" +
+    "Evaluate on conceptual correctness and proper application of " + skill.name + ".\n" +
+    "For code: minor syntax issues (missing semicolon, slight formatting) are OK if the logic is sound.\n" +
+    (tier === 1 ? "For Tier 1 (predict): answer must match expected output exactly or be semantically equivalent.\n" : "") +
+    (tier === 2 ? "For Tier 2 (fill): the filled portion must make the code work correctly.\n" : "") +
+    "\nReturn ONLY JSON:\n{\"passed\": true/false, \"feedback\": \"brief explanation, 2-3 sentences max\"}";
+
+  var result = await callClaude(prompt, [{ role: "user", content: "Evaluate the answer." }], 1024);
+  var parsed = extractJSON(result);
+
+  if (!parsed || typeof parsed.passed !== "boolean") {
+    return { passed: false, feedback: "Could not evaluate response. Please try again." };
+  }
+  return parsed;
+};
+
+const completeTierAttempt = (practiceSet) => {
+  var tier = practiceSet.currentTier;
+  var tierData = practiceSet.tiers[tier];
+  if (!tierData || !tierData.attempts.length) return { advanced: false, points: 0 };
+
+  var currentAttempt = tierData.attempts[tierData.attempts.length - 1];
+  var passCount = currentAttempt.problems.filter(p => p.passed === true).length;
+  currentAttempt.passCount = passCount;
+  currentAttempt.completed = true;
+
+  if (passCount >= 4) {
+    // Passed this tier
+    tierData.passed = true;
+    var attemptNum = currentAttempt.attemptNumber;
+    var mult = attemptMultiplier(attemptNum);
+    var points = Math.round(TIERS[tier].basePoints * mult);
+    tierData.pointsAwarded = (tierData.pointsAwarded || 0) + points;
+
+    // Advance to next tier if not at max
+    var advanced = false;
+    if (tier < 6) {
+      practiceSet.currentTier = tier + 1;
+      advanced = true;
+    }
+
+    return { advanced, points, passCount, attemptNum, rating: attemptRating(attemptNum), tierName: TIERS[tier].name };
+  }
+
+  // Failed â€” will need new problems (same tier)
+  return { advanced: false, points: 0, passCount, attemptNum: currentAttempt.attemptNumber, retry: true, tierName: TIERS[tier].name };
+};
+
+// Load relevant material context for a skill's practice problems
+const loadPracticeMaterialCtx = async (courseId, materials, skill) => {
+  var neededSources = new Set();
+  if (skill.sources) skill.sources.forEach(src => neededSources.add(src.toLowerCase()));
+  if (neededSources.size === 0) return "";
+
+  var ctx = "";
+  for (var mat of materials) {
+    var loaded = await getMatContent(courseId, mat);
+    var activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
+    for (var ch of activeChunks) {
+      var tl = ch.label.toLowerCase();
+      if ([...neededSources].some(src => tl.includes(src) || src.includes(tl.substring(0, 15)))) {
+        ctx += "\n--- " + ch.label + " ---\n" + ch.content.substring(0, 6000) + "\n";
+      }
+    }
+    if (ctx.length > 12000) break; // Cap total context
+  }
+  return ctx;
+};
+
 // --- Theme ---
 const T = {
   bg: "#0F1115",
@@ -1576,6 +2013,7 @@ const CSS = [
   "::-webkit-scrollbar-track{background:transparent}",
   "::-webkit-scrollbar-thumb{background:" + T.bd + ";border-radius:3px}",
   "@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}",
+  "@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}",
   "@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}",
   "@keyframes bookSlide1{0%,100%{transform:translateX(0)}30%{transform:translateX(12px)}50%{transform:translateX(12px) translateY(-6px)}70%{transform:translateX(0) translateY(-6px)}85%{transform:translateX(0)}}",
   "@keyframes bookSlide2{0%,100%{transform:translateX(0)}20%{transform:translateY(-8px)}40%{transform:translateX(-10px) translateY(-8px)}60%{transform:translateX(-10px)}80%{transform:translateX(0)}}",
@@ -1609,19 +2047,28 @@ function StudyInner() {
   const [showManage, setShowManage] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [skillViewData, setSkillViewData] = useState(null); // { skills, report, refTax }
-  const [skillUpdates, setSkillUpdates] = useState([]);
   const [pendingConfirm, setPendingConfirm] = useState(null);
+  const [notifs, setNotifs] = useState([]); // [{ id, type, msg, time }]
+  const [showNotifs, setShowNotifs] = useState(false);
+  const [lastSeenNotif, setLastSeenNotif] = useState(0);
   const [sessionMode, setSessionMode] = useState(null);
   const [focusContext, setFocusContext] = useState(null);
   const [pickerData, setPickerData] = useState(null);
   const [chunkPicker, setChunkPicker] = useState(null); // { courseId, materials, selectedChunks: Set }
   const [asgnWork, setAsgnWork] = useState(null); // { questions: [{id, description, unlocked, answer, done}], currentIdx: 0 }
+  const [practiceMode, setPracticeMode] = useState(null); // { set: PracticeSet, skill: {}, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null }
 
   const endRef = useRef(null);
   const taRef = useRef(null);
   const fiRef = useRef(null);
   const sessionStartIdx = useRef(0);
   const sessionSkillLog = useRef([]);
+  const cachedSessionCtx = useRef(null); // { ctx, skills, profile, journal, focus }
+
+  // Notification helper: type = "info" | "warn" | "error" | "skill" | "success"
+  const addNotif = (type, msg) => {
+    setNotifs(p => [{ id: Date.now() + Math.random(), type, msg, time: new Date() }, ...p].slice(0, 50));
+  };
 
   // --- Effects ---
   useEffect(() => {
@@ -1632,7 +2079,7 @@ function StudyInner() {
     return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onRej); };
   }, []);
   useEffect(() => { (async () => { setCourses(await DB.getCourses()); setReady(true); })(); }, []);
-  useEffect(() => { if (ready) DB.saveCourses(courses); }, [courses, ready]);
+  useEffect(() => { if (ready) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } }, [input]);
 
@@ -1704,15 +2151,19 @@ function StudyInner() {
         const f = validFiles[i];
         setStatus("Storing: " + f.name + "...");
         const mat = await storeAsChunks(courseId, f, "doc-" + i + "-" + Date.now());
+        var failedChunks = mat.chunks.filter(c => c.status === "failed").length;
+        if (failedChunks > 0) {
+          addNotif("error", failedChunks + " of " + mat.chunks.length + " chunks failed to save for \"" + f.name + "\". Storage may be unreliable.");
+        }
         mats.push(mat);
-        setStatus("Stored: " + f.name + " (" + mat.chunks.length + " chunk" + (mat.chunks.length !== 1 ? "s" : "") + ")");
+        setStatus("Stored: " + f.name + " (" + mat.chunks.length + " chunk" + (mat.chunks.length !== 1 ? "s" : "") + (failedChunks > 0 ? ", " + failedChunks + " failed" : "") + ")");
       }
 
       const allVerifications = [];
       const allQuestions = [];
       for (const mat of mats) {
         setStatus("Verifying: " + mat.name + "...");
-        setMsgs([{ role: "assistant", content: "Verifying extraction of \"" + mat.name + "\"..." }]);
+        addNotif("info", "Verifying: " + mat.name + "...");
         try {
           const v = await verifyDocument(courseId, mat);
           mat.verification = v.status;
@@ -1725,7 +2176,7 @@ function StudyInner() {
       }
 
       setStatus("Building reference taxonomy...");
-      setMsgs([{ role: "assistant", content: "Identifying the subject area and building a reference skill framework..." }]);
+      addNotif("info", "Building reference skill framework...");
       let refTaxonomy = null;
       try {
         refTaxonomy = await generateReferenceTaxonomy(courseId, cName.trim(), mats, setStatus);
@@ -1734,12 +2185,12 @@ function StudyInner() {
       }
 
       setStatus("Extracting skills from your course...");
-      setMsgs(p => [...p, { role: "assistant", content: refTaxonomy ? "Reference: " + refTaxonomy.taxonomy.length + " canonical skills for " + (refTaxonomy.subject || cName.trim()) + ". Now extracting from your materials..." : "Extracting skills from your materials..." }]);
+      addNotif("info", refTaxonomy ? "Reference: " + refTaxonomy.taxonomy.length + " canonical skills for " + (refTaxonomy.subject || cName.trim()) + ". Extracting..." : "Extracting skills...");
       let skills = [];
 
-      // Check if any textbooks have multiple chapters -- show chunk picker
-      var hasMultiChunk = mats.some(m => m.chunks && m.chunks.length > 1);
-      if (hasMultiChunk) {
+      // Textbooks always show chunk picker (they're the largest files, user should choose chapters)
+      var hasTextbook = mats.some(m => m.classification === "textbook");
+      if (hasTextbook) {
         // Save course first so it persists
         const newCourse = { id: courseId, name: cName.trim(), materials: mats, createdAt: new Date().toISOString() };
         const updated = [...courses.filter(c => c.id !== courseId), newCourse];
@@ -1762,11 +2213,11 @@ function StudyInner() {
         skills = await extractSkillTree(courseId, mats, setStatus);
         if (!Array.isArray(skills)) {
           console.error("Skill extraction returned non-array:", typeof skills, String(skills).substring(0, 300));
-          setMsgs(p => [...p, { role: "assistant", content: "Skill extraction didn't return structured data. Raw response saved. You can try adding materials later to re-trigger extraction." }]);
+          addNotif("error", "Skill extraction didn't return structured data. Try re-triggering extraction.");
         }
       } catch (e) {
         console.error("Skill extraction failed:", e);
-        setMsgs(p => [...p, { role: "assistant", content: "Skill extraction failed: " + e.message }]);
+        addNotif("error", "Skill extraction failed: " + e.message);
       }
 
       // Validation pass
@@ -1777,7 +2228,7 @@ function StudyInner() {
           var vr = validation.report;
           if (vr && vr.status !== "parse_failed" && vr.status !== "error") {
             var fixCount = (vr.prerequisiteFixes?.length || 0) + (vr.descriptionFixes?.length || 0) + (vr.mergedDuplicates?.length || 0);
-            if (fixCount > 0) setMsgs(p => [...p, { role: "assistant", content: "Validation applied " + fixCount + " correction" + (fixCount !== 1 ? "s" : "") + " to the skill tree." }]);
+            if (fixCount > 0) addNotif("success", "Validation applied " + fixCount + " correction" + (fixCount !== 1 ? "s" : "") + " to the skill tree.");
           }
         } catch (e) {
           console.error("Validation failed:", e);
@@ -1822,17 +2273,17 @@ function StudyInner() {
       if (asgnCount > 0) summary += ", " + asgnCount + " assignment" + (asgnCount !== 1 ? "s" : "") + " found";
       if (issueCount > 0) summary += ". " + issueCount + " document" + (issueCount !== 1 ? "s" : "") + " had extraction issues";
       summary += ".";
-      setMsgs([{ role: "assistant", content: summary }]);
+      addNotif("success", summary);
     } catch (err) {
       console.error("Course creation failed:", err);
-      setMsgs([{ role: "assistant", content: "Something went wrong during course setup: " + err.message + "\n\nYour files were saved. Try going back and re-entering the course." }]);
+      addNotif("error", "Course setup failed: " + err.message + ". Your files were saved â€” try re-entering the course.");
     }
     setBooting(false); setStatus("");
   };
 
   // --- Run extraction after chunk selection ---
   const runExtraction = async (selectedChunkIds) => {
-    if (!chunkPicker || !active) return;
+    if (!chunkPicker || !active) { console.error("runExtraction: missing chunkPicker or active", { chunkPicker: !!chunkPicker, active: !!active }); return; }
     setBusy(true); setBooting(true); setChunkPicker(null);
 
     // Mark unselected chunks as "skipped" in material metadata
@@ -1854,17 +2305,17 @@ function StudyInner() {
     var totalSelected = updatedMats.flatMap(m => (m.chunks || []).filter(c => c.status === "pending")).length;
     var totalSkipped = updatedMats.flatMap(m => (m.chunks || []).filter(c => c.status === "skipped")).length;
     setStatus("Extracting skills from " + totalSelected + " chunks...");
-    setMsgs([{ role: "assistant", content: "Analyzing " + totalSelected + " section" + (totalSelected !== 1 ? "s" : "") + (totalSkipped > 0 ? " (" + totalSkipped + " skipped)" : "") + "..." }]);
+    addNotif("info", "Analyzing " + totalSelected + " section" + (totalSelected !== 1 ? "s" : "") + (totalSkipped > 0 ? " (" + totalSkipped + " skipped)" : "") + "...");
 
     let skills = [];
     try {
       skills = await extractSkillTree(active.id, updatedMats, setStatus);
       if (!Array.isArray(skills)) {
-        setMsgs(p => [...p, { role: "assistant", content: "Skill extraction didn't return structured data." }]);
+        addNotif("error", "Skill extraction didn't return structured data.");
       }
     } catch (e) {
       console.error("Skill extraction failed:", e);
-      setMsgs(p => [...p, { role: "assistant", content: "Skill extraction failed: " + e.message }]);
+      addNotif("error", "Skill extraction failed: " + e.message);
     }
 
     // Validation pass
@@ -1875,7 +2326,7 @@ function StudyInner() {
         var vr = validation.report;
         if (vr && vr.status !== "parse_failed" && vr.status !== "error") {
           var fixCount = (vr.prerequisiteFixes?.length || 0) + (vr.descriptionFixes?.length || 0) + (vr.mergedDuplicates?.length || 0);
-          if (fixCount > 0) setMsgs(p => [...p, { role: "assistant", content: "Validation applied " + fixCount + " correction" + (fixCount !== 1 ? "s" : "") + " to the skill tree." }]);
+          if (fixCount > 0) addNotif("success", "Validation applied " + fixCount + " correction" + (fixCount !== 1 ? "s" : "") + " to the skill tree.");
         }
       } catch (e) {
         console.error("Validation failed:", e);
@@ -1899,15 +2350,16 @@ function StudyInner() {
     var failedCount = (refreshedCourse?.materials || []).flatMap(m => (m.chunks || []).filter(c => c.status === "failed")).length;
     var summary = skillCount > 0 ? "Found " + skillCount + " skills." : "No skills extracted.";
     if (failedCount > 0) summary += " " + failedCount + " chunk(s) failed -- you can retry from the mode picker.";
-    setMsgs(p => [...p, { role: "assistant", content: summary }]);
+    addNotif("info", summary);
 
     setBooting(false); setBusy(false); setStatus("");
     setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null);
   };
   const enterStudy = async (course) => {
     setActive(course); setScreen("study");
-    setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null);
+    setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
+    cachedSessionCtx.current = null;
     sessionStartIdx.current = 0;
     // Save previous session to journal before clearing
     try {
@@ -1954,7 +2406,7 @@ function StudyInner() {
           const avgStrength = skillList.length > 0 ? skillList.reduce((s, sk) => s + sk.strength, 0) / skillList.length : 0;
           return { ...a, skillList, avgStrength, weakSkills, questionCount: a.questions?.length || 0 };
         });
-        setPickerData({ mode, items: enriched });
+        setPickerData({ mode, items: enriched, _skills: skills });
       } else if (mode === "skills") {
         if (!Array.isArray(skills) || skills.length === 0) {
           setPickerData({ mode, empty: true, message: "No skills extracted yet. Upload course materials first." });
@@ -1991,6 +2443,9 @@ function StudyInner() {
       const journal = await DB.getJournal(active.id);
       const ctx = await buildFocusedContext(active.id, active.materials, focus, skills, profile);
 
+      // Cache context for reuse in sendMessage
+      cachedSessionCtx.current = { ctx, skills, profile, journal, focus };
+
       var userMsg, modeHint;
       if (focus.type === "recap") {
         userMsg = "Catch me up on where I left off.";
@@ -2012,13 +2467,16 @@ function StudyInner() {
       }
 
       const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
-      const response = await callClaude(bootSystem, [{ role: "user", content: userMsg }]);
+      setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: "" }]);
+      const response = await callClaudeStream(bootSystem, [{ role: "user", content: userMsg }], function(partial) {
+        setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: partial }]);
+      });
       setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: response }]);
       sessionStartIdx.current = 0;
       await DB.saveChat(active.id, [{ role: "user", content: userMsg }, { role: "assistant", content: response }]);
     } catch (err) {
       console.error("Boot failed:", err);
-      setMsgs([{ role: "assistant", content: "Failed to start session: " + err.message }]);
+      addNotif("error", "Failed to start session: " + err.message);
     }
     setBooting(false); setStatus("");
   };
@@ -2028,29 +2486,45 @@ function StudyInner() {
     if (!input.trim() || busy || !active) return;
     const userMsg = input.trim(); setInput("");
     const newMsgs = [...msgs, { role: "user", content: userMsg }];
-    setMsgs(newMsgs); setBusy(true);
+    setMsgs([...newMsgs, { role: "assistant", content: "" }]); setBusy(true);
 
-    const skills = await DB.getSkills(active.id) || "";
-    const profile = await DB.getProfile(active.id);
-    const journal = await DB.getJournal(active.id);
-
-    // Use focused context if we have a focus, otherwise fall back to full context
-    let ctx;
-    if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill")) {
-      ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
+    // Use cached context if available, otherwise rebuild
+    let ctx, skills, profile, journal;
+    if (cachedSessionCtx.current && focusContext) {
+      ctx = cachedSessionCtx.current.ctx;
+      skills = cachedSessionCtx.current.skills;
+      profile = cachedSessionCtx.current.profile;
+      journal = cachedSessionCtx.current.journal;
     } else {
-      const asgn = await DB.getAsgn(active.id) || [];
-      ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs);
+      skills = await DB.getSkills(active.id) || "";
+      profile = await DB.getProfile(active.id);
+      journal = await DB.getJournal(active.id);
+      if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill")) {
+        ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
+      } else {
+        const asgn = await DB.getAsgn(active.id) || [];
+        ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs);
+      }
     }
 
-    const response = await callClaude(buildSystemPrompt(active.name, ctx, journal), newMsgs.slice(-40).map(m => ({ role: m.role, content: m.content })));
+    const sysPrompt = buildSystemPrompt(active.name, ctx, journal);
+    const chatMsgs = newMsgs.slice(-40).map(m => ({ role: m.role, content: m.content }));
+
+    const response = await callClaudeStream(sysPrompt, chatMsgs, function(partial) {
+      setMsgs([...newMsgs, { role: "assistant", content: partial }]);
+    });
 
     const updates = parseSkillUpdates(response);
     if (updates.length) {
       await applySkillUpdates(active.id, updates);
       sessionSkillLog.current.push(...updates);
-      setSkillUpdates(updates);
-      setTimeout(() => setSkillUpdates([]), 4000);
+      for (var u of updates) addNotif("skill", u.skill + ": " + (u.delta > 0 ? "+" : "") + u.delta + " pts (" + u.rating + ")");
+      // Refresh cached context after skill updates (profile changed)
+      if (cachedSessionCtx.current) {
+        var updatedProfile = await DB.getProfile(active.id);
+        var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, skills, updatedProfile);
+        cachedSessionCtx.current = { ...cachedSessionCtx.current, profile: updatedProfile, ctx: updatedCtx };
+      }
     }
 
     // Handle question unlocks
@@ -2097,13 +2571,13 @@ function StudyInner() {
     setCourses(p => p.map(c => c.id === active.id ? updatedCourse : c)); setActive(updatedCourse); setFiles([]);
 
     // Incremental merge: only analyze new materials against existing tree
-    setMsgs(p => [...p, { role: "assistant", content: "Analyzing new materials against existing skills..." }]);
+    addNotif("info", "Analyzing new materials against existing skills...");
     const existingSkills = await DB.getSkills(active.id);
-    const merged = await mergeSkillTree(active.id, existingSkills, newMeta, (s) => setMsgs(p => [...p, { role: "assistant", content: s }]));
+    const merged = await mergeSkillTree(active.id, existingSkills, newMeta, (s) => addNotif("info", s));
 
     // Re-decompose assignments if new ones were added
     if (newMeta.some(m => m.classification === "assignment")) {
-      setMsgs(p => [...p, { role: "assistant", content: "Breaking down new assignments..." }]);
+      addNotif("info", "Breaking down new assignments...");
       await decomposeAssignments(active.id, updatedCourse.materials, merged, () => {});
     }
 
@@ -2112,7 +2586,7 @@ function StudyInner() {
     let report = "Added " + newMeta.length + " file" + (newMeta.length !== 1 ? "s" : "") + ": " + newMeta.map(m => m.name).join(", ") + ".";
     if (newSkillCount > 0) report += " " + newSkillCount + " new skill" + (newSkillCount !== 1 ? "s" : "") + " identified.";
     else report += " New content mapped to existing skills.";
-    setMsgs(p => [...p, { role: "assistant", content: report }]);
+    addNotif("info", report);
     setBusy(false);
     await DB.saveChat(updatedCourse.id, msgs.slice(-100));
   };
@@ -2132,7 +2606,6 @@ function StudyInner() {
       }
       // Legacy fallback
       await DB.del("study-doc:" + active.id + ":" + docId);
-      await DB.del("study-sum:" + active.id + ":" + docId);
       const updatedMats = active.materials.filter(m => m.id !== docId);
       const updatedCourse = { ...active, materials: updatedMats };
       setCourses(p => p.map(c => c.id === active.id ? updatedCourse : c));
@@ -2153,9 +2626,9 @@ function StudyInner() {
           });
           const removedCount = existingSkills.length - pruned.length;
           await DB.saveSkills(active.id, pruned);
-          setMsgs(p => [...p, { role: "assistant", content: "Removed \"" + removedMat.name + "\"." + (removedCount > 0 ? " " + removedCount + " skill" + (removedCount !== 1 ? "s" : "") + " pruned." : " Skills updated.") }]);
+          addNotif("info", "Removed \"" + removedMat.name + "\"." + (removedCount > 0 ? " " + removedCount + " skill" + (removedCount !== 1 ? "s" : "") + " pruned." : " Skills updated."));
         } else {
-          setMsgs(p => [...p, { role: "assistant", content: "Material removed." }]);
+          addNotif("info", "Material removed.");
         }
         // Re-decompose assignments if any remain
         if (updatedMats.some(m => m.classification === "assignment")) {
@@ -2163,10 +2636,10 @@ function StudyInner() {
           await decomposeAssignments(updatedCourse.id, updatedMats, sk, () => {});
         }
       } else {
-        setMsgs(p => [...p, { role: "assistant", content: "All materials removed. Upload new files to continue." }]);
+        addNotif("warn", "All materials removed. Upload new files to continue.");
       }
     } catch (err) {
-      setMsgs(p => [...p, { role: "assistant", content: "Remove failed: " + err.message }]);
+      addNotif("error", "Remove failed: " + err.message);
     }
     setBusy(false);
   };
@@ -2175,7 +2648,7 @@ function StudyInner() {
   const reprocessMat = async (mat) => {
     if (!active || busy) return;
     setBusy(true);
-    setMsgs(p => [...p, { role: "assistant", content: "Reprocessing \"" + mat.name + "\"..." }]);
+    addNotif("info", "Reprocessing \"" + mat.name + "\"...");
     try {
       const v = await verifyDocument(active.id, mat);
       const updatedMats = active.materials.map(m => m.id === mat.id ? { ...m, verification: v.status } : m);
@@ -2184,7 +2657,7 @@ function StudyInner() {
       setActive(updatedCourse);
 
       // Incremental merge for this single document
-      setMsgs(p => [...p, { role: "assistant", content: "Checking for new skills..." }]);
+      addNotif("info", "Checking for new skills...");
       const existingSkills = await DB.getSkills(updatedCourse.id);
       await mergeSkillTree(updatedCourse.id, existingSkills, [mat], () => {});
 
@@ -2196,9 +2669,9 @@ function StudyInner() {
       let report = tag + " Reprocessed \"" + mat.name + "\": " + v.summary;
       if (v.issues?.length) report += "\n\n**Issues found:** " + v.issues.join("; ");
       if (v.questions?.length) report += "\n\n**Questions about this document:**\n" + v.questions.map(q => "- " + q).join("\n");
-      setMsgs(p => [...p, { role: "assistant", content: report }]);
+      addNotif("info", report);
     } catch (err) {
-      setMsgs(p => [...p, { role: "assistant", content: "Reprocess failed: " + err.message + ". Try removing and re-uploading." }]);
+      addNotif("error", "Reprocess failed: " + err.message);
     }
     setBusy(false);
   };
@@ -2463,15 +2936,15 @@ function StudyInner() {
   );
 
   // --- STUDY / CHAT SCREEN ---
+
+
   if (screen === "study" && active) {
     return (
       <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
         <style>{CSS}</style>
-
-        {/* Header */}
         <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button onClick={async () => { await saveSessionToJournal(); setScreen("courses"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; }}
+            <button onClick={async () => { await saveSessionToJournal(); setScreen("courses"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; }}
               style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14 }}>&lt;</button>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600, color: T.tx }}>{active.name}</div>
@@ -2493,6 +2966,15 @@ function StudyInner() {
               setShowSkills(!showSkills); if (!showSkills) { setShowAdd(false); setShowManage(false); }
             }}
               style={{ background: showSkills ? T.acS : T.sf, border: "1px solid " + (showSkills ? T.acB : T.bd), borderRadius: 8, padding: "6px 12px", fontSize: 12, color: showSkills ? T.ac : T.txD, cursor: "pointer" }}>Skills</button>
+            <button onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) setLastSeenNotif(Date.now()); }}
+              style={{ background: showNotifs ? T.acS : T.sf, border: "1px solid " + (showNotifs ? T.acB : T.bd), borderRadius: 8, padding: "6px 12px", fontSize: 12, color: showNotifs ? T.ac : T.txD, cursor: "pointer", position: "relative" }}>
+              {"ðŸ””"}
+              {notifs.filter(n => n.time.getTime() > lastSeenNotif).length > 0 && (
+                <span style={{ position: "absolute", top: -4, right: -4, background: T.rd || "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 8, padding: "1px 5px", minWidth: 16, textAlign: "center" }}>
+                  {notifs.filter(n => n.time.getTime() > lastSeenNotif).length}
+                </span>
+              )}
+            </button>
           </div>
         </div>
 
@@ -2553,19 +3035,30 @@ function StudyInner() {
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        {pending > 0 && (
+                          <button onClick={() => {
+                            if (busy) return;
+                            // Open chunk picker for this course
+                            var allChunkIds = new Set();
+                            for (var m of active.materials) { if (m.chunks) for (var c of m.chunks) { if (c.status !== "extracted") allChunkIds.add(c.id); } }
+                            setChunkPicker({ courseId: active.id, materials: active.materials, selectedChunks: allChunkIds });
+                            setShowManage(false);
+                          }} disabled={busy}
+                            style={{ background: "none", border: "1px solid " + T.ac, borderRadius: 6, padding: "4px 8px", fontSize: 11, color: T.ac, cursor: busy ? "default" : "pointer" }}>Extract</button>
+                        )}
                         {failed > 0 && (
                           <button onClick={async () => {
                             if (busy) return;
                             setBusy(true);
-                            setMsgs(p => [...p, { role: "assistant", content: "Retrying " + failed + " failed chunk(s) from " + mat.name + "..." }]);
+                            addNotif("info", "Retrying " + failed + " failed chunk(s) from " + mat.name + "...");
                             try {
                               var skills = await extractSkillTree(active.id, active.materials, setStatus, true);
                               var refreshed = await DB.getCourses();
                               var updatedCourse = refreshed.find(c => c.id === active.id);
                               if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
-                              setMsgs(p => [...p, { role: "assistant", content: "Retry complete. " + (Array.isArray(skills) ? skills.length + " total skills." : "Check console for details.") }]);
+                              addNotif("success", "Retry complete. " + (Array.isArray(skills) ? skills.length + " total skills." : "Check results."));
                             } catch (e) {
-                              setMsgs(p => [...p, { role: "assistant", content: "Retry failed: " + e.message }]);
+                              addNotif("error", "Retry failed: " + e.message);
                             }
                             setBusy(false); setStatus("");
                           }} disabled={busy}
@@ -2749,12 +3242,12 @@ function StudyInner() {
                                 }
                                 await DB.saveSkills(active.id, allSkills);
                                 setSkillViewData(prev => ({ ...prev, skills: allSkills }));
-                                setMsgs(p => [...p, { role: "assistant", content: (parsed.action === "keep" ? "Reviewed: " : "Fixed: ") + sk.name + " -- " + parsed.explanation }]);
+                                addNotif("info", (parsed.action === "keep" ? "Reviewed: " : "Fixed: ") + sk.name + " -- " + parsed.explanation);
                               } else {
-                                setMsgs(p => [...p, { role: "assistant", content: "Couldn't parse re-examination result for " + sk.name + "." }]);
+                                addNotif("warn", "Couldn't parse re-examination result for " + sk.name + ".");
                               }
                             } catch (e) {
-                              setMsgs(p => [...p, { role: "assistant", content: "Re-examination failed: " + e.message }]);
+                              addNotif("error", "Re-examination failed: " + e.message);
                             }
                             setBusy(false); setStatus("");
                           }} disabled={busy}
@@ -2770,20 +3263,302 @@ function StudyInner() {
           </div>
         )}
 
-        {/* Skill Update Toast */}
-        {skillUpdates.length > 0 && (
-          <div style={{ padding: "8px 20px", background: T.gnS, borderBottom: "1px solid rgba(52,211,153,0.2)", animation: "fadeIn 0.3s", flexShrink: 0 }}>
-            <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {skillUpdates.map((u, i) => <span key={i} style={{ fontSize: 12, color: T.gn, fontWeight: 600 }}>+{u.points} {u.skillId}</span>)}
+        {/* Practice Mode View */}
+        {practiceMode && !practiceMode.generating && practiceMode.set && (() => {
+          var pm = practiceMode;
+          var pset = pm.set;
+          var tier = pset.currentTier;
+          var tierInfo = TIERS[tier];
+          var tierData = pset.tiers[tier];
+          var currentAttempt = tierData?.attempts?.[tierData.attempts.length - 1];
+          var problems = currentAttempt?.problems || [];
+          var curIdx = pm.currentProblemIdx;
+          var problem = problems[curIdx];
+          var passCount = problems.filter(p => p.passed === true).length;
+          var answeredCount = problems.filter(p => p.passed !== null).length;
+
+          return (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+              {/* Practice Header */}
+              <div style={{ padding: "12px 20px", borderBottom: "1px solid " + T.bd, flexShrink: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{pm.skill.name}</div>
+                  <div style={{ fontSize: 12, color: T.ac, fontWeight: 600 }}>Tier {tier}: {tierInfo.name}</div>
+                </div>
+                {/* Tier progress bar */}
+                <div style={{ display: "flex", gap: 3, marginBottom: 8 }}>
+                  {[1,2,3,4,5,6].map(t => (
+                    <div key={t} style={{ flex: 1, height: 4, borderRadius: 2, background: t < tier ? T.gn : t === tier ? T.ac : T.bd }} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.txD }}>
+                  <span>Problem {curIdx + 1} of {problems.length}</span>
+                  <span>Passed: {passCount}/{problems.length} (need 4)</span>
+                </div>
+              </div>
+
+              {/* Tier Complete Screen */}
+              {pm.tierComplete ? (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+                  <div style={{ textAlign: "center", maxWidth: 400 }}>
+                    <div style={{ fontSize: 40, marginBottom: 12 }}>{pm.tierComplete.advanced ? "ðŸŽ¯" : "ðŸ”„"}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.tx, marginBottom: 8 }}>
+                      {pm.tierComplete.advanced ? "Tier " + (tier - 1) + " Complete!" : "Not quite â€” " + pm.tierComplete.passCount + "/5 passed"}
+                    </div>
+                    <div style={{ fontSize: 14, color: T.txD, marginBottom: 20 }}>
+                      {pm.tierComplete.advanced
+                        ? "+" + pm.tierComplete.points + " points (" + pm.tierComplete.rating + "). Moving to Tier " + tier + ": " + tierInfo.name + "."
+                        : "You need 4/5 to advance. New problems will be generated for another attempt."}
+                    </div>
+                    {/* Problem results */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 20, textAlign: "left" }}>
+                      {(pm.tierComplete.problems || []).map((p, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 6, background: T.sf }}>
+                          <span style={{ color: p.passed ? T.gn : p.passed === false ? T.rd : T.txD, fontWeight: 600 }}>{p.passed ? "âœ“" : p.passed === false ? "âœ—" : "â€”"}</span>
+                          <span style={{ fontSize: 12, color: T.tx, flex: 1 }}>{p.prompt.substring(0, 60)}{p.prompt.length > 60 ? "..." : ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <button onClick={async () => {
+                      if (pm.tierComplete.advanced) {
+                        // Generate problems for new tier
+                        setPracticeMode(prev => ({ ...prev, generating: true, tierComplete: null }));
+                        try {
+                          var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
+                          var updated = await generateProblems(pset, pm.skill, active.name, matCtx);
+                          await DB.savePractice(active.id, pm.skill.id, updated);
+                          setPracticeMode({ set: updated, skill: pm.skill, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                        } catch (e) {
+                          addNotif("error", "Failed to generate next tier: " + e.message);
+                          setPracticeMode(prev => ({ ...prev, generating: false }));
+                        }
+                      } else {
+                        // Retry - generate new problems for same tier
+                        setPracticeMode(prev => ({ ...prev, generating: true, tierComplete: null }));
+                        try {
+                          var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
+                          var updated = await generateProblems(pset, pm.skill, active.name, matCtx);
+                          await DB.savePractice(active.id, pm.skill.id, updated);
+                          setPracticeMode({ set: updated, skill: pm.skill, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                        } catch (e) {
+                          addNotif("error", "Failed to generate retry problems: " + e.message);
+                          setPracticeMode(prev => ({ ...prev, generating: false }));
+                        }
+                      }
+                    }}
+                      style={{ padding: "12px 32px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                      {pm.tierComplete.advanced ? "Start Tier " + tier : "Try Again"}
+                    </button>
+                  </div>
+                </div>
+              ) : problem ? (
+                <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+                  <div style={{ maxWidth: 700, margin: "0 auto" }}>
+                    {/* Problem prompt */}
+                    <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.prompt}</div>
+
+                    {/* Code editor */}
+                    <textarea
+                      value={problem.studentAnswer || (problem.starterCode || "")}
+                      onChange={e => {
+                        var val = e.target.value;
+                        setPracticeMode(prev => {
+                          var s = prev.set;
+                          var t = s.currentTier;
+                          var td = { ...s.tiers[t] };
+                          var attempts = [...td.attempts];
+                          var lastA = { ...attempts[attempts.length - 1] };
+                          var probs = [...lastA.problems];
+                          probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], studentAnswer: val };
+                          lastA.problems = probs;
+                          attempts[attempts.length - 1] = lastA;
+                          td.attempts = attempts;
+                          var newTiers = { ...s.tiers, [t]: td };
+                          return { ...prev, set: { ...s, tiers: newTiers } };
+                        });
+                      }}
+                      disabled={problem.passed !== null || pm.evaluating}
+                      onKeyDown={e => {
+                        if (e.key === "Tab") {
+                          e.preventDefault();
+                          var ta = e.target;
+                          var start = ta.selectionStart, end = ta.selectionEnd;
+                          var val = (problem.studentAnswer || problem.starterCode || "");
+                          var newVal = val.substring(0, start) + "  " + val.substring(end);
+                          setPracticeMode(prev => {
+                            var s = prev.set, t2 = s.currentTier;
+                            var td2 = { ...s.tiers[t2] }; var atts = [...td2.attempts];
+                            var la = { ...atts[atts.length - 1] }; var pr = [...la.problems];
+                            pr[prev.currentProblemIdx] = { ...pr[prev.currentProblemIdx], studentAnswer: newVal };
+                            la.problems = pr; atts[atts.length - 1] = la; td2.attempts = atts;
+                            return { ...prev, set: { ...s, tiers: { ...s.tiers, [t2]: td2 } } };
+                          });
+                          setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
+                        }
+                      }}
+                      style={{
+                        width: "100%", minHeight: 220, maxHeight: 400, padding: 16,
+                        fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: 13, lineHeight: 1.6,
+                        background: "#1A1D24", color: problem.passed !== null ? T.txD : "#E8EAF0",
+                        border: "1px solid " + (pm.feedback ? (problem.passed ? T.gn : T.rd) : T.bd),
+                        borderRadius: 10, resize: "vertical", tabSize: 2
+                      }}
+                      placeholder={tier === 1 ? "Type the expected output..." : "Write your answer here..."}
+                    />
+
+                    {/* Action buttons */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+                      <button onClick={() => {
+                        var nextUnanswered = problems.findIndex((p, idx) => idx > curIdx && p.passed === null);
+                        if (nextUnanswered < 0) nextUnanswered = problems.findIndex((p, idx) => idx !== curIdx && p.passed === null);
+                        if (nextUnanswered >= 0) setPracticeMode(prev => ({ ...prev, currentProblemIdx: nextUnanswered, feedback: null }));
+                      }}
+                        disabled={problem.passed !== null || pm.evaluating}
+                        style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid " + T.bd, background: T.sf, color: T.txD, fontSize: 12, cursor: "pointer" }}>Skip</button>
+
+                      {problem.passed === null ? (
+                        <button onClick={async () => {
+                          var answer = problem.studentAnswer || problem.starterCode || "";
+                          if (!answer.trim()) return;
+                          setPracticeMode(prev => ({ ...prev, evaluating: true }));
+                          try {
+                            var result = await evaluateAnswer(pm.skill, problem, answer, tier);
+                            // Update the problem in the set
+                            var updatedSet = { ...pset };
+                            var attempt = updatedSet.tiers[tier].attempts.slice(-1)[0];
+                            attempt.problems[curIdx] = { ...attempt.problems[curIdx], passed: result.passed, evaluation: result.feedback, studentAnswer: answer };
+                            updatedSet.lastActiveAt = new Date().toISOString();
+                            await DB.savePractice(active.id, pm.skill.id, updatedSet);
+
+                            setPracticeMode(prev => ({
+                              ...prev, set: updatedSet, evaluating: false,
+                              feedback: { passed: result.passed, text: result.feedback }
+                            }));
+
+                            // Check if all problems answered
+                            var allDone = attempt.problems.every(p => p.passed !== null);
+                            if (allDone) {
+                              var tierResult = completeTierAttempt(updatedSet);
+                              await DB.savePractice(active.id, pm.skill.id, updatedSet);
+                              if (tierResult.points > 0) {
+                                await applySkillUpdates(active.id, [{
+                                  skillId: pm.skill.id, skill: pm.skill.name,
+                                  delta: tierResult.points, rating: tierResult.rating,
+                                  reason: "Practice Tier " + (tier) + " (" + tierResult.tierName + ") - attempt " + tierResult.attemptNum
+                                }]);
+                                addNotif("skill", pm.skill.name + ": +" + tierResult.points + " pts (Tier " + tier + " " + tierResult.tierName + ")");
+                              }
+                              // Show tier complete after a brief delay to let feedback show
+                              setTimeout(() => {
+                                setPracticeMode(prev => ({
+                                  ...prev, set: updatedSet,
+                                  tierComplete: { ...tierResult, problems: attempt.problems }
+                                }));
+                              }, 2000);
+                            }
+                          } catch (e) {
+                            addNotif("error", "Evaluation failed: " + e.message);
+                            setPracticeMode(prev => ({ ...prev, evaluating: false }));
+                          }
+                        }}
+                          disabled={pm.evaluating || !(problem.studentAnswer || problem.starterCode || "").trim()}
+                          style={{ padding: "8px 24px", borderRadius: 8, border: "none", background: pm.evaluating ? T.bd : T.ac, color: pm.evaluating ? T.txD : "#0F1115", fontSize: 13, fontWeight: 600, cursor: pm.evaluating ? "wait" : "pointer" }}>
+                          {pm.evaluating ? "Evaluating..." : "Submit"}
+                        </button>
+                      ) : (
+                        <button onClick={() => {
+                          var nextUnanswered = problems.findIndex((p, idx) => idx > curIdx && p.passed === null);
+                          if (nextUnanswered < 0) nextUnanswered = problems.findIndex(p => p.passed === null);
+                          if (nextUnanswered >= 0) setPracticeMode(prev => ({ ...prev, currentProblemIdx: nextUnanswered, feedback: null }));
+                        }}
+                          style={{ padding: "8px 24px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                          Next Problem
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Feedback */}
+                    {pm.feedback && (
+                      <div style={{
+                        marginTop: 16, padding: "12px 16px", borderRadius: 10,
+                        background: pm.feedback.passed ? "rgba(52,211,153,0.08)" : "rgba(248,113,113,0.08)",
+                        border: "1px solid " + (pm.feedback.passed ? "rgba(52,211,153,0.2)" : "rgba(248,113,113,0.2)")
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: pm.feedback.passed ? T.gn : T.rd, marginBottom: 4 }}>
+                          {pm.feedback.passed ? "âœ“ Correct" : "âœ— Incorrect"}
+                        </div>
+                        <div style={{ fontSize: 12, color: T.tx, lineHeight: 1.6 }}>{pm.feedback.text}</div>
+                      </div>
+                    )}
+
+                    {/* Problem navigation dots */}
+                    <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 20 }}>
+                      {problems.map((p, idx) => (
+                        <button key={idx} onClick={() => setPracticeMode(prev => ({ ...prev, currentProblemIdx: idx, feedback: p.passed !== null ? { passed: p.passed, text: p.evaluation } : null }))}
+                          style={{
+                            width: 12, height: 12, borderRadius: 6, border: "none", cursor: "pointer",
+                            background: p.passed === true ? T.gn : p.passed === false ? T.rd : idx === curIdx ? T.ac : T.bd,
+                            transform: idx === curIdx ? "scale(1.3)" : "scale(1)"
+                          }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
+
+        {/* Practice generating indicator */}
+        {practiceMode?.generating && (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 14, color: T.txD, marginBottom: 8 }}>Generating practice problems...</div>
+              <div style={{ fontSize: 12, color: T.txD }}>Tier {practiceMode?.set?.currentTier || "?"}: {TIERS[practiceMode?.set?.currentTier]?.name || "..."}</div>
             </div>
           </div>
         )}
 
-        {/* Main content area */}
+
+
+        {!practiceMode && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
-        {/* Chat Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px" }}>
+        {/* Notification Side Panel */}
+        {showNotifs && (
+          <div style={{ width: 280, flexShrink: 0, borderLeft: "1px solid " + T.bd, background: T.sf, display: "flex", flexDirection: "column", order: 2 }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid " + T.bd, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>Notifications</div>
+              {notifs.length > 0 && (
+                <button onClick={() => setNotifs([])} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 11 }}>Clear all</button>
+              )}
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
+              {notifs.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: T.txD, fontSize: 12 }}>No notifications yet</div>
+              ) : notifs.map(n => {
+                var typeColor = n.type === "error" ? (T.rd || "#EF4444") : n.type === "warn" ? "#F59E0B" : n.type === "skill" ? "#8B5CF6" : n.type === "success" ? T.gn : T.ac;
+                var typeIcon = n.type === "error" ? "âœ—" : n.type === "warn" ? "âš " : n.type === "skill" ? "â¬†" : n.type === "success" ? "âœ“" : "â€¢";
+                var ago = Math.round((Date.now() - n.time.getTime()) / 1000);
+                var agoStr = ago < 60 ? ago + "s" : ago < 3600 ? Math.round(ago / 60) + "m" : Math.round(ago / 3600) + "h";
+                return (
+                  <div key={n.id} style={{ padding: "8px 10px", marginBottom: 4, borderRadius: 8, background: T.bg, borderLeft: "3px solid " + typeColor }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div style={{ fontSize: 12, color: T.tx, lineHeight: 1.5, flex: 1 }}>
+                        <span style={{ color: typeColor, fontWeight: 600, marginRight: 6 }}>{typeIcon}</span>
+                        {n.msg}
+                      </div>
+                      <div style={{ fontSize: 10, color: T.txD, flexShrink: 0, marginTop: 2 }}>{agoStr}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", order: 1 }}>
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
             {/* Chunk Selection Picker */}
             {chunkPicker && !booting && (
@@ -2863,7 +3638,7 @@ function StudyInner() {
               </div>
             )}
 
-            {!sessionMode && !booting && !chunkPicker && (
+            {!sessionMode && !booting && !chunkPicker && !practiceMode && (
               <div style={{ padding: "60px 20px", animation: "fadeIn 0.3s" }}>
                 <div style={{ textAlign: "center", marginBottom: 32 }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: T.tx, marginBottom: 8 }}>What are we doing today?</div>
@@ -2918,7 +3693,7 @@ function StudyInner() {
                           setBusy(true);
                           var isRetry = hasExtracted;
                           setStatus(isRetry ? "Retrying failed chunks..." : "Extracting skills...");
-                          setMsgs([{ role: "assistant", content: isRetry ? "Retrying extraction on failed chunks..." : "Analyzing materials and extracting skills..." }]);
+                          addNotif("info", isRetry ? "Retrying extraction..." : "Extracting skills...");
                           try {
                             var skills = await extractSkillTree(active.id, active.materials, setStatus, isRetry);
                             // Refresh active course from DB (chunk statuses updated)
@@ -2930,12 +3705,12 @@ function StudyInner() {
                               var msg = "Found " + skills.length + " skills.";
                               if (stillFailed > 0) msg += " " + stillFailed + " chunk(s) still need retry.";
                               else msg += " All chunks extracted.";
-                              setMsgs([{ role: "assistant", content: msg }]);
+                              addNotif("success", msg);
                             } else {
-                              setMsgs([{ role: "assistant", content: "Skill extraction returned unexpected format. Check console for details." }]);
+                              addNotif("error", "Skill extraction returned unexpected format.");
                             }
                           } catch (e) {
-                            setMsgs([{ role: "assistant", content: "Extraction failed: " + e.message }]);
+                            addNotif("error", "Extraction failed: " + e.message);
                           }
                           setBusy(false); setStatus("");
                         }} style={{ background: T.ac, color: "#0F1115", border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
@@ -2949,22 +3724,68 @@ function StudyInner() {
                     <div style={{ fontSize: 18, fontWeight: 700, color: T.tx, marginBottom: 4 }}>Pick an assignment</div>
                     <div style={{ fontSize: 13, color: T.txD, marginBottom: 20 }}>Study will focus on teaching what you need for the one you choose.</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 500 }}>
-                      {pickerData.items.map((a, i) => (
-                        <button key={i} onClick={() => bootWithFocus({ type: "assignment", assignment: a })}
-                          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "16px 20px", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.background = T.acS; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.background = T.sf; }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{a.title}</div>
-                            {a.dueDate && <div style={{ fontSize: 11, color: T.ac, flexShrink: 0, marginLeft: 12 }}>{a.dueDate}</div>}
+                      {pickerData.items.map((a, i) => {
+                        var isExpanded = pickerData.expanded === i;
+                        var readyColor = a.avgStrength >= 0.6 ? T.gn : a.avgStrength >= 0.3 ? "#F59E0B" : (T.txM || T.txD);
+                        return (
+                          <div key={i} style={{ background: T.sf, border: "1px solid " + (isExpanded ? T.acB : T.bd), borderRadius: 12, overflow: "hidden", transition: "all 0.15s" }}>
+                            <div onClick={() => setPickerData(prev => ({ ...prev, expanded: isExpanded ? null : i }))}
+                              style={{ padding: "16px 20px", cursor: "pointer" }}
+                              onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = T.acS; }}
+                              onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = "transparent"; }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{a.title}</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  {a.dueDate && <div style={{ fontSize: 11, color: T.ac, flexShrink: 0 }}>{a.dueDate}</div>}
+                                  <span style={{ fontSize: 11, color: T.txD }}>{isExpanded ? "â–´" : "â–¾"}</span>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 12, color: T.txD }}>
+                                {a.questionCount} question{a.questionCount !== 1 ? "s" : ""} | {a.skillList.length} skills needed
+                                <span style={{ color: readyColor }}> | readiness: {Math.round(a.avgStrength * 100)}%</span>
+                              </div>
+                            </div>
+                            {isExpanded && (
+                              <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 20px" }}>
+                                {a.skillList.length > 0 && (
+                                  <div style={{ marginBottom: 12 }}>
+                                    <div style={{ fontSize: 11, color: T.txD, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, fontWeight: 600 }}>Required Skills</div>
+                                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                      {a.skillList.sort((x, y) => x.strength - y.strength).map(sk => {
+                                        var skColor = sk.strength >= 0.6 ? T.gn : sk.strength >= 0.4 ? "#F59E0B" : (T.rd || "#EF4444");
+                                        var isWeak = sk.strength < 0.4;
+                                        return (
+                                          <div key={sk.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px", borderRadius: 6, background: isWeak ? "rgba(239,68,68,0.06)" : "transparent" }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                                              <div style={{ width: 6, height: 6, borderRadius: 3, background: skColor, flexShrink: 0 }} />
+                                              <div style={{ fontSize: 12, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sk.name}</div>
+                                            </div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                                              <span style={{ fontSize: 11, color: skColor, fontWeight: 600 }}>{Math.round(sk.strength * 100)}%</span>
+                                              {isWeak && (
+                                                <button onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  var fullSkill = Array.isArray(pickerData._skills) ? pickerData._skills.find(s => s.id === sk.id) : null;
+                                                  if (fullSkill) bootWithFocus({ type: "skill", skill: { ...fullSkill, strength: sk.strength, points: sk.points } });
+                                                }}
+                                                  style={{ background: "none", border: "1px solid " + T.acB, borderRadius: 6, padding: "2px 8px", fontSize: 10, color: T.ac, cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>Practice</button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                <button onClick={() => bootWithFocus({ type: "assignment", assignment: a })}
+                                  style={{ width: "100%", padding: "10px 16px", borderRadius: 10, border: a.avgStrength >= 0.4 ? "none" : "1px solid " + T.bd, background: a.avgStrength >= 0.4 ? T.ac : T.sf, color: a.avgStrength >= 0.4 ? "#0F1115" : T.tx, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                                  {a.avgStrength >= 0.4 ? "Start Assignment" : "Start Anyway (low readiness)"}
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <div style={{ fontSize: 12, color: T.txD }}>
-                            {a.questionCount} question{a.questionCount !== 1 ? "s" : ""} | {a.skillList.length} skills needed
-                            {a.weakSkills.length > 0 && <span style={{ color: "#F59E0B" }}> | {a.weakSkills.length} below 40%</span>}
-                            <span style={{ color: a.avgStrength >= 0.6 ? T.gn : a.avgStrength >= 0.3 ? "#F59E0B" : T.txM }}> | readiness: {Math.round(a.avgStrength * 100)}%</span>
-                          </div>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
@@ -2972,26 +3793,67 @@ function StudyInner() {
                     <div style={{ fontSize: 18, fontWeight: 700, color: T.tx, marginBottom: 4 }}>Pick a skill to work on</div>
                     <div style={{ fontSize: 13, color: T.txD, marginBottom: 20 }}>Sorted by weakest first. Pick one to go deep.</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 500 }}>
-                      {pickerData.items.map((s, i) => (
-                        <button key={i} onClick={() => bootWithFocus({ type: "skill", skill: s })}
-                          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 16px", cursor: "pointer", textAlign: "left", transition: "all 0.15s" }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.background = T.acS; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.background = T.sf; }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <div style={{ fontSize: 13, fontWeight: 500, color: T.tx }}>{s.name}</div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 12 }}>
-                              {s.reviewDate === "now" && <span style={{ fontSize: 10, color: T.rd, fontWeight: 600 }}>REVIEW</span>}
-                              <span style={{ fontSize: 11, color: s.strength >= 0.7 ? T.gn : s.strength >= 0.4 ? "#F59E0B" : T.txM }}>
-                                {Math.round(s.strength * 100)}%
-                              </span>
+                      {pickerData.items.map((s, i) => {
+                        var isExp = pickerData.expanded === i;
+                        var strColor = s.strength >= 0.7 ? T.gn : s.strength >= 0.4 ? "#F59E0B" : T.txM;
+                        var startTier = strengthToTier(s.strength);
+                        return (
+                          <div key={i} style={{ background: T.sf, border: "1px solid " + (isExp ? T.acB : T.bd), borderRadius: 10, overflow: "hidden", transition: "all 0.15s" }}>
+                            <div onClick={() => setPickerData(prev => ({ ...prev, expanded: isExp ? null : i }))}
+                              style={{ padding: "12px 16px", cursor: "pointer" }}
+                              onMouseEnter={e => { if (!isExp) e.currentTarget.style.background = T.acS; }}
+                              onMouseLeave={e => { if (!isExp) e.currentTarget.style.background = "transparent"; }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: T.tx }}>{s.name}</div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 12 }}>
+                                  {s.reviewDate === "now" && <span style={{ fontSize: 10, color: T.rd, fontWeight: 600 }}>REVIEW</span>}
+                                  <span style={{ fontSize: 11, color: strColor, fontWeight: 600 }}>{Math.round(s.strength * 100)}%</span>
+                                  <span style={{ fontSize: 11, color: T.txD }}>{isExp ? "\u25b4" : "\u25be"}</span>
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>
+                                {s.lastRating ? "Last: " + s.lastRating : "Not yet practiced"}
+                                {s.lastPracticed ? " | " + Math.round((Date.now() - new Date(s.lastPracticed).getTime()) / 86400000) + "d ago" : ""}
+                              </div>
                             </div>
+                            {isExp && (
+                              <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", display: "flex", gap: 8 }}>
+                                <button onClick={() => bootWithFocus({ type: "skill", skill: s })}
+                                  style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "1px solid " + T.acB, background: T.acS, color: T.ac, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                                  Learn
+                                  <div style={{ fontSize: 10, fontWeight: 400, color: T.txD, marginTop: 2 }}>AI-guided dialogue</div>
+                                </button>
+                                <button onClick={async () => {
+                                  setPracticeMode({ generating: true });
+                                  setPickerData(null); setSessionMode("practice");
+                                  try {
+                                    var existing = await DB.getPractice(active.id, s.id);
+                                    var pset = existing || createPracticeSet(active.id, s, active.name);
+                                    var tier = pset.currentTier;
+                                    var tierData = pset.tiers[tier];
+                                    var lastAttempt = tierData?.attempts?.[tierData.attempts.length - 1];
+                                    if (!lastAttempt || lastAttempt.completed) {
+                                      var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, s);
+                                      pset = await generateProblems(pset, s, active.name, matCtx);
+                                    }
+                                    await DB.savePractice(active.id, s.id, pset);
+                                    var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
+                                    var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
+                                    setPracticeMode({ set: pset, skill: s, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                                  } catch (e) {
+                                    addNotif("error", "Failed to start practice: " + e.message);
+                                    setPracticeMode(null); setSessionMode(null);
+                                  }
+                                }}
+                                  style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                                  Practice
+                                  <div style={{ fontSize: 10, fontWeight: 400, color: "rgba(15,17,21,0.6)", marginTop: 2 }}>Tier {startTier}: {TIERS[startTier].name}</div>
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>
-                            {s.lastRating ? "Last: " + s.lastRating : "Not yet practiced"}
-                            {s.lastPracticed ? " | " + Math.round((Date.now() - new Date(s.lastPracticed).getTime()) / 86400000) + "d ago" : ""}
-                          </div>
-                        </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -3008,11 +3870,11 @@ function StudyInner() {
                   padding: m.role === "user" ? "12px 16px" : "4px 0",
                   color: T.tx, lineHeight: 1.7, fontSize: 14
                 }}>
-                  {m.role === "assistant" ? renderMd(m.content) : m.content}
+                  {m.role === "assistant" ? (m.content ? renderMd(m.content) : <span style={{ display: "inline-block", width: 8, height: 16, background: T.ac, animation: "blink 1s step-end infinite", verticalAlign: "middle" }} />) : m.content}
                 </div>
               </div>
             ))}
-            {(busy || booting) && (
+            {((booting && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].content)) || (busy && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant"))) && (
               <div style={{ padding: "16px 0", animation: "fadeIn 0.2s" }}>
                 <div style={{ fontSize: 11, color: T.ac, marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>{booting ? status || "Reading materials..." : "Study"}</div>
                 <svg width="64" height="28" viewBox="0 0 64 28" style={{ display: "block" }}>
@@ -3122,10 +3984,12 @@ function StudyInner() {
           </div>
         )}
 
-        </div>{/* end flex row */}
+        </div>
+        )}
 
-        {/* Input Bar - only show after session has started */}
-        {msgs.length > 0 && (
+
+        {/* Input Bar - only show after session has started, hidden during practice */}
+        {msgs.length > 0 && !practiceMode && (
         <div style={{ borderTop: "1px solid " + T.bd, padding: 16, flexShrink: 0 }}>
           <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", gap: 10, alignItems: "flex-end" }}>
             <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
@@ -3143,6 +4007,7 @@ function StudyInner() {
           </div>
         </div>
         )}
+
       </div>
     );
   }
