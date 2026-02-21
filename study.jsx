@@ -588,6 +588,56 @@ const readFile = (file) => new Promise(async (resolve) => {
     return;
   }
 
+  if (ext === "pptx" || ext === "ppt") {
+    if (ext === "ppt") {
+      resolve({
+        type: "text", name: file.name,
+        content: "[Old .ppt format not supported: " + file.name + " -- Open in PowerPoint and Save As .pptx, then upload that.]"
+      });
+      return;
+    }
+    try {
+      const Z = await loadJSZip();
+      const zip = await Z.loadAsync(await file.arrayBuffer());
+      
+      // Find all slide files and sort numerically
+      const slideFiles = Object.keys(zip.files)
+        .filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/))
+        .sort((a, b) => {
+          const numA = parseInt(a.match(/slide(\d+)/)[1]);
+          const numB = parseInt(b.match(/slide(\d+)/)[1]);
+          return numA - numB;
+        });
+      
+      if (slideFiles.length === 0) {
+        resolve({ type: "text", name: file.name, content: "[PPTX has no slides: " + file.name + "]" });
+        return;
+      }
+      
+      var text = "";
+      for (var i = 0; i < slideFiles.length; i++) {
+        const xml = await zip.file(slideFiles[i]).async("text");
+        // Extract text from <a:t> tags
+        const matches = xml.match(/<a:t>([^<]*)<\/a:t>/g) || [];
+        const slideText = matches
+          .map(m => m.replace(/<\/?a:t>/g, ""))
+          .map(t => t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'"))
+          .join("\n")
+          .trim();
+        
+        if (slideText) {
+          text += "--- Slide " + (i + 1) + " ---\n" + slideText + "\n\n";
+        }
+      }
+      
+      resolve({ type: "text", name: file.name, content: text.trim() || "[PPTX slides appear empty]" });
+    } catch (e) {
+      console.error("PPTX parse failed:", e);
+      resolve({ type: "text", name: file.name, content: "[PPTX parse failed: " + e.message + ". Try exporting slides to PDF then copying text.]" });
+    }
+    return;
+  }
+
   if (ext === "srt" || ext === "vtt") {
     const reader = new FileReader();
     reader.onload = () => {
@@ -2784,7 +2834,7 @@ function StudyInner() {
 
           <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
             style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 16, padding: cur ? "24px 20px" : "48px 32px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent", marginBottom: 24, transition: "all 0.2s" }}>
-            <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
+            <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,.pptx,.ppt,image/*" onChange={onSelect} style={{ display: "none" }} />
             <div style={{ fontSize: cur ? 13 : 15, color: T.tx, fontWeight: 500, marginBottom: 4 }}>
               {parsing ? "Parsing files..." : drag ? "Drop here" : files.length > 0 ? "Add more files" : "Drag & drop or click to browse"}
             </div>
@@ -2792,9 +2842,9 @@ function StudyInner() {
               <div style={{ fontSize: 12, color: T.txD, lineHeight: 1.6 }}>
                 <span style={{ color: T.gn }}>Best:</span> .txt .md .csv .srt .vtt
                 <span style={{ margin: "0 6px", color: T.bd }}>|</span>
-                <span style={{ color: "#F59E0B" }}>Good:</span> .docx .xlsx .epub
+                <span style={{ color: "#F59E0B" }}>Good:</span> .docx .xlsx .epub .pptx
                 <span style={{ margin: "0 6px", color: T.bd }}>|</span>
-                <span style={{ color: T.txM }}>No support:</span> .pdf .pptx
+                <span style={{ color: T.txM }}>No support:</span> .pdf
               </div>
             )}
           </div>
@@ -2807,8 +2857,8 @@ function StudyInner() {
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Word docs (.docx)</span> -- works for most files. Complex formatting may be lost. If content looks wrong, save as .txt from Word.</div>
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Spreadsheets (.xlsx, .csv)</span> -- tables extracted as tab-separated text. For best results, export as .csv from Excel.</div>
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>E-books (.epub)</span> -- chapters extracted individually. Non-standard EPUBs may fail.</div>
+              <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Slides (.pptx)</span> -- text extracted from all slides. Old .ppt format requires resaving as .pptx first.</div>
               <div><span style={{ color: T.txM, fontWeight: 600 }}>PDFs (.pdf)</span> -- not yet supported. Open in Preview/Acrobat, select all text, paste into a .txt file.</div>
-              <div><span style={{ color: T.txM, fontWeight: 600 }}>Slides (.pptx)</span> -- not yet supported. Export as .pdf then convert to .txt, or copy slide notes to a text file.</div>
               <div><span style={{ color: T.gn, fontWeight: 600 }}>Images</span> -- screenshots of assignments or notes. AI reads them directly.</div>
               <div style={{ marginTop: 8, color: T.txM, fontStyle: "italic" }}>Tip: if a file fails to parse, the fastest fix is always exporting to .txt or .csv from the source application.</div>
             </div>
@@ -2984,7 +3034,7 @@ function StudyInner() {
             <div style={{ maxWidth: 600, margin: "0 auto" }}>
               <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
                 style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 12, padding: "24px 16px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent", marginBottom: files.length ? 16 : 0 }}>
-                <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
+                <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,.pptx,.ppt,image/*" onChange={onSelect} style={{ display: "none" }} />
                 <div style={{ fontSize: 13, color: T.txD }}>Drop files or click to browse</div>
               </div>
               {files.map(f => (
