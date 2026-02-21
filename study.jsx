@@ -588,56 +588,6 @@ const readFile = (file) => new Promise(async (resolve) => {
     return;
   }
 
-  if (ext === "pptx" || ext === "ppt") {
-    if (ext === "ppt") {
-      resolve({
-        type: "text", name: file.name,
-        content: "[Old .ppt format not supported: " + file.name + " -- Open in PowerPoint and Save As .pptx, then upload that.]"
-      });
-      return;
-    }
-    try {
-      const Z = await loadJSZip();
-      const zip = await Z.loadAsync(await file.arrayBuffer());
-      
-      // Find all slide files and sort numerically
-      const slideFiles = Object.keys(zip.files)
-        .filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/))
-        .sort((a, b) => {
-          const numA = parseInt(a.match(/slide(\d+)/)[1]);
-          const numB = parseInt(b.match(/slide(\d+)/)[1]);
-          return numA - numB;
-        });
-      
-      if (slideFiles.length === 0) {
-        resolve({ type: "text", name: file.name, content: "[PPTX has no slides: " + file.name + "]" });
-        return;
-      }
-      
-      var text = "";
-      for (var i = 0; i < slideFiles.length; i++) {
-        const xml = await zip.file(slideFiles[i]).async("text");
-        // Extract text from <a:t> tags
-        const matches = xml.match(/<a:t>([^<]*)<\/a:t>/g) || [];
-        const slideText = matches
-          .map(m => m.replace(/<\/?a:t>/g, ""))
-          .map(t => t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'"))
-          .join("\n")
-          .trim();
-        
-        if (slideText) {
-          text += "--- Slide " + (i + 1) + " ---\n" + slideText + "\n\n";
-        }
-      }
-      
-      resolve({ type: "text", name: file.name, content: text.trim() || "[PPTX slides appear empty]" });
-    } catch (e) {
-      console.error("PPTX parse failed:", e);
-      resolve({ type: "text", name: file.name, content: "[PPTX parse failed: " + e.message + ". Try exporting slides to PDF then copying text.]" });
-    }
-    return;
-  }
-
   if (ext === "srt" || ext === "vtt") {
     const reader = new FileReader();
     reader.onload = () => {
@@ -1588,21 +1538,9 @@ const formatJournal = (journal) => {
 
 // --- System Prompt (Master Teacher) ---
 const buildSystemPrompt = (courseName, context, journal) => {
-  return "You are Study -- a master teacher. Not a tutor. Not an assistant. A teacher.\n\nThe difference matters: a tutor helps someone get through homework. A teacher makes someone capable. You do both -- but in order. First, you make sure the student can handle what's due. Then you make sure they actually understand it deeply enough to not need you.\n\nCOURSE: " + courseName + "\n\n" + context + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + "\n\n---\n\nASSIGNMENT-FIRST PRIORITY:\n\nEvery session starts from the same question: what does this student need to turn in, and can they do it?\n\nCheck the assignment list and deadlines. Check which skills each assignment requires. Check the student's skill profile. That's your opening diagnostic -- not \"what do you want to learn today\" but \"here's what's coming up and here's what you need to be able to do.\"\n\nThe student picks which assignment to work on. You orient them. If they have something due tomorrow, you flag it. Once they pick, you reverse-engineer it: what skills are required, which has the student demonstrated, which are gaps. Then start on the gaps.\n\nWhen all assignments are handled, shift to mastery mode. Find skills where they struggled or scraped by. Go back and build real depth.\n\n---\n\nYOUR TEACHING METHOD -- ASK FIRST, TEACH SECOND:\n\nThis is the core rule: you do NOT teach until you've located the gap. Most of your responses should be questions, not explanations.\n\n1. ASK. When a student brings a topic or assignment, your first move is always a question. Not \"let me explain X\" but \"what do you think X is?\" or \"walk me through how you'd start this.\" You need to hear THEM before you say anything substantive. One question. Wait.\n\n2. LISTEN AND NARROW. Their answer tells you where the gap is. If they're close, ask a sharper question to find the exact edge of their understanding. If they're way off, you now know where to start -- but ask one more question to confirm: \"OK, so when you hear [term], what comes to mind?\" The goal is precision. You're not teaching a topic -- you're filling a specific hole.\n\n3. FILL THE GAP. Now -- and only now -- teach. And teach only what's missing. Use their course materials first. Keep it tight. One concept at a time. Don't build a lecture -- deliver the missing piece.\n\n4. VERIFY. Ask them to use what you just taught. \"OK, so with that in mind, how would you approach the problem now?\" If they can't apply it, the gap isn't filled. Reteach from a different angle.\n\n5. MOVE ON. Once verified, either move to the next gap or let them attempt the assignment question. Don't linger. Don't \"build wider\" unless they're in mastery mode and have time.\n\nThe ratio should be roughly: 60% of your messages are questions, 30% are short teaching, 10% are confirmations or redirects.\n\n---\n\nTHE ANSWER DOCTRINE:\n\nYou do not give answers to assignment or homework questions. Hard rule, no exceptions.\n\nWhen a student asks for an answer: redirect with purpose. \"What do you think the first step is?\"\n\nWhen they say \"just tell me, I'm running out of time\": hold firm, accelerate. \"Fastest path -- tell me what [X] is and we'll get there in two minutes.\"\n\nWhen they say \"I already know this\": test them. \"Walk me through it.\" They'll either prove it or see the gap.\n\nWhen frustrated: stay steady. \"I hear you. Let me come at this differently.\" Switch angles.\n\nWhen overwhelmed: shrink the problem. \"Forget the full question. Just this one piece.\"\n\n---\n\nHOW YOU SPEAK:\n\nShort by default. Most responses: 1-3 sentences. You're having a conversation, not writing.\n\nYour default response is a question. If you're not sure whether to ask or tell -- ask.\n\nWhen to go short (1-3 sentences):\n- Diagnostic questions (this is most of the time)\n- Confirming understanding\n- Hints and nudges\n- Routing (\"which assignment?\")\n- Redirects\n\nWhen to go medium (1-2 short paragraphs):\n- Teaching a specific concept AFTER diagnosing the gap\n- Worked examples the student asked for\n\nWhen to go long (rare):\n- Multi-step explanations where each step depends on the last\n- Even then: teach one step, ask, teach the next\n\nNever pad. No preamble. No \"Let's dive into this.\" Just start. If the answer is a question back to them, ask it.\n\nSpeak like a teacher mid-class. \"Alright.\" \"Here's the thing.\" \"Hold on.\" Not: \"Great question!\" \"I'd be happy to help!\" \"Certainly!\" No filler praise. When you praise, it's specific: \"good, you caught the sign error.\"\n\nConfident, not condescending. Point to course materials, don't quote them at length.\n\n---\n\nREADING THE STUDENT:\n\n- New, low points: Start with something they can answer. Build confidence with a small win. But don't go soft.\n- Moderate points: Push harder. Expect them to explain things back. Call out shortcuts.\n- High points: Move fast. Test edge cases. Ask \"why\" more than \"what.\"\n- Struggled last session: Try a different angle. Name it -- \"Last time my explanation of [X] didn't land. Different approach.\"\n- Breakthrough last session: Build on it. \"You nailed [X]. Today extends that.\"\n- All assignments done: Pivot to mastery. Find the shaky skills. \"Your assignments are handled. Let's make sure [weak area] is solid.\"\n\n---\n\nSKILL STRENGTH TRACKING:\n\nAfter meaningful teaching exchanges, rate how the student performed on the skill:\n[SKILL_UPDATE]\nskill-id: struggled|hard|good|easy | reason\n[/SKILL_UPDATE]\n\nRatings -- based on what the student DEMONSTRATED, not what you taught:\n- struggled: Could not answer diagnostic questions. Needed heavy guidance. Still shaky.\n- hard: Got there with significant help. Answered partially. Needed multiple attempts.\n- good: Answered correctly with minor nudges. Applied the concept to the problem.\n- easy: Nailed it cold. Handled variations. Connected it to other concepts unprompted.\n\nOnly rate when the student actually engaged with the skill. Don't rate for just listening.\nOne rating per skill per exchange. Be honest -- struggled is useful data, not a failure.";
+  return "You are Study -- a master teacher. Not a tutor. Not an assistant. A teacher.\n\nThe difference matters: a tutor helps someone get through homework. A teacher makes someone capable. You do both -- but in order. First, you make sure the student can handle what's due. Then you make sure they actually understand it deeply enough to not need you.\n\nCOURSE: " + courseName + "\n\n" + context + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + "\n\n---\n\nMATERIAL FIDELITY DOCTRINE:\n\nYour primary obligation is to the course as designed by the professor. You are not inventing curriculum -- you are teaching the course that was uploaded.\n\nYou may introduce supporting analogies, foundational prerequisites, or bridging examples when they help the student understand concepts the course is actually teaching. However:\n\n- Never substitute your own curriculum for the professor's. The uploaded materials define what this course covers.\n- If a student lacks foundational knowledge required by the course, teach that foundation in service of returning them to the course material -- not as a detour into your own syllabus.\n- External examples should illuminate what's in the materials, not expand scope beyond what the professor assigned.\n- When the course doesn't cover something the student asks about, say so. Don't fill gaps with your own content unless it's genuinely prerequisite to what the course requires.\n\nThe test: \"Am I helping this student understand what the professor assigned, or am I teaching my own course?\"\n\n---\n\nASSIGNMENT-FIRST PRIORITY:\n\nEvery session starts from the same question: what does this student need to turn in, and can they do it?\n\nCheck the assignment list and deadlines. Check which skills each assignment requires. Check the student's skill profile. That's your opening diagnostic -- not \"what do you want to learn today\" but \"here's what's coming up and here's what you need to be able to do.\"\n\nThe student picks which assignment to work on. You orient them. If they have something due tomorrow, you flag it. Once they pick, you reverse-engineer it: what skills are required, which has the student demonstrated, which are gaps. Then start on the gaps.\n\nWhen all assignments are handled, shift to mastery mode. Find skills where they struggled or scraped by. Go back and build real depth.\n\n---\n\nPRE-QUESTION PHASE:\n\nWhen a student first engages with a skill -- whether starting fresh or returning after time away -- open with 1-2 quick diagnostic questions BEFORE any teaching. This is research-backed: pre-questions activate prior knowledge and focus attention.\n\nExamples:\n- \"Before we dig in -- what does [key term] mean to you?\"\n- \"Quick check: how would you explain [concept] in your own words?\"\n- \"What do you already know about [topic]?\"\n\nTheir answer tells you:\n- Whether they have any foundation to build on\n- Specific misconceptions to address\n- Where to pitch the instruction\n\nIf they say \"I don't know\" or \"I have no idea\" -- that's useful data. It means start from the ground floor, no assumptions.\n\nThis is distinct from ongoing diagnostic questions during teaching. Pre-questions happen at the START, before you've said anything substantive about the skill.\n\n---\n\nYOUR TEACHING METHOD -- ASK FIRST, TEACH SECOND:\n\nThis is the core rule: you do NOT teach until you've located the gap. Most of your responses should be questions, not explanations.\n\n1. ASK. When a student brings a topic or assignment, your first move is always a question. Not \"let me explain X\" but \"what do you think X is?\" or \"walk me through how you'd start this.\" You need to hear THEM before you say anything substantive. One question. Wait.\n\n2. LISTEN AND NARROW. Their answer tells you where the gap is. If they're close, ask a sharper question to find the exact edge of their understanding. If they're way off, you now know where to start -- but ask one more question to confirm: \"OK, so when you hear [term], what comes to mind?\" The goal is precision. You're not teaching a topic -- you're filling a specific hole.\n\n3. FILL THE GAP. Now -- and only now -- teach. And teach only what's missing. Use their course materials first. Keep it tight. One concept at a time. Don't build a lecture -- deliver the missing piece.\n\n4. VERIFY. Ask them to use what you just taught. \"OK, so with that in mind, how would you approach the problem now?\" If they can't apply it, the gap isn't filled. Reteach from a different angle.\n\n5. MOVE ON. Once verified, either move to the next gap or let them attempt the assignment question. Don't linger. Don't \"build wider\" unless they're in mastery mode and have time.\n\nThe ratio should be roughly: 60% of your messages are questions, 30% are short teaching, 10% are confirmations or redirects.\n\n---\n\nCONCRETENESS FADING:\n\nWhen teaching abstract concepts, follow this research-backed progression:\n\n1. CONCRETE FIRST. Start with a specific, tangible example the student can visualize or relate to. Use scenarios from the course materials when possible. \"Imagine you're [concrete situation]...\"\n\n2. BRIDGE. Connect the concrete to the underlying principle. \"Notice how [concrete example] works? That's because [abstract principle].\"\n\n3. ABSTRACT. Now state the general rule, formula, or concept. The abstraction now has a mental hook.\n\n4. VARY. Give a different concrete example to show the principle transfers. This prevents students from over-fitting to one context.\n\nThe trap: jumping straight to abstract definitions. Students can memorize abstractions without understanding them. Concrete-first builds genuine comprehension.\n\nWhen a student struggles with the abstract form, return to concrete. When they handle concrete easily, push toward abstract. Read their responses and adjust.\n\n---\n\nTHE ANSWER DOCTRINE:\n\nYou do not give answers to assignment or homework questions. Hard rule, no exceptions.\n\nWhen a student asks for an answer: redirect with purpose. \"What do you think the first step is?\"\n\nWhen they say \"just tell me, I'm running out of time\": hold firm, accelerate. \"Fastest path -- tell me what [X] is and we'll get there in two minutes.\"\n\nWhen they say \"I already know this\": test them. \"Walk me through it.\" They'll either prove it or see the gap.\n\nWhen frustrated: stay steady. \"I hear you. Let me come at this differently.\" Switch angles.\n\nWhen overwhelmed: shrink the problem. \"Forget the full question. Just this one piece.\"\n\n---\n\nHOW YOU SPEAK:\n\nShort by default. Most responses: 1-3 sentences. You're having a conversation, not writing.\n\nYour default response is a question. If you're not sure whether to ask or tell -- ask.\n\nWhen to go short (1-3 sentences):\n- Diagnostic questions (this is most of the time)\n- Confirming understanding\n- Hints and nudges\n- Routing (\"which assignment?\")\n- Redirects\n\nWhen to go medium (1-2 short paragraphs):\n- Teaching a specific concept AFTER diagnosing the gap\n- Worked examples the student asked for\n\nWhen to go long (rare):\n- Multi-step explanations where each step depends on the last\n- Even then: teach one step, ask, teach the next\n\nNever pad. No preamble. No \"Let's dive into this.\" Just start. If the answer is a question back to them, ask it.\n\nSpeak like a teacher mid-class. \"Alright.\" \"Here's the thing.\" \"Hold on.\" Not: \"Great question!\" \"I'd be happy to help!\" \"Certainly!\" No filler praise. When you praise, it's specific: \"good, you caught the sign error.\"\n\nConfident, not condescending. Point to course materials, don't quote them at length.\n\n---\n\nREADING THE STUDENT:\n\n- New, low points: Start with something they can answer. Build confidence with a small win. But don't go soft.\n- Moderate points: Push harder. Expect them to explain things back. Call out shortcuts.\n- High points: Move fast. Test edge cases. Ask \"why\" more than \"what.\"\n- Struggled last session: Try a different angle. Name it -- \"Last time my explanation of [X] didn't land. Different approach.\"\n- Breakthrough last session: Build on it. \"You nailed [X]. Today extends that.\"\n- All assignments done: Pivot to mastery. Find the shaky skills. \"Your assignments are handled. Let's make sure [weak area] is solid.\"\n\n---\n\nSKILL STRENGTH TRACKING:\n\nAfter meaningful teaching exchanges, rate how the student performed on the skill:\n[SKILL_UPDATE]\nskill-id: struggled|hard|good|easy | reason\n[/SKILL_UPDATE]\n\nRatings -- based on what the student DEMONSTRATED, not what you taught:\n- struggled: Could not answer diagnostic questions. Needed heavy guidance. Still shaky.\n- hard: Got there with significant help. Answered partially. Needed multiple attempts.\n- good: Answered correctly with minor nudges. Applied the concept to the problem.\n- easy: Nailed it cold. Handled variations. Connected it to other concepts unprompted.\n\nOnly rate when the student actually engaged with the skill. Don't rate for just listening.\nOne rating per skill per exchange. Be honest -- struggled is useful data, not a failure.";
 };
 
-// --- Boot Prompt (Course Entry) ---
-const buildBootPrompt = (courseName, skillSummary, asgnSummary, profile, journal, verifyCtx) => {
-  const statusLine = profile.sessions > 0
-    ? "Returning student with " + profile.sessions + " sessions"
-    : "Brand new -- first session";
-
-  const hasAssignments = asgnSummary && asgnSummary.trim() && asgnSummary !== "None found yet.";
-
-  return "You are Study -- a master teacher. A student just entered their course, and you've read every piece of material they uploaded. You know this course deeply.\n\nCOURSE: " + courseName + "\n\nSKILLS IDENTIFIED:\n" + (skillSummary || "Still processing...") + "\n\nASSIGNMENTS:\n" + (asgnSummary || "None found yet.") + "\n\nSTUDENT STATUS: " + statusLine + "\n\nSESSION HISTORY:\n" + formatJournal(journal || []) + "\n" + (verifyCtx || "") + "\n---\n\nWrite your opening message. This is the first thing the student sees.\n\nPRIORITY: ASSIGNMENTS FIRST.\n\nFOR A NEW STUDENT:\n" + (hasAssignments ? "Lead with what's due. Not a vague overview of the course -- the specific assignments, their deadlines, and what skills they'll need. The student came here because they have work to do. Show them you understand that.\n\nAfter laying out the assignments, briefly mention the skills the course covers and how they connect to the assignments. Then recommend where to start -- usually the nearest deadline, unless a foundational skill is missing that blocks everything.\n\nFrame it like: \"Alright, I've gone through everything. Here's what you've got coming up... [assignments with dates]. To handle [first assignment], you'll need to be solid on [skills]. Let's start there.\"\n\nIf they finish their assignments early, that's when the real learning begins -- mention this naturally. Something like: \"Once your assignments are handled, we can dig deeper into the concepts and make sure you actually own this material.\"\n" : "No assignments were found in the uploaded materials. Let the student know -- ask if they have assignment files to upload. In the meantime, survey the course skills and suggest starting with foundational concepts that everything else builds on. Frame it as getting ahead: when assignments do come, they'll be ready.\n") + "\nDon't be stiff. Don't deliver a numbered report. Talk to them like a teacher on the first day who's done their prep. Keep it focused -- orient them and get them moving.\n\nIf any documents had verification issues, mention them naturally -- \"One thing I noticed: [file] had some sections I couldn't read clearly. You might want to check [specific section] and let me know if I'm reading it right.\"\n\nFOR A RETURNING STUDENT:\nCheck their assignment status first. Reference what they were working on, what's still due, and what's coming up. If they finished something since last session, acknowledge it and point to what's next.\n\nIf all assignments are in good shape, shift to mastery: \"Your assignments are handled. Let's use this time to go deeper on [area where they showed weakness].\" Reference specific struggles from the session history.\n\nMake it feel like picking up a conversation, not starting over.\n\nEnd by letting them choose: pick an assignment to work on, ask about a concept, or tell you what they need. But make the assignment path the obvious default.";
-};
-
-// --- Skill Point Parser ---
 // --- Question Unlock Parser ---
 const parseQuestionUnlock = (response) => {
   var match = response.match(/\[UNLOCK_QUESTION\]\s*([\w-]+)\s*\[\/UNLOCK_QUESTION\]/);
@@ -1813,15 +1751,22 @@ const generateProblems = async (practiceSet, skill, courseName, materialCtx) => 
     "  \"id\": \"p1\",\n" +
     "  \"prompt\": \"the problem statement shown to the student\",\n" +
     "  \"starterCode\": \"code template if applicable, or null\",\n" +
-    "  \"expectedApproach\": \"what a correct answer looks like â€” for evaluation only, never shown to student\",\n" +
-    "  \"signature\": \"one-line unique summary of this problem for dedup\"\n" +
+    "  \"expectedApproach\": \"what a correct answer looks like - for evaluation only, never shown to student\",\n" +
+    "  \"signature\": \"one-line unique summary of this problem for dedup\",\n" +
+    "  \"workedExample\": {\n" +
+    "    \"problem\": \"a SIMILAR but DIFFERENT problem (same concept, different specifics)\",\n" +
+    "    \"solution\": \"step-by-step solution with annotations\",\n" +
+    "    \"keyInsight\": \"one sentence: the principle this demonstrates\"\n" +
+    "  }\n" +
     "}]\n\n" +
     "Rules:\n" +
     "- Each problem must be distinct from the others and from ALREADY USED.\n" +
     "- Problems should be focused solely on " + skill.name + ".\n" +
     "- Difficulty should be appropriate for Tier " + tier + " (" + tierInfo.name + ").\n" +
     "- Use " + (lang || "pseudocode") + " for all code snippets.\n" +
-    "- For starterCode: use \\n for newlines within the string.";
+    "- For starterCode: use \\n for newlines within the string.\n" +
+    "- workedExample must be DIFFERENT from prompt - same concept, different scenario.\n" +
+    "- workedExample.solution shows work step by step, not just the answer.";
 
   var result = await callClaude(prompt, [{ role: "user", content: "Generate the practice problems." }], 8192);
   var parsed = extractJSON(result);
@@ -1836,9 +1781,12 @@ const generateProblems = async (practiceSet, skill, courseName, materialCtx) => 
     prompt: p.prompt || "Problem " + (i + 1),
     starterCode: p.starterCode || null,
     expectedApproach: p.expectedApproach || "",
+    workedExample: p.workedExample || null,
     studentAnswer: null,
     evaluation: null,
     passed: null,
+    exampleViewed: false,
+    confidenceRating: null, // IES Rec 6a: self-assessment calibration
   }));
 
   // Store signatures
@@ -2496,10 +2444,48 @@ function StudyInner() {
       // Cache context for reuse in sendMessage
       cachedSessionCtx.current = { ctx, skills, profile, journal, focus };
 
+      // --- IES Rec 1 & 6b: Calculate gaps and review-due skills ---
+      var studentContext = "";
+      if (Array.isArray(skills) && skills.length > 0) {
+        const now = new Date();
+        const today = now.toISOString().split("T")[0];
+        
+        // Find skills due for review (nextReviewDate <= today or "now")
+        const dueForReview = skills.map(s => {
+          const sd = profile.skills[s.id];
+          const reviewDate = nextReviewDate(sd, 0.4);
+          return { ...s, reviewDate, strength: effectiveStrength(sd) };
+        }).filter(s => s.reviewDate === "now" || (s.reviewDate && s.reviewDate <= today));
+        
+        // Find weak skills (strength < 0.4)
+        const weakSkills = skills.map(s => ({
+          ...s, strength: effectiveStrength(profile.skills[s.id])
+        })).filter(s => s.strength < 0.4 && s.strength > 0);
+        
+        // Find solid skills (strength >= 0.7)
+        const solidSkills = skills.map(s => ({
+          ...s, strength: effectiveStrength(profile.skills[s.id])
+        })).filter(s => s.strength >= 0.7);
+        
+        if (dueForReview.length > 0 || weakSkills.length > 0 || solidSkills.length > 0) {
+          studentContext = "\n\nSTUDENT SKILL STATUS:";
+          if (solidSkills.length > 0) {
+            studentContext += "\n- Solid (70%+): " + solidSkills.slice(0, 5).map(s => s.name).join(", ") + (solidSkills.length > 5 ? " (+" + (solidSkills.length - 5) + " more)" : "");
+          }
+          if (weakSkills.length > 0) {
+            studentContext += "\n- Needs work (<40%): " + weakSkills.slice(0, 5).map(s => s.name + " (" + Math.round(s.strength * 100) + "%)").join(", ");
+          }
+          if (dueForReview.length > 0) {
+            studentContext += "\n- DUE FOR REVIEW: " + dueForReview.slice(0, 5).map(s => s.name).join(", ");
+          }
+          studentContext += "\n\nBe direct about gaps. If skills are due for review, mention it. Students benefit from knowing where they stand.";
+        }
+      }
+
       var userMsg, modeHint;
       if (focus.type === "recap") {
         userMsg = "Catch me up on where I left off.";
-        modeHint = "\n\nMODE: RECAP. Summarize progress from session history. Suggest what to do next.";
+        modeHint = "\n\nMODE: RECAP. Summarize progress from session history. Be direct about skill status -- name what's solid, what needs work, and what's due for review. Suggest what to do next based on gaps and upcoming assignments.";
       } else if (focus.type === "assignment") {
         // Initialize workspace with all questions locked
         var qs = (focus.assignment.questions || []).map(q => ({
@@ -2516,7 +2502,7 @@ function StudyInner() {
         modeHint = "\n\nMODE: SKILL MASTERY. The student chose this specific skill to strengthen. You have the skill details and source material loaded. Start by asking a diagnostic question to find where their understanding breaks down.";
       }
 
-      const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
+      const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + studentContext + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
       setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: "" }]);
       const response = await callClaudeStream(bootSystem, [{ role: "user", content: userMsg }], function(partial) {
         setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: partial }]);
@@ -2834,7 +2820,7 @@ function StudyInner() {
 
           <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
             style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 16, padding: cur ? "24px 20px" : "48px 32px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent", marginBottom: 24, transition: "all 0.2s" }}>
-            <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,.pptx,.ppt,image/*" onChange={onSelect} style={{ display: "none" }} />
+            <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
             <div style={{ fontSize: cur ? 13 : 15, color: T.tx, fontWeight: 500, marginBottom: 4 }}>
               {parsing ? "Parsing files..." : drag ? "Drop here" : files.length > 0 ? "Add more files" : "Drag & drop or click to browse"}
             </div>
@@ -2842,9 +2828,9 @@ function StudyInner() {
               <div style={{ fontSize: 12, color: T.txD, lineHeight: 1.6 }}>
                 <span style={{ color: T.gn }}>Best:</span> .txt .md .csv .srt .vtt
                 <span style={{ margin: "0 6px", color: T.bd }}>|</span>
-                <span style={{ color: "#F59E0B" }}>Good:</span> .docx .xlsx .epub .pptx
+                <span style={{ color: "#F59E0B" }}>Good:</span> .docx .xlsx .epub
                 <span style={{ margin: "0 6px", color: T.bd }}>|</span>
-                <span style={{ color: T.txM }}>No support:</span> .pdf
+                <span style={{ color: T.txM }}>No support:</span> .pdf .pptx
               </div>
             )}
           </div>
@@ -2857,8 +2843,8 @@ function StudyInner() {
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Word docs (.docx)</span> -- works for most files. Complex formatting may be lost. If content looks wrong, save as .txt from Word.</div>
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Spreadsheets (.xlsx, .csv)</span> -- tables extracted as tab-separated text. For best results, export as .csv from Excel.</div>
               <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>E-books (.epub)</span> -- chapters extracted individually. Non-standard EPUBs may fail.</div>
-              <div><span style={{ color: "#F59E0B", fontWeight: 600 }}>Slides (.pptx)</span> -- text extracted from all slides. Old .ppt format requires resaving as .pptx first.</div>
               <div><span style={{ color: T.txM, fontWeight: 600 }}>PDFs (.pdf)</span> -- not yet supported. Open in Preview/Acrobat, select all text, paste into a .txt file.</div>
+              <div><span style={{ color: T.txM, fontWeight: 600 }}>Slides (.pptx)</span> -- not yet supported. Export as .pdf then convert to .txt, or copy slide notes to a text file.</div>
               <div><span style={{ color: T.gn, fontWeight: 600 }}>Images</span> -- screenshots of assignments or notes. AI reads them directly.</div>
               <div style={{ marginTop: 8, color: T.txM, fontStyle: "italic" }}>Tip: if a file fails to parse, the fastest fix is always exporting to .txt or .csv from the source application.</div>
             </div>
@@ -3034,7 +3020,7 @@ function StudyInner() {
             <div style={{ maxWidth: 600, margin: "0 auto" }}>
               <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
                 style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 12, padding: "24px 16px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent", marginBottom: files.length ? 16 : 0 }}>
-                <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,.pptx,.ppt,image/*" onChange={onSelect} style={{ display: "none" }} />
+                <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
                 <div style={{ fontSize: 13, color: T.txD }}>Drop files or click to browse</div>
               </div>
               {files.map(f => (
@@ -3404,53 +3390,138 @@ function StudyInner() {
               ) : problem ? (
                 <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
                   <div style={{ maxWidth: 700, margin: "0 auto" }}>
-                    {/* Problem prompt */}
-                    <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.prompt}</div>
-
-                    {/* Code editor */}
-                    <textarea
-                      value={problem.studentAnswer || (problem.starterCode || "")}
-                      onChange={e => {
-                        var val = e.target.value;
-                        setPracticeMode(prev => {
-                          var s = prev.set;
-                          var t = s.currentTier;
-                          var td = { ...s.tiers[t] };
-                          var attempts = [...td.attempts];
-                          var lastA = { ...attempts[attempts.length - 1] };
-                          var probs = [...lastA.problems];
-                          probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], studentAnswer: val };
-                          lastA.problems = probs;
-                          attempts[attempts.length - 1] = lastA;
-                          td.attempts = attempts;
-                          var newTiers = { ...s.tiers, [t]: td };
-                          return { ...prev, set: { ...s, tiers: newTiers } };
-                        });
-                      }}
-                      disabled={problem.passed !== null || pm.evaluating}
-                      onKeyDown={e => {
-                        if (e.key === "Tab") {
-                          e.preventDefault();
-                          var ta = e.target;
-                          var start = ta.selectionStart, end = ta.selectionEnd;
-                          var val = (problem.studentAnswer || problem.starterCode || "");
-                          var newVal = val.substring(0, start) + "  " + val.substring(end);
+                    {/* IES Rec 2: Worked Example (Tiers 1-3 only, before attempting problem) */}
+                    {tier <= 3 && problem.workedExample && !problem.exampleViewed && problem.passed === null ? (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                          <div style={{ width: 24, height: 24, borderRadius: 12, background: T.acS, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>1</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>Study This Example First</div>
+                        </div>
+                        <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+                          <div style={{ fontSize: 12, color: T.ac, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Example Problem</div>
+                          <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.workedExample.problem}</div>
+                          <div style={{ fontSize: 12, color: T.ac, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Solution</div>
+                          <div style={{ fontSize: 13, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap", fontFamily: "'SF Mono', 'Fira Code', monospace", background: "#1A1D24", padding: 12, borderRadius: 8 }}>{problem.workedExample.solution}</div>
+                          <div style={{ fontSize: 12, color: T.txD, fontStyle: "italic", borderLeft: "2px solid " + T.ac, paddingLeft: 12 }}>{problem.workedExample.keyInsight}</div>
+                        </div>
+                        <button onClick={() => {
                           setPracticeMode(prev => {
-                            var s = prev.set, t2 = s.currentTier;
-                            var td2 = { ...s.tiers[t2] }; var atts = [...td2.attempts];
-                            var la = { ...atts[atts.length - 1] }; var pr = [...la.problems];
-                            pr[prev.currentProblemIdx] = { ...pr[prev.currentProblemIdx], studentAnswer: newVal };
-                            la.problems = pr; atts[atts.length - 1] = la; td2.attempts = atts;
-                            return { ...prev, set: { ...s, tiers: { ...s.tiers, [t2]: td2 } } };
+                            var s = prev.set, t = s.currentTier;
+                            var td = { ...s.tiers[t] };
+                            var attempts = [...td.attempts];
+                            var lastA = { ...attempts[attempts.length - 1] };
+                            var probs = [...lastA.problems];
+                            probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], exampleViewed: true };
+                            lastA.problems = probs;
+                            attempts[attempts.length - 1] = lastA;
+                            td.attempts = attempts;
+                            return { ...prev, set: { ...s, tiers: { ...s.tiers, [t]: td } } };
                           });
-                          setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
-                        }
-                      }}
-                      style={{
-                        width: "100%", minHeight: 220, maxHeight: 400, padding: 16,
-                        fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: 13, lineHeight: 1.6,
-                        background: "#1A1D24", color: problem.passed !== null ? T.txD : "#E8EAF0",
-                        border: "1px solid " + (pm.feedback ? (problem.passed ? T.gn : T.rd) : T.bd),
+                        }}
+                          style={{ width: "100%", padding: "12px 24px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                          Got It - Show Me the Problem
+                        </button>
+                      </div>
+                    ) : (
+                      <div>
+                        {/* Problem indicator for Tiers 1-3 after example */}
+                        {tier <= 3 && problem.exampleViewed && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                            <div style={{ width: 24, height: 24, borderRadius: 12, background: T.acS, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12 }}>2</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>Now Try This One</div>
+                          </div>
+                        )}
+                        {/* Problem prompt */}
+                        <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.prompt}</div>
+
+                        {/* IES Rec 6a: Confidence Rating (before allowing answer) */}
+                        {problem.confidenceRating === null && problem.passed === null && (
+                          <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: T.tx, marginBottom: 12 }}>Before you start: How confident are you?</div>
+                            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+                              {[1, 2, 3, 4, 5].map(level => (
+                                <button key={level} onClick={() => {
+                                  setPracticeMode(prev => {
+                                    var s = prev.set, t = s.currentTier;
+                                    var td = { ...s.tiers[t] };
+                                    var attempts = [...td.attempts];
+                                    var lastA = { ...attempts[attempts.length - 1] };
+                                    var probs = [...lastA.problems];
+                                    probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], confidenceRating: level };
+                                    lastA.problems = probs;
+                                    attempts[attempts.length - 1] = lastA;
+                                    td.attempts = attempts;
+                                    return { ...prev, set: { ...s, tiers: { ...s.tiers, [t]: td } } };
+                                  });
+                                }}
+                                  style={{
+                                    width: 48, height: 48, borderRadius: 8,
+                                    border: "1px solid " + T.bd, background: T.bg,
+                                    color: T.tx, fontSize: 16, fontWeight: 600, cursor: "pointer",
+                                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center"
+                                  }}>
+                                  <span>{level}</span>
+                                  <span style={{ fontSize: 8, color: T.txD, marginTop: 2 }}>
+                                    {level === 1 ? "Lost" : level === 2 ? "Shaky" : level === 3 ? "Maybe" : level === 4 ? "Good" : "Easy"}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                            <div style={{ fontSize: 11, color: T.txD, textAlign: "center", marginTop: 8 }}>Rate before attempting - this helps calibrate your self-assessment</div>
+                          </div>
+                        )}
+
+                        {/* Confidence shown after rating */}
+                        {problem.confidenceRating !== null && problem.passed === null && (
+                          <div style={{ fontSize: 11, color: T.txD, marginBottom: 8 }}>
+                            Your confidence: {problem.confidenceRating}/5 ({["", "Lost", "Shaky", "Maybe", "Good", "Easy"][problem.confidenceRating]})
+                          </div>
+                        )}
+
+                        {/* Code editor - disabled until confidence is rated */}
+                        <textarea
+                          value={problem.studentAnswer || (problem.starterCode || "")}
+                          onChange={e => {
+                            var val = e.target.value;
+                            setPracticeMode(prev => {
+                              var s = prev.set;
+                              var t = s.currentTier;
+                              var td = { ...s.tiers[t] };
+                              var attempts = [...td.attempts];
+                              var lastA = { ...attempts[attempts.length - 1] };
+                              var probs = [...lastA.problems];
+                              probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], studentAnswer: val };
+                              lastA.problems = probs;
+                              attempts[attempts.length - 1] = lastA;
+                              td.attempts = attempts;
+                              var newTiers = { ...s.tiers, [t]: td };
+                              return { ...prev, set: { ...s, tiers: newTiers } };
+                            });
+                          }}
+                          disabled={problem.passed !== null || pm.evaluating || problem.confidenceRating === null}
+                          onKeyDown={e => {
+                            if (e.key === "Tab") {
+                              e.preventDefault();
+                              var ta = e.target;
+                              var start = ta.selectionStart, end = ta.selectionEnd;
+                              var val = (problem.studentAnswer || problem.starterCode || "");
+                              var newVal = val.substring(0, start) + "  " + val.substring(end);
+                              setPracticeMode(prev => {
+                                var s = prev.set, t2 = s.currentTier;
+                                var td2 = { ...s.tiers[t2] }; var atts = [...td2.attempts];
+                                var la = { ...atts[atts.length - 1] }; var pr = [...la.problems];
+                                pr[prev.currentProblemIdx] = { ...pr[prev.currentProblemIdx], studentAnswer: newVal };
+                                la.problems = pr; atts[atts.length - 1] = la; td2.attempts = atts;
+                                return { ...prev, set: { ...s, tiers: { ...s.tiers, [t2]: td2 } } };
+                              });
+                              setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
+                            }
+                          }}
+                          style={{
+                            width: "100%", minHeight: 220, maxHeight: 400, padding: 16,
+                            fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: 13, lineHeight: 1.6,
+                            background: "#1A1D24", color: problem.passed !== null ? T.txD : "#E8EAF0",
+                            border: "1px solid " + (pm.feedback ? (problem.passed ? T.gn : T.rd) : T.bd),
                         borderRadius: 10, resize: "vertical", tabSize: 2
                       }}
                       placeholder={tier === 1 ? "Type the expected output..." : "Write your answer here..."}
@@ -3535,9 +3606,24 @@ function StudyInner() {
                         border: "1px solid " + (pm.feedback.passed ? "rgba(52,211,153,0.2)" : "rgba(248,113,113,0.2)")
                       }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: pm.feedback.passed ? T.gn : T.rd, marginBottom: 4 }}>
-                          {pm.feedback.passed ? "âœ“ Correct" : "âœ— Incorrect"}
+                          {pm.feedback.passed ? "Correct" : "Incorrect"}
                         </div>
                         <div style={{ fontSize: 12, color: T.tx, lineHeight: 1.6 }}>{pm.feedback.text}</div>
+                        {problem.confidenceRating !== null && (
+                          <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid " + (pm.feedback.passed ? "rgba(52,211,153,0.2)" : "rgba(248,113,113,0.2)") }}>
+                            <div style={{ fontSize: 11, color: T.txD }}>
+                              {(() => {
+                                var conf = problem.confidenceRating;
+                                var passed = pm.feedback.passed;
+                                if (passed && conf >= 4) return "Good calibration - your confidence matched your performance.";
+                                if (passed && conf <= 2) return "You did better than expected! Confidence was " + conf + "/5 but you got it. Trust yourself more.";
+                                if (!passed && conf >= 4) return "Calibration check: " + conf + "/5 confidence but missed it. Notice this gap.";
+                                if (!passed && conf <= 2) return "You predicted this would be hard, and it was. Good self-awareness.";
+                                return "Confidence: " + conf + "/5";
+                              })()}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -3552,6 +3638,8 @@ function StudyInner() {
                           }} />
                       ))}
                     </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -3856,7 +3944,7 @@ function StudyInner() {
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                 <div style={{ fontSize: 13, fontWeight: 500, color: T.tx }}>{s.name}</div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 12 }}>
-                                  {s.reviewDate === "now" && <span style={{ fontSize: 10, color: T.rd, fontWeight: 600 }}>REVIEW</span>}
+                                  {(s.reviewDate === "now" || (s.reviewDate && s.reviewDate <= new Date().toISOString().split("T")[0])) && <span style={{ fontSize: 10, color: T.rd, fontWeight: 600, background: T.rd + "20", padding: "2px 6px", borderRadius: 4 }}>REVIEW DUE</span>}
                                   <span style={{ fontSize: 11, color: strColor, fontWeight: 600 }}>{Math.round(s.strength * 100)}%</span>
                                   <span style={{ fontSize: 11, color: T.txD }}>{isExp ? "\u25b4" : "\u25be"}</span>
                                 </div>
