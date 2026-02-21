@@ -63,4 +63,4 @@ Active development. Core teaching loop works. Future plans include Tauri desktop
 
 ## License
 
-Open source. Built for learners.
+Copyright © 2025 Mark Lehn. All rights reserved.
