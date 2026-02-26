@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, Component, createConte
 // --- Module Imports ---
 import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, hasApiKey, DB } from "./lib/db.js";
+import { getApiKey, setApiKey, DB } from "./lib/db.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
@@ -39,13 +39,6 @@ class StudyErrorBoundary extends Component {
   buildReport() {
     const err = this.state.error;
     const ctx = this.context || {};
-    const storageKeys = [];
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith("study-")) storageKeys.push(k);
-      }
-    } catch (e) { storageKeys.push("(storage access failed)"); }
     return [
       "STUDY CRASH REPORT",
       "==================",
@@ -53,6 +46,7 @@ class StudyErrorBoundary extends Component {
       "Screen: " + (ctx.screen || "unknown"),
       "Course ID: " + (ctx.courseId || "none"),
       "Session Mode: " + (ctx.sessionMode || "none"),
+      "Storage: SQLite",
       "",
       "Error: " + (err.message || String(err)),
       "",
@@ -61,9 +55,6 @@ class StudyErrorBoundary extends Component {
       "",
       "Component stack:",
       (this.state.info?.componentStack || "unavailable").trim().split("\n").slice(0, 6).join("\n"),
-      "",
-      "Storage keys (" + storageKeys.length + "):",
-      storageKeys.slice(0, 20).join(", ") + (storageKeys.length > 20 ? "..." : ""),
     ].join("\n");
   }
   handleCopy(report) {
@@ -72,16 +63,10 @@ class StudyErrorBoundary extends Component {
   handleSoftReset() {
     this.setState({ error: null, info: null, showNuclear: false });
   }
-  handleHardReset() {
-    // Clear all study-related localStorage and reload
+  async handleHardReset() {
     try {
-      const keysToRemove = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith("study-")) keysToRemove.push(k);
-      }
-      keysToRemove.forEach(k => localStorage.removeItem(k));
-    } catch (e) { console.error("Failed to clear storage:", e); }
+      await DB.resetAll();
+    } catch (e) { console.error("Failed to clear database:", e); }
     window.location.reload();
   }
   render() {
@@ -169,8 +154,9 @@ function StudyInner({ setErrorCtx }) {
   const [ready, setReady] = useState(false);
   
   // Settings
-  const [showSettings, setShowSettings] = useState(!hasApiKey());
-  const [apiKeyInput, setApiKeyInput] = useState(getApiKey());
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKeyLoaded, setApiKeyLoaded] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [keyVerifying, setKeyVerifying] = useState(false);
   const [keyError, setKeyError] = useState("");
 
@@ -234,7 +220,14 @@ function StudyInner({ setErrorCtx }) {
     window.addEventListener("unhandledrejection", onRej);
     return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onRej); };
   }, []);
-  useEffect(() => { (async () => { setCourses(await DB.getCourses()); setReady(true); })(); }, []);
+  useEffect(() => { (async () => {
+    setCourses(await DB.getCourses());
+    const key = await getApiKey();
+    setApiKeyInput(key);
+    if (!key) setShowSettings(true);
+    setApiKeyLoaded(true);
+    setReady(true);
+  })(); }, []);
   useEffect(() => { if (ready) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } }, [input]);
@@ -684,7 +677,7 @@ function StudyInner({ setErrorCtx }) {
     try {
       const course = courses.find(c => c.id === id);
       setCourses(p => p.filter(c => c.id !== id));
-      await DB.deleteCourse(id, course?.materials || []);
+      await DB.deleteCourse(id);
       if (active?.id === id) { setActive(null); setScreen("home"); }
     } finally { setGlobalLock(null); }
   };
@@ -819,13 +812,6 @@ function StudyInner({ setErrorCtx }) {
   // --- Async Error Display ---
   const [showAsyncNuclear, setShowAsyncNuclear] = useState(false);
   if (asyncError) {
-    const storageKeys = [];
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith("study-")) storageKeys.push(k);
-      }
-    } catch (e) { storageKeys.push("(storage access failed)"); }
     const report = [
       "STUDY ASYNC ERROR",
       "==================",
@@ -833,24 +819,17 @@ function StudyInner({ setErrorCtx }) {
       "Screen: " + screen,
       "Course ID: " + (active?.id || "none"),
       "Session Mode: " + (sessionMode || "none"),
+      "Storage: SQLite",
       "",
       "Error: " + asyncError.message,
       "",
       "Stack:",
       (asyncError.stack || "").split("\n").slice(0, 10).join("\n"),
-      "",
-      "Storage keys (" + storageKeys.length + "):",
-      storageKeys.slice(0, 20).join(", ") + (storageKeys.length > 20 ? "..." : ""),
     ].join("\n");
-    const handleAsyncHardReset = () => {
+    const handleAsyncHardReset = async () => {
       try {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith("study-")) keysToRemove.push(k);
-        }
-        keysToRemove.forEach(k => localStorage.removeItem(k));
-      } catch (e) { console.error("Failed to clear storage:", e); }
+        await DB.resetAll();
+      } catch (e) { console.error("Failed to clear database:", e); }
       window.location.reload();
     };
     return (
@@ -952,8 +931,8 @@ function StudyInner({ setErrorCtx }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
-          {hasApiKey() && (
-            <button onClick={() => { setShowSettings(false); setApiKeyInput(getApiKey()); setKeyError(""); }}
+          {apiKeyLoaded && apiKeyInput && (
+            <button onClick={async () => { setShowSettings(false); setApiKeyInput(await getApiKey()); setKeyError(""); }}
               disabled={keyVerifying}
               style={{ flex: 1, padding: 14, background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: T.txD, cursor: keyVerifying ? "default" : "pointer", opacity: keyVerifying ? 0.5 : 1 }}>
               Cancel
@@ -967,7 +946,7 @@ function StudyInner({ setErrorCtx }) {
               var result = await testApiKey(key);
               setKeyVerifying(false);
               if (result.valid) {
-                setApiKey(key);
+                await setApiKey(key);
                 setShowSettings(false);
                 addNotif("success", "API key verified and saved");
               } else {
@@ -1814,7 +1793,8 @@ function StudyInner({ setErrorCtx }) {
   );
 
   // --- SKILLS SCREEN ---
-  if (screen === "skills" && active) return (
+  if (screen === "skills" && active) return (<>
+    {globalLock && lockOverlay}
     <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
       <style>{CSS}</style>
       <div style={{ maxWidth: 650, margin: "0 auto" }}>
@@ -1823,54 +1803,96 @@ function StudyInner({ setErrorCtx }) {
         <p style={{ fontSize: 14, color: T.txD, marginBottom: 24 }}>{active.name}</p>
 
         {/* Re-index button */}
-        {(() => {
-          var allChunks = (active.materials || []).flatMap(m => (m.chunks || []));
-          var activated = allChunks.filter(c => c.status !== "skipped");
-          var needsExtraction = activated.filter(c => c.status === "pending" || c.status === "failed");
-          return (
-            <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
-              <button disabled={!!globalLock} onClick={async () => {
-                if (globalLock) return;
-                setGlobalLock({ message: "Re-indexing activated materials..." });
-                setBusy(true); setStatus("Checking activated materials...");
-                extractionCancelledRef.current = false;
-                try {
-                  var skills = await extractSkillTree(active.id, active.materials, setStatus, true, addNotif, extractionCancelledRef,
-                    (err) => {
-                      setExtractionErrors(p => [...p, err].slice(-10));
-                      if (err.error && /401|403|authentication|unauthorized|invalid.*key/i.test(err.error)) {
-                        addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
-                      }
-                    }, setProcessingMatId);
-                  if (Array.isArray(skills) && skills.length > 0) {
-                    try {
-                      var validation = await validateSkillTree(active.id, skills, setStatus);
-                      skills = validation.skills;
-                    } catch (e) { console.error("Validation failed:", e); }
+        <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
+          <button disabled={!!globalLock} onClick={async () => {
+            if (globalLock) return;
+            setGlobalLock({ message: "Re-indexing activated materials..." });
+            setBusy(true); setStatus("Scanning chunks for missing skills...");
+            extractionCancelledRef.current = false;
+            try {
+              // Smart check: find activated chunks that have no saved skills in DB
+              var matsToReindex = [];
+              var resetCount = 0;
+              for (var mat of (active.materials || [])) {
+                var chunks = mat.chunks || [];
+                var needsWork = false;
+                var updatedChunks = [];
+                for (var ch of chunks) {
+                  if (ch.status === "skipped") { updatedChunks.push(ch); continue; }
+                  // Check if this chunk actually has skills saved
+                  var chunkSkills = await DB.getChunkSkills(active.id, ch.id);
+                  if (!chunkSkills || !Array.isArray(chunkSkills) || chunkSkills.length === 0) {
+                    // No skills for this chunk — reset to pending so extraction picks it up
+                    updatedChunks.push({ ...ch, status: "pending" });
+                    needsWork = true;
+                    resetCount++;
+                  } else {
+                    updatedChunks.push(ch);
                   }
-                  var refreshed = await DB.getCourses();
-                  var updatedCourse = refreshed.find(c => c.id === active.id);
-                  if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
-                  var sk = await DB.getSkills(active.id) || [];
-                  var rt = await DB.getRefTaxonomy(active.id);
-                  setSkillViewData({ skills: sk, refTax: rt });
-                  addNotif("success", "Re-index complete. " + (Array.isArray(sk) ? sk.length : 0) + " skills total.");
-                } catch (e) {
-                  console.error("Re-index failed:", e);
-                  addNotif("error", "Re-index failed: " + e.message);
-                } finally {
-                  setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
                 }
-              }}
-                style={{ padding: "8px 16px", background: T.acS, border: "1px solid " + T.ac, borderRadius: 8, color: T.ac, cursor: globalLock ? "default" : "pointer", fontSize: 13, fontWeight: 600, opacity: globalLock ? 0.5 : 1 }}>
-                Re-index
-              </button>
-              {needsExtraction.length > 0 && (
-                <span style={{ fontSize: 12, color: "#F59E0B" }}>{needsExtraction.length} section(s) not yet extracted</span>
-              )}
-            </div>
-          );
-        })()}
+                matsToReindex.push({ ...mat, chunks: updatedChunks });
+              }
+
+              if (resetCount === 0) {
+                // All activated chunks already have skills — just rebuild the merged tree from chunk skills
+                setStatus("All sections extracted. Rebuilding skill tree...");
+                var allSkills = [];
+                for (var mat2 of (active.materials || [])) {
+                  for (var ch2 of (mat2.chunks || [])) {
+                    if (ch2.status === "skipped") continue;
+                    var cs = await DB.getChunkSkills(active.id, ch2.id);
+                    if (Array.isArray(cs)) allSkills.push(...cs);
+                  }
+                }
+                // Deduplicate by id
+                var seen = {};
+                allSkills = allSkills.filter(s => { if (seen[s.id]) return false; seen[s.id] = true; return true; });
+                await DB.saveSkills(active.id, allSkills);
+                var sk0 = allSkills;
+                var rt0 = await DB.getRefTaxonomy(active.id);
+                setSkillViewData({ skills: sk0, refTax: rt0 });
+                addNotif("success", "Skill tree rebuilt from existing data. " + sk0.length + " skills.");
+              } else {
+                // Save reset statuses and run extraction
+                setStatus("Extracting " + resetCount + " section(s)...");
+                var updatedCourse = { ...active, materials: matsToReindex };
+                var allCourses = await DB.getCourses();
+                allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
+                await DB.saveCourses(allCourses);
+                setCourses(allCourses); setActive(updatedCourse);
+
+                var skills = await extractSkillTree(active.id, matsToReindex, setStatus, false, addNotif, extractionCancelledRef,
+                  (err) => {
+                    setExtractionErrors(p => [...p, err].slice(-10));
+                    if (err.error && /401|403|authentication|unauthorized|invalid.*key/i.test(err.error)) {
+                      addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
+                    }
+                  }, setProcessingMatId);
+                if (Array.isArray(skills) && skills.length > 0) {
+                  try {
+                    var validation = await validateSkillTree(active.id, skills, setStatus);
+                    skills = validation.skills;
+                  } catch (e) { console.error("Validation failed:", e); }
+                }
+                var refreshed = await DB.getCourses();
+                var rc = refreshed.find(c => c.id === active.id);
+                if (rc) { setCourses(refreshed); setActive(rc); }
+                var sk = await DB.getSkills(active.id) || [];
+                var rt = await DB.getRefTaxonomy(active.id);
+                setSkillViewData({ skills: sk, refTax: rt });
+                addNotif("success", "Re-index complete. " + sk.length + " skills from " + resetCount + " section(s).");
+              }
+            } catch (e) {
+              console.error("Re-index failed:", e);
+              addNotif("error", "Re-index failed: " + e.message);
+            } finally {
+              setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
+            }
+          }}
+            style={{ padding: "8px 16px", background: T.acS, border: "1px solid " + T.ac, borderRadius: 8, color: T.ac, cursor: globalLock ? "default" : "pointer", fontSize: 13, fontWeight: 600, opacity: globalLock ? 0.5 : 1 }}>
+            Re-index
+          </button>
+        </div>
 
         {/* Reference Taxonomy */}
         {skillViewData?.refTax && (
@@ -1932,7 +1954,7 @@ function StudyInner({ setErrorCtx }) {
         })()}
       </div>
     </div>
-  );
+  </>);
 
   // --- NOTIFICATIONS SCREEN ---
   if (screen === "notifs" && active) return (

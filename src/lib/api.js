@@ -20,7 +20,7 @@ export const MODEL_HAIKU = "claude-haiku-4-5-20251001";
 
 // --- Claude API ---
 export const callClaude = async (system, messages, maxTokens, useHaiku = false) => {
-  const apiKey = getApiKey();
+  const apiKey = await getApiKey();
   if (!apiKey) return "Error: No API key set. Go to Settings to add your Anthropic API key.";
   const httpFetch = await initTauriFetch();
   const model = useHaiku ? MODEL_HAIKU : MODEL_SONNET;
@@ -59,7 +59,7 @@ export const callClaude = async (system, messages, maxTokens, useHaiku = false) 
 
 // Streaming version for chat -- calls onChunk with partial text as tokens arrive
 export const callClaudeStream = async (system, messages, onChunk, maxTokens) => {
-  const apiKey = getApiKey();
+  const apiKey = await getApiKey();
   if (!apiKey) return "Error: No API key set. Go to Settings to add your Anthropic API key.";
 
   const httpFetch = await initTauriFetch();
