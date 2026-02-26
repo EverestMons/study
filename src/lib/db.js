@@ -54,10 +54,11 @@ export const DB = {
           'SELECT id, label, char_count as charCount, status, error_info as errorInfo, fail_count as failCount FROM chunks WHERE material_id = ?',
           [mat.id]
         );
-        mat.chunks = mat.chunks.map(ch => ({
-          ...ch,
-          errorInfo: ch.errorInfo ? JSON.parse(ch.errorInfo) : null
-        }));
+        mat.chunks = mat.chunks.map(ch => {
+          var info = null;
+          if (ch.errorInfo) { try { info = JSON.parse(ch.errorInfo); } catch { info = { raw: ch.errorInfo }; } }
+          return { ...ch, errorInfo: info };
+        });
       }
       course.materials = mats;
     }
@@ -68,12 +69,14 @@ export const DB = {
     const db = await getDb();
     for (const course of courses) {
       await db.execute(
-        'INSERT OR REPLACE INTO courses (id, name, created, updated) VALUES (?, ?, ?, ?)',
+        `INSERT INTO courses (id, name, created, updated) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated = excluded.updated`,
         [course.id, course.name, course.created || course.createdAt, Date.now()]
       );
       for (const mat of (course.materials || [])) {
         await db.execute(
-          'INSERT OR REPLACE INTO materials (id, course_id, label, classification, file_type, active, created) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          `INSERT INTO materials (id, course_id, label, classification, file_type, active, created) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET course_id = excluded.course_id, label = excluded.label, classification = excluded.classification, file_type = excluded.file_type, active = excluded.active`,
           [mat.id, course.id, mat.name || mat.label, mat.classification, mat.type || mat.fileType, mat.active !== false ? 1 : 0, mat.created || Date.now()]
         );
         for (const ch of (mat.chunks || [])) {
@@ -100,8 +103,6 @@ export const DB = {
   async saveDoc(cid, chunkId, doc) {
     const db = await getDb();
     const content = typeof doc === 'string' ? doc : JSON.stringify(doc);
-    // UPDATE content on existing row; if row doesn't exist yet (created later by saveCourses),
-    // saveCourses will call saveDoc again via the content-backfill path
     await db.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
     return true;
   },
@@ -133,7 +134,8 @@ export const DB = {
   async getChunkSkills(cid, chunkId) {
     const db = await getDb();
     const rows = await db.select('SELECT skill_data FROM chunk_skills WHERE chunk_id = ? AND course_id = ?', [chunkId, cid]);
-    return rows.length > 0 ? JSON.parse(rows[0].skill_data) : null;
+    if (rows.length === 0) return null;
+    try { return JSON.parse(rows[0].skill_data); } catch { return null; }
   },
 
   // --- Delete a single chunk and its skills ---
@@ -157,7 +159,8 @@ export const DB = {
   async _getCourseData(cid, type) {
     const db = await getDb();
     const rows = await db.select('SELECT data FROM course_data WHERE course_id = ? AND data_type = ?', [cid, type]);
-    return rows.length > 0 ? JSON.parse(rows[0].data) : null;
+    if (rows.length === 0) return null;
+    try { return JSON.parse(rows[0].data); } catch { return null; }
   },
 
   async saveSkills(cid, s) { return await this._saveCourseData(cid, 'skills', s); },
@@ -186,7 +189,7 @@ export const DB = {
     const db = await getDb();
     const rows = await db.select('SELECT skills, sessions FROM profiles WHERE course_id = ?', [cid]);
     if (rows.length > 0) {
-      return { skills: JSON.parse(rows[0].skills), sessions: rows[0].sessions };
+      try { return { skills: JSON.parse(rows[0].skills), sessions: rows[0].sessions }; } catch { /* fall through */ }
     }
     return { skills: {}, sessions: 0 };
   },
@@ -208,7 +211,8 @@ export const DB = {
     const db = await getDb();
     const rows = await db.select('SELECT role, content, metadata FROM messages WHERE course_id = ? ORDER BY id', [cid]);
     return rows.map(r => {
-      const meta = JSON.parse(r.metadata || '{}');
+      var meta = {};
+      try { meta = JSON.parse(r.metadata || '{}'); } catch { /* ignore corrupted metadata */ }
       return { role: r.role, content: r.content, ...meta };
     });
   },
@@ -229,7 +233,7 @@ export const DB = {
   async getJournal(cid) {
     const db = await getDb();
     const rows = await db.select('SELECT entry_data FROM journal_entries WHERE course_id = ? ORDER BY id', [cid]);
-    return rows.map(r => JSON.parse(r.entry_data));
+    return rows.map(r => { try { return JSON.parse(r.entry_data); } catch { return null; } }).filter(Boolean);
   },
 
   // --- Practice Sets ---
@@ -245,7 +249,8 @@ export const DB = {
   async getPractice(cid, skillId) {
     const db = await getDb();
     const rows = await db.select('SELECT data FROM practice_sets WHERE course_id = ? AND skill_id = ?', [cid, skillId]);
-    return rows.length > 0 ? JSON.parse(rows[0].data) : null;
+    if (rows.length === 0) return null;
+    try { return JSON.parse(rows[0].data); } catch { return null; }
   },
 
   // --- Delete Course ---

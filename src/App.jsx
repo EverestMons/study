@@ -244,7 +244,7 @@ function StudyInner({ setErrorCtx }) {
     }
     setReady(true);
   })(); }, []);
-  useEffect(() => { if (ready) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready]);
+  useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } }, [input]);
 
@@ -698,10 +698,11 @@ function StudyInner({ setErrorCtx }) {
     if (globalLock) return;
     setGlobalLock({ message: "Deleting course..." });
     try {
-      const course = courses.find(c => c.id === id);
-      setCourses(p => p.filter(c => c.id !== id));
       await DB.deleteCourse(id);
+      setCourses(p => p.filter(c => c.id !== id));
       if (active?.id === id) { setActive(null); setScreen("home"); }
+    } catch (e) {
+      addNotif("error", "Failed to delete course: " + e.message);
     } finally { setGlobalLock(null); }
   };
 
@@ -1364,15 +1365,15 @@ function StudyInner({ setErrorCtx }) {
                           addNotif("error", "No content found for " + mat.name + ". Try removing and re-uploading.");
                           return;
                         }
-                        // Create chunk metadata and save
+                        // Create chunk metadata and save — saveCourses first to create the row, then saveDoc to fill content
                         var chunkId = mat.id + "-c0";
                         var matWithChunks = { ...mat, chunks: [{ id: chunkId, label: mat.name, charCount: doc.content.length, status: "pending" }] };
-                        await DB.saveDoc(active.id, chunkId, doc);
                         var updatedMats = active.materials.map(m => m.id !== mat.id ? m : matWithChunks);
                         var updatedCourse = { ...active, materials: updatedMats };
                         var allCourses = await DB.getCourses();
                         allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
                         await DB.saveCourses(allCourses);
+                        await DB.saveDoc(active.id, chunkId, doc);
                         setCourses(allCourses); setActive(updatedCourse);
                         // Now extract
                         await extractSkillTree(active.id, [matWithChunks], setStatus, false, addNotif, extractionCancelledRef,

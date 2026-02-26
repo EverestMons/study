@@ -136,8 +136,9 @@ export const verifyDocument = async (courseId, mat) => {
 
   const result = await callClaude(verifyPrompt, [{ role: "user", content: "Verify this document extraction." }], 8192, true);
   const parsed = extractJSON(result);
-  const verification = parsed || { status: "verified", summary: result.substring(0, 300), keyItems: [], issues: [], questions: [] };
-  return verification;
+  if (parsed) return parsed;
+  // API failed or returned unparseable response — don't falsely mark as verified
+  return { status: "partial", summary: "Verification could not complete (API response was not parseable). Content may still be valid.", keyItems: [], issues: ["Automated verification failed"], questions: [] };
 };
 
 // --- Reference Taxonomy Generation ---
@@ -447,7 +448,11 @@ export const extractSkillTree = async (courseId, materialsMeta, onStatus, retryO
           await updateChunkStatus(courseId, revertId, "skipped");
         }
       }
-      break;
+      // Save partial results before returning
+      if (allExtractedSkills.length > 0) {
+        try { await DB.saveSkills(courseId, allExtractedSkills); } catch (e) { console.warn("Failed to save partial skills on cancel:", e); }
+      }
+      return await DB.getSkills(courseId) || [];
     }
 
     var chunk = chunksToProcess[i];
@@ -548,8 +553,8 @@ export const extractSkillTree = async (courseId, materialsMeta, onStatus, retryO
 
   if (allExtractedSkills.length === 0) {
     onStatus("No skills extracted." + (failedCount > 0 ? " " + failedCount + " section(s) failed." : ""));
-    await DB.saveSkills(courseId, []);
-    return [];
+    // Don't wipe existing skills if nothing was extracted
+    return await DB.getSkills(courseId) || [];
   }
 
   // 6. Run merge/dedup pass
@@ -708,6 +713,7 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
     await DB.saveAsgn(courseId, asgn);
     return asgn;
   }
-  await DB.saveAsgn(courseId, result);
-  return result;
+  // Parse failed — return empty array instead of raw string
+  await DB.saveAsgn(courseId, []);
+  return [];
 };
