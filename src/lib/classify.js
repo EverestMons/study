@@ -16,6 +16,7 @@ export const autoClassify = (file) => {
   // Extension-based
   if (ext === "epub") return "textbook";
   if (ext === "srt" || ext === "vtt") return "lecture";
+  if (ext === "pptx") return "lecture";
 
   // Name-based patterns
   if (/syllabus|schedule|course.?outline|calendar/i.test(name)) return "syllabus";
