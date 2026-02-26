@@ -296,13 +296,13 @@ function StudyInner({ setErrorCtx }) {
   const createCourse = async () => {
     if (!cName.trim() || !files.length || files.some(f => !f.classification)) return;
     const validFiles = files.filter(f => f.parseOk !== false);
-    const tempCourse = { id: Date.now().toString(), name: cName.trim(), materials: [], createdAt: new Date().toISOString() };
-    setActive(tempCourse); setScreen("study"); setBooting(true); setMsgs([]); setStatus("Storing documents...");
+    const courseId = Date.now().toString();
+    setGlobalLock({ message: "Creating course..." });
+    setBusy(true);
+    setStatus("Storing documents...");
 
     try {
-      const courseId = tempCourse.id;
       const mats = [];
-
       for (let i = 0; i < validFiles.length; i++) {
         const f = validFiles[i];
         setStatus("Storing: " + f.name + "...");
@@ -312,146 +312,20 @@ function StudyInner({ setErrorCtx }) {
           addNotif("error", failedChunks + " of " + mat.chunks.length + " chunks failed to save for \"" + f.name + "\". Storage may be unreliable.");
         }
         mats.push(mat);
-        setStatus("Stored: " + f.name + " (" + mat.chunks.length + " chunk" + (mat.chunks.length !== 1 ? "s" : "") + (failedChunks > 0 ? ", " + failedChunks + " failed" : "") + ")");
       }
 
-      const allVerifications = [];
-      const allQuestions = [];
-      for (const mat of mats) {
-        setStatus("Verifying: " + mat.name + "...");
-        try {
-          const v = await verifyDocument(courseId, mat);
-          mat.verification = v.status;
-          allVerifications.push({ name: mat.name, ...v });
-          if (v.questions?.length) allQuestions.push(...v.questions.map(q => ({ doc: mat.name, question: q })));
-          if (v.status === "verified") {
-            addNotif("success", "Verified: " + mat.name);
-          } else if (v.status === "partial") {
-            addNotif("warn", "Partially verified: " + mat.name);
-          }
-        } catch (e) {
-          mat.verification = "error";
-          allVerifications.push({ name: mat.name, status: "error", summary: "Verification failed: " + e.message });
-          addNotif("error", "Verification failed: " + mat.name);
-        }
-      }
-
-      setStatus("Building reference taxonomy...");
-      let refTaxonomy = null;
-      try {
-        refTaxonomy = await generateReferenceTaxonomy(courseId, cName.trim(), mats, setStatus);
-      } catch (e) {
-        console.error("Reference taxonomy failed:", e);
-      }
-
-      setStatus("Extracting skills from your course...");
-      let skills = [];
-
-      // Textbooks always show chunk picker (they're the largest files, user should choose chapters)
-      var hasTextbook = mats.some(m => m.classification === "textbook");
-      if (hasTextbook) {
-        // Save course first so it persists
-        const newCourse = { id: courseId, name: cName.trim(), materials: mats, createdAt: new Date().toISOString() };
-        const updated = [...courses.filter(c => c.id !== courseId), newCourse];
-        await DB.saveCourses(updated);
-        setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
-
-        // Populate chunk picker -- all chunks selected by default
-        var allChunkIds = new Set();
-        for (const m of mats) { if (m.chunks) for (const c of m.chunks) allChunkIds.add(c.id); }
-        setChunkPicker({ courseId, materials: mats, selectedChunks: allChunkIds });
-        setBooting(false); setStatus("");
-        var pickerMsg = "Select which sections to analyze. Uncheck any chapters that aren't relevant to your course.";
-        if (refTaxonomy) pickerMsg = "Identified as " + (refTaxonomy.subject || "unknown subject") + " (" + (refTaxonomy.level || "unknown level") + "). " + pickerMsg;
-        setMsgs(p => [...p, { role: "assistant", content: pickerMsg }]);
-        return;
-      }
-
-      // No multi-chunk files -- run extraction directly
-      setGlobalLock({ message: "Extracting skills from materials..." });
-      try {
-        extractionCancelledRef.current = false; // Reset cancel flag
-        skills = await extractSkillTree(courseId, mats, setStatus, false, addNotif, extractionCancelledRef, 
-          (err) => setExtractionErrors(p => [...p, err].slice(-10)), setProcessingMatId);
-        if (!Array.isArray(skills)) {
-          console.error("Skill extraction returned non-array:", typeof skills, String(skills).substring(0, 300));
-          addNotif("error", "Skill extraction didn't return structured data. Try re-triggering extraction.");
-        }
-      } catch (e) {
-        console.error("Skill extraction failed:", e);
-        addNotif("error", "Skill extraction failed: " + e.message);
-      } finally {
-        setGlobalLock(null);
-      }
-
-      // Validation pass
-      if (Array.isArray(skills) && skills.length > 0) {
-        try {
-          var validation = await validateSkillTree(courseId, skills, setStatus);
-          skills = validation.skills;
-          var vr = validation.report;
-          if (vr && vr.status !== "parse_failed" && vr.status !== "error") {
-            var fixCount = (vr.prerequisiteFixes?.length || 0) + (vr.descriptionFixes?.length || 0) + (vr.mergedDuplicates?.length || 0);
-            if (fixCount > 0) addNotif("success", "Validation applied " + fixCount + " correction" + (fixCount !== 1 ? "s" : "") + " to the skill tree.");
-          }
-        } catch (e) {
-          console.error("Validation failed:", e);
-        }
-      }
-
-      const hasAsgn = mats.some(m => m.classification === "assignment");
-      let asgn = [];
-      if (hasAsgn) {
-        setStatus("Breaking down assignments...");
-        try { asgn = await decomposeAssignments(courseId, mats, skills, setStatus); } catch (e) { console.error("Assignment decomp failed:", e); }
-      }
-
-      // Refresh materials from DB (chunk statuses updated by extractSkillTree)
-      var refreshedCourses = await DB.getCourses();
-      var refreshedMats = refreshedCourses.find(c => c.id === courseId)?.materials || mats;
-
-      const newCourse = { id: courseId, name: cName.trim(), materials: refreshedMats, createdAt: new Date().toISOString() };
+      const newCourse = { id: courseId, name: cName.trim(), materials: mats, createdAt: new Date().toISOString() };
       const updated = [...courses.filter(c => c.id !== courseId), newCourse];
+      await DB.saveCourses(updated);
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
-      setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null);
-
-      // Store verification context for later boot
-      let verifyCtx = "\nDOCUMENT VERIFICATION RESULTS:\n";
-      for (const v of allVerifications) {
-        const tag = v.status === "verified" ? "[OK]" : v.status === "partial" ? "[!]" : "[X]";
-        verifyCtx += tag + " " + v.name + ": " + (v.summary || "No summary") + "\n";
-        if (v.issues?.length) verifyCtx += "  Issues: " + v.issues.join("; ") + "\n";
-      }
-      if (allQuestions.length) {
-        verifyCtx += "\nCLARIFYING QUESTIONS (ask the student these):\n";
-        for (const q of allQuestions) verifyCtx += "  - [" + q.doc + "] " + q.question + "\n";
-      }
-
-      // Show summary of what was processed, then let them pick a mode
-      const matCount = mats.length;
-      const skillCount = Array.isArray(skills) ? skills.length : 0;
-      const asgnCount = Array.isArray(asgn) ? asgn.length : 0;
-      const issueCount = allVerifications.filter(v => v.status !== "verified").length;
-      let summary = "Course ready. " + matCount + " document" + (matCount !== 1 ? "s" : "") + " processed";
-      if (skillCount > 0) summary += ", " + skillCount + " skills identified";
-      if (asgnCount > 0) summary += ", " + asgnCount + " assignment" + (asgnCount !== 1 ? "s" : "") + " found";
-      if (issueCount > 0) summary += ". " + issueCount + " document" + (issueCount !== 1 ? "s" : "") + " had extraction issues";
-      summary += ".";
-      addNotif("success", summary);
-      
-      // Show a few sample skills that were added
-      if (Array.isArray(skills) && skills.length > 0) {
-        var sampleSkills = skills.slice(0, Math.min(5, skills.length));
-        for (var sk of sampleSkills) {
-          addNotif("skill", "Added: " + sk.name);
-        }
-        if (skills.length > 5) {
-          addNotif("skill", "...and " + (skills.length - 5) + " more skills");
-        }
-      }
+      setScreen("materials");
+      var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+      addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s). Activate sections to start studying.");
     } catch (err) {
       console.error("Course creation failed:", err);
-      addNotif("error", "Course setup failed: " + err.message + ". Your files were saved -- try re-entering the course.");
+      addNotif("error", "Course creation failed: " + err.message);
+    } finally {
+      setGlobalLock(null); setBusy(false); setStatus("");
     }
     setBooting(false); setStatus("");
   };
@@ -908,40 +782,29 @@ function StudyInner({ setErrorCtx }) {
     }
   };
 
-  // --- Reprocess Material ---
+  // --- Reprocess Material (re-verify only, no skill extraction) ---
   const reprocessMat = async (mat) => {
     if (!active || globalLock) return;
-    setGlobalLock({ message: "Reprocessing \"" + mat.name + "\"..." });
+    setGlobalLock({ message: "Verifying \"" + mat.name + "\"..." });
     setBusy(true);
-    setStatus("Reprocessing \"" + mat.name + "\"...");
+    setStatus("Verifying \"" + mat.name + "\"...");
     try {
       const v = await verifyDocument(active.id, mat);
       const updatedMats = active.materials.map(m => m.id === mat.id ? { ...m, verification: v.status } : m);
       const updatedCourse = { ...active, materials: updatedMats };
       setCourses(p => p.map(c => c.id === active.id ? updatedCourse : c));
       setActive(updatedCourse);
-
-      // Incremental merge for this single document
-      setStatus("Checking for new skills...");
-      const existingSkills = await DB.getSkills(updatedCourse.id);
-      const merged = await mergeSkillTree(updatedCourse.id, existingSkills, [mat], () => {});
-
-      if (updatedMats.some(m => m.classification === "assignment")) {
-        const sk = await DB.getSkills(updatedCourse.id);
-        await decomposeAssignments(updatedCourse.id, updatedMats, sk, () => {});
-      }
-      const newSkillCount = Array.isArray(merged) && Array.isArray(existingSkills) ? merged.length - existingSkills.length : 0;
       if (v.status === "verified") {
-        addNotif("success", "Reprocessed \"" + mat.name + "\"" + (newSkillCount > 0 ? ". " + newSkillCount + " new skill" + (newSkillCount !== 1 ? "s" : "") + " added." : "."));
+        addNotif("success", "Verified: " + mat.name);
       } else {
-        addNotif("warn", "Reprocessed \"" + mat.name + "\" with issues: " + (v.issues?.join("; ") || v.summary));
+        addNotif("warn", "Verification issues for \"" + mat.name + "\": " + (v.issues?.join("; ") || v.summary));
       }
-      setStatus("");
     } catch (err) {
-      addNotif("error", "Reprocess failed: " + err.message);
+      addNotif("error", "Verification failed: " + err.message);
     } finally {
       setGlobalLock(null);
       setBusy(false);
+      setStatus("");
     }
   };
 
@@ -2163,16 +2026,6 @@ function StudyInner({ setErrorCtx }) {
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                        {pending > 0 && (
-                          <button onClick={() => {
-                            if (busy) return;
-                            var allChunkIds = new Set();
-                            for (var m of active.materials) { if (m.chunks) for (var c of m.chunks) { if (c.status !== "extracted") allChunkIds.add(c.id); } }
-                            setChunkPicker({ courseId: active.id, materials: active.materials, selectedChunks: allChunkIds });
-                            setShowManage(false);
-                          }} disabled={busy}
-                            style={{ background: "none", border: "1px solid " + T.ac, borderRadius: 6, padding: "4px 8px", fontSize: 11, color: T.ac, cursor: busy ? "default" : "pointer" }}>Activate</button>
-                        )}
                         {failed > 0 && (
                           <button onClick={async () => {
                             if (globalLock) return;
