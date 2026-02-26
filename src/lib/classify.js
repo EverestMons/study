@@ -2,6 +2,7 @@
 export const CLS = [
   { v: "syllabus", l: "Syllabus / Schedule" },
   { v: "lecture", l: "Lecture Transcript" },
+  { v: "slides", l: "Lecture Slides" },
   { v: "assignment", l: "Assignment / Homework" },
   { v: "notes", l: "Notes" },
   { v: "textbook", l: "Textbook" },
@@ -16,7 +17,7 @@ export const autoClassify = (file) => {
   // Extension-based
   if (ext === "epub") return "textbook";
   if (ext === "srt" || ext === "vtt") return "lecture";
-  if (ext === "pptx") return "lecture";
+  if (ext === "pptx") return "slides";
 
   // Name-based patterns
   if (/syllabus|schedule|course.?outline|calendar/i.test(name)) return "syllabus";
