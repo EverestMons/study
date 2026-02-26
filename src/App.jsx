@@ -5,7 +5,7 @@ import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
 import { getApiKey, setApiKey, hasApiKey, DB } from "./lib/db.js";
 import { readFile } from "./lib/parsers.js";
-import { callClaude, callClaudeStream, extractJSON } from "./lib/api.js";
+import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
   storeAsChunks, getMatContent, verifyDocument,
   generateReferenceTaxonomy, extractSkillTree,
@@ -17,7 +17,7 @@ import {
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
   parseSkillUpdates, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
-  completeTierAttempt, loadPracticeMaterialCtx
+  completeTierAttempt, loadPracticeMaterialCtx, DEFAULT_EASE
 } from "./lib/study.js";
 
 // --- Error Context (for capturing app state in crash reports) ---
@@ -171,6 +171,8 @@ function StudyInner({ setErrorCtx }) {
   // Settings
   const [showSettings, setShowSettings] = useState(!hasApiKey());
   const [apiKeyInput, setApiKeyInput] = useState(getApiKey());
+  const [keyVerifying, setKeyVerifying] = useState(false);
+  const [keyError, setKeyError] = useState("");
 
   const [files, setFiles] = useState([]);
   const [cName, setCName] = useState("");
@@ -495,13 +497,24 @@ function StudyInner({ setErrorCtx }) {
     try {
       extractionCancelledRef.current = false; // Reset cancel flag
       skills = await extractSkillTree(active.id, updatedMats, setStatus, false, addNotif, extractionCancelledRef,
-        (err) => setExtractionErrors(p => [...p, err].slice(-10)), setProcessingMatId);
+        (err) => {
+          setExtractionErrors(p => [...p, err].slice(-10));
+          if (err.error && /401|403|authentication|unauthorized|invalid.*key/i.test(err.error)) {
+            addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
+          }
+        }, setProcessingMatId);
       if (!Array.isArray(skills)) {
         addNotif("error", "Skill extraction didn't return structured data.");
       }
     } catch (e) {
       console.error("Skill extraction failed:", e);
-      addNotif("error", "Skill extraction failed: " + e.message);
+      var eMsg = e.message || "";
+      if (/401|403|authentication|unauthorized|invalid.*key/i.test(eMsg)) {
+        addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
+        setShowSettings(true);
+      } else {
+        addNotif("error", "Skill extraction failed: " + eMsg);
+      }
     } finally {
       setGlobalLock(null);
     }
@@ -1064,24 +1077,43 @@ function StudyInner({ setErrorCtx }) {
           <input
             type="password"
             value={apiKeyInput}
-            onChange={(e) => setApiKeyInput(e.target.value)}
+            onChange={(e) => { setApiKeyInput(e.target.value); setKeyError(""); }}
             placeholder="sk-ant-..."
-            style={{ width: "100%", padding: 14, background: T.bg, border: "1px solid " + T.bd, borderRadius: 8, color: T.tx, fontSize: 14, outline: "none" }}
+            style={{ width: "100%", padding: 14, background: T.bg, border: "1px solid " + (keyError ? T.rd : T.bd), borderRadius: 8, color: T.tx, fontSize: 14, outline: "none" }}
           />
+          {keyError && (
+            <div style={{ fontSize: 12, color: T.rd, marginTop: 8 }}>{keyError}</div>
+          )}
           <div style={{ fontSize: 11, color: T.txD, marginTop: 8 }}>
             Get your key from <a href="https://console.anthropic.com" target="_blank" rel="noreferrer" style={{ color: T.ac }}>console.anthropic.com</a>
           </div>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
           {hasApiKey() && (
-            <button onClick={() => { setShowSettings(false); setApiKeyInput(getApiKey()); }}
-              style={{ flex: 1, padding: 14, background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: T.txD, cursor: "pointer" }}>
+            <button onClick={() => { setShowSettings(false); setApiKeyInput(getApiKey()); setKeyError(""); }}
+              disabled={keyVerifying}
+              style={{ flex: 1, padding: 14, background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: T.txD, cursor: keyVerifying ? "default" : "pointer", opacity: keyVerifying ? 0.5 : 1 }}>
               Cancel
             </button>
           )}
-          <button onClick={() => { if (apiKeyInput.trim()) { setApiKey(apiKeyInput.trim()); setShowSettings(false); addNotif("success", "API key saved"); } }}
-            style={{ flex: 1, padding: 14, background: T.ac, border: "none", borderRadius: 8, color: T.bg, fontWeight: 600, cursor: "pointer" }}>
-            Save
+          <button onClick={async () => {
+              var key = apiKeyInput.trim();
+              if (!key) return;
+              setKeyVerifying(true);
+              setKeyError("");
+              var result = await testApiKey(key);
+              setKeyVerifying(false);
+              if (result.valid) {
+                setApiKey(key);
+                setShowSettings(false);
+                addNotif("success", "API key verified and saved");
+              } else {
+                setKeyError(result.error || "Invalid API key");
+              }
+            }}
+            disabled={!apiKeyInput.trim() || keyVerifying}
+            style={{ flex: 1, padding: 14, background: !apiKeyInput.trim() || keyVerifying ? T.sfH : T.ac, border: "none", borderRadius: 8, color: !apiKeyInput.trim() || keyVerifying ? T.txD : T.bg, fontWeight: 600, cursor: !apiKeyInput.trim() || keyVerifying ? "default" : "pointer" }}>
+            {keyVerifying ? "Verifying..." : "Save"}
           </button>
         </div>
       </div>

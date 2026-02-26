@@ -40,6 +40,10 @@ export const callClaude = async (system, messages, maxTokens, useHaiku = false) 
         messages
       }),
     });
+    if (!r.ok) {
+      var errBody = await r.text();
+      throw new Error("API " + r.status + ": " + errBody.substring(0, 200));
+    }
     const d = await r.json();
     if (d.error) throw new Error(d.error.message);
     // Check if response was truncated
@@ -151,6 +155,35 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
     }
     console.error("Stream API:", e);
     return "Error: " + e.message;
+  }
+};
+
+// --- API Key Validation ---
+export const testApiKey = async (key) => {
+  const httpFetch = await initTauriFetch();
+  try {
+    const r = await httpFetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: MODEL_HAIKU,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }]
+      }),
+    });
+    if (r.ok) return { valid: true };
+    var errBody = await r.text();
+    try { var parsed = JSON.parse(errBody); errBody = parsed.error?.message || errBody; } catch {}
+    if (r.status === 401) return { valid: false, error: "Invalid API key" };
+    if (r.status === 403) return { valid: false, error: "API key not authorized" };
+    return { valid: false, error: "API error " + r.status + ": " + errBody.substring(0, 100) };
+  } catch (e) {
+    return { valid: false, error: "Connection failed: " + e.message };
   }
 };
 

@@ -5,7 +5,7 @@ import { getMatContent } from './skills.js';
 // --- Strength Decay Model ---
 const DECAY_BASE = 0.05; // Base decay rate per day
 const MIN_EASE = 1.3;
-const DEFAULT_EASE = 2.5;
+export const DEFAULT_EASE = 2.5;
 const MAX_EASE = 4.0;
 
 export const effectiveStrength = (skillData) => {

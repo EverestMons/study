@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Study app","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open",{"identifier":"http:default","allow":[{"url":"https://api.anthropic.com/**"}]},"sql:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for Study app","local":true,"windows":["main"],"permissions":["core:default","shell:allow-open",{"identifier":"http:default","allow":[{"url":"https://api.anthropic.com/**"}]},"sql:default","sql:allow-execute"]}}

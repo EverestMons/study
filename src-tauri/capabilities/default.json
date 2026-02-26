@@ -12,6 +12,7 @@
         { "url": "https://api.anthropic.com/**" }
       ]
     },
-    "sql:default"
+    "sql:default",
+    "sql:allow-execute"
   ]
 }
