@@ -227,6 +227,7 @@ export const updateChunkStatus = async (courseId, chunkId, newStatus, errorInfo 
 // --- Extract skills from a single chunk ---
 const extractChunkSkills = async (courseId, chunk, existingSkills, refTax, onStatus) => {
   const { chunkId, label, content } = chunk;
+  const saveId = chunk.originalChunkId || chunkId; // Use original chunk ID for DB (part IDs don't exist in chunks table)
 
   // Build context of what's already been extracted
   var existingContext = "";
@@ -252,7 +253,7 @@ const extractChunkSkills = async (courseId, chunk, existingSkills, refTax, onSta
     var parsed = extractJSON(result);
 
     if (parsed && Array.isArray(parsed)) {
-      await DB.saveChunkSkills(courseId, chunkId, parsed);
+      await DB.saveChunkSkills(courseId, saveId, parsed);
       return { success: true, skills: parsed };
     } else {
       console.error("Chunk " + chunkId + " parse failed:", result.substring(0, 300));
@@ -270,18 +271,19 @@ const extractChunkSkills = async (courseId, chunk, existingSkills, refTax, onSta
       };
     }
   } catch (e) {
-    console.error("Chunk " + chunkId + " API error:", e.message);
+    var errMsg = e?.message || String(e);
+    console.error("Chunk " + chunkId + " API error:", errMsg);
     return {
       success: false,
       skills: [],
-      error: e.message,
+      error: errMsg,
       debugInfo: {
         chunkId: chunkId,
         label: label,
         contentLength: content.length,
-        errorType: e.name || "Unknown",
-        errorMessage: e.message,
-        stack: e.stack ? e.stack.split("\n").slice(0, 3).join("\n") : "(no stack)"
+        errorType: e?.name || "Unknown",
+        errorMessage: errMsg,
+        stack: e?.stack ? e.stack.split("\n").slice(0, 3).join("\n") : "(no stack)"
       }
     };
   }
