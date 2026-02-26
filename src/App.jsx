@@ -271,32 +271,49 @@ function StudyInner({ setErrorCtx }) {
   }, [saveSessionToJournal]);
 
   // --- File Handlers ---
+  const filterDuplicates = (newFiles) => {
+    const existingNames = new Set(files.map(f => f.name));
+    if (active) for (const m of active.materials || []) existingNames.add(m.name);
+    const unique = [];
+    for (const f of newFiles) {
+      if (existingNames.has(f.name)) {
+        addNotif("warn", "Skipped duplicate: " + f.name);
+      } else {
+        existingNames.add(f.name);
+        unique.push(f);
+      }
+    }
+    return unique;
+  };
+
   const onDrop = useCallback(async (e) => {
     e.preventDefault(); setDrag(false);
     const fl = Array.from(e.dataTransfer.files);
     setParsing(true);
     const parsed = await Promise.all(fl.map(readFile));
-    setFiles(p => [...p, ...parsed.map(f => ({
+    const unique = filterDuplicates(parsed);
+    if (unique.length) setFiles(p => [...p, ...unique.map(f => ({
       ...f,
       classification: autoClassify(f) || (f.type === "epub" ? "textbook" : ""),
       parseOk: !parseFailed(f.content),
       id: Date.now() + "-" + Math.random()
     }))]);
     setParsing(false);
-  }, []);
+  }, [files, active]);
 
   const onSelect = useCallback(async (e) => {
     const fl = Array.from(e.target.files);
     setParsing(true);
     const parsed = await Promise.all(fl.map(readFile));
-    setFiles(p => [...p, ...parsed.map(f => ({
+    const unique = filterDuplicates(parsed);
+    if (unique.length) setFiles(p => [...p, ...unique.map(f => ({
       ...f,
       classification: autoClassify(f) || (f.type === "epub" ? "textbook" : ""),
       parseOk: !parseFailed(f.content),
       id: Date.now() + "-" + Math.random()
     }))]);
     setParsing(false); e.target.value = "";
-  }, []);
+  }, [files, active]);
 
   const classify = (id, c) => setFiles(p => p.map(f => f.id === id ? { ...f, classification: c } : f));
   const removeF = (id) => setFiles(p => p.filter(f => f.id !== id));
