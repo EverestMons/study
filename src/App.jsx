@@ -28,7 +28,7 @@ class StudyErrorBoundary extends Component {
   static contextType = ErrorContext;
   constructor(props) {
     super(props);
-    this.state = { error: null, info: null, showNuclear: false };
+    this.state = { error: null, info: null, showNuclear: false, copyStatus: null };
   }
   static getDerivedStateFromError(error) {
     return { error };
@@ -58,7 +58,9 @@ class StudyErrorBoundary extends Component {
     ].join("\n");
   }
   handleCopy(report) {
-    try { navigator.clipboard.writeText(report); } catch (e) { console.log("Clipboard not available"); }
+    navigator.clipboard.writeText(report)
+      .then(() => { this.setState({ copyStatus: "copied" }); setTimeout(() => this.setState({ copyStatus: null }), 2000); })
+      .catch(() => { this.setState({ copyStatus: "failed" }); setTimeout(() => this.setState({ copyStatus: null }), 3000); });
   }
   handleSoftReset() {
     this.setState({ error: null, info: null, showNuclear: false });
@@ -96,8 +98,8 @@ class StudyErrorBoundary extends Component {
           React.createElement("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
             React.createElement("button", {
               onClick: () => this.handleCopy(report),
-              style: { ...btnBase, background: "#6C9CFC", color: "#0F1115", fontWeight: 600 }
-            }, "Copy to clipboard"),
+              style: { ...btnBase, background: this.state.copyStatus === "failed" ? "#E5484D" : "#6C9CFC", color: "#0F1115", fontWeight: 600 }
+            }, this.state.copyStatus === "copied" ? "Copied!" : this.state.copyStatus === "failed" ? "Copy failed" : "Copy to clipboard"),
             React.createElement("button", {
               onClick: () => this.handleSoftReset(),
               style: { ...btnBase, background: "#22262F", color: "#E8EAF0", border: "1px solid #2A2F3A" }
@@ -175,6 +177,7 @@ function StudyInner({ setErrorCtx }) {
   
   // Global operation lock - prevents any user interaction while a long operation is running
   const [globalLock, setGlobalLock] = useState(null); // null or { message: "Extracting skills..." }
+  const [lockElapsed, setLockElapsed] = useState(0);
 
   const [showManage, setShowManage] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
@@ -208,6 +211,14 @@ function StudyInner({ setErrorCtx }) {
   };
 
   // --- Effects ---
+  // Track elapsed time for global lock overlay
+  useEffect(() => {
+    if (!globalLock) { setLockElapsed(0); return; }
+    setLockElapsed(0);
+    const iv = setInterval(() => setLockElapsed(s => s + 1), 1000);
+    return () => clearInterval(iv);
+  }, [globalLock]);
+
   // Update error context for crash reports
   useEffect(() => {
     if (setErrorCtx) setErrorCtx({ screen, courseId: active?.id || null, sessionMode });
@@ -221,11 +232,16 @@ function StudyInner({ setErrorCtx }) {
     return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onRej); };
   }, []);
   useEffect(() => { (async () => {
-    setCourses(await DB.getCourses());
-    const key = await getApiKey();
-    setApiKeyInput(key);
-    if (!key) setShowSettings(true);
-    setApiKeyLoaded(true);
+    try {
+      setCourses(await DB.getCourses());
+      const key = await getApiKey();
+      setApiKeyInput(key);
+      if (!key) setShowSettings(true);
+      setApiKeyLoaded(true);
+    } catch (e) {
+      console.error("Init failed:", e);
+      setAsyncError({ message: "Failed to initialize database: " + e.message, stack: e.stack || "" });
+    }
     setReady(true);
   })(); }, []);
   useEffect(() => { if (ready) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready]);
@@ -852,7 +868,7 @@ function StudyInner({ setErrorCtx }) {
           <textarea readOnly value={report} onClick={e => e.target.select()}
             style={{ width: "100%", minHeight: 280, background: T.sf, color: T.tx, border: "1px solid " + T.bd, borderRadius: 8, padding: 16, fontSize: 11, fontFamily: "SF Mono, Fira Code, Consolas, monospace", resize: "vertical", lineHeight: 1.5 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <button onClick={() => { try { navigator.clipboard.writeText(report); } catch(e) { console.log("Clipboard not available"); } }}
+            <button onClick={() => { navigator.clipboard.writeText(report).then(() => addNotif("success", "Copied to clipboard")).catch(() => addNotif("error", "Clipboard not available — select the text and copy manually")); }}
               style={{ padding: "10px 20px", background: T.ac, color: "#0F1115", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Copy to clipboard</button>
             <button onClick={() => setAsyncError(null)}
               style={{ padding: "10px 20px", background: T.sf, color: T.tx, border: "1px solid " + T.bd, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Dismiss</button>
@@ -894,27 +910,35 @@ function StudyInner({ setErrorCtx }) {
   // --- GLOBAL LOCK OVERLAY ---
   // Shows during long operations like extraction to prevent user interaction
   const lockOverlay = globalLock ? (
-    <div style={{ 
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", 
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", 
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       zIndex: 2000, pointerEvents: "all"
     }}>
       <style>{CSS}</style>
-      <div style={{ 
+      <div style={{
         background: T.sf, borderRadius: 16, padding: 32, maxWidth: 400, width: "90%", textAlign: "center"
       }}>
         <div style={{ fontSize: 18, fontWeight: 600, color: T.tx, marginBottom: 16 }}>{globalLock.message || "Processing..."}</div>
-        <div style={{ fontSize: 14, color: T.txD, marginBottom: 20 }}>{status || "Please wait..."}</div>
+        <div style={{ fontSize: 14, color: T.txD, marginBottom: 8 }}>{status || "Please wait..."}</div>
+        <div style={{ fontSize: 12, color: T.txM, marginBottom: 20 }}>{lockElapsed}s elapsed</div>
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 20 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.ac, animation: "pulse 1s ease-in-out infinite" }} />
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.ac, animation: "pulse 1s ease-in-out 0.2s infinite" }} />
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.ac, animation: "pulse 1s ease-in-out 0.4s infinite" }} />
         </div>
-        <button 
+        <button
           onClick={() => { extractionCancelledRef.current = true; }}
           style={{ padding: "10px 24px", background: T.rd, border: "none", borderRadius: 8, color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>
           Cancel Operation
         </button>
+        {lockElapsed >= 30 && (
+          <button
+            onClick={() => { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); window.location.reload(); }}
+            style={{ display: "block", margin: "12px auto 0", padding: "8px 20px", background: "transparent", border: "1px solid " + T.rd, borderRadius: 8, color: T.rd, fontWeight: 600, cursor: "pointer", fontSize: 12 }}>
+            Force unlock and return
+          </button>
+        )}
       </div>
     </div>
   ) : null;
@@ -1384,22 +1408,32 @@ function StudyInner({ setErrorCtx }) {
                       allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
                       await DB.saveCourses(allCourses);
                       setCourses(allCourses); setActive(updatedCourse);
-                      
+
                       // Prune skills sourced from this material
-                      var matName = mat.name.toLowerCase();
-                      var existingSkills = await DB.getSkills(active.id) || [];
-                      var pruned = existingSkills.filter(s => {
-                        if (!s.sources || s.sources.length === 0) return true;
-                        var remaining = s.sources.filter(src => !src.toLowerCase().includes(matName.substring(0, 30)));
-                        if (remaining.length > 0) {
-                          s.sources = remaining;
-                          return true;
-                        }
-                        return false;
-                      });
-                      var prunedCount = existingSkills.length - pruned.length;
-                      await DB.saveSkills(active.id, pruned);
+                      var prunedCount = 0;
+                      try {
+                        var matName = mat.name.toLowerCase();
+                        var existingSkills = await DB.getSkills(active.id) || [];
+                        var pruned = existingSkills.filter(s => {
+                          if (!s.sources || s.sources.length === 0) return true;
+                          var remaining = s.sources.filter(src => !src.toLowerCase().includes(matName.substring(0, 30)));
+                          if (remaining.length > 0) {
+                            s.sources = remaining;
+                            return true;
+                          }
+                          return false;
+                        });
+                        prunedCount = existingSkills.length - pruned.length;
+                        await DB.saveSkills(active.id, pruned);
+                      } catch (e) {
+                        console.error("Skill pruning failed:", e);
+                        addNotif("error", "Deactivated " + mat.name + " but failed to prune related skills: " + e.message);
+                        return;
+                      }
                       addNotif("success", "Deactivated " + mat.name + "." + (prunedCount > 0 ? " " + prunedCount + " skills removed." : ""));
+                      } catch (e) {
+                        console.error("Deactivation failed:", e);
+                        addNotif("error", "Failed to deactivate " + mat.name + ": " + e.message);
                       } finally { setGlobalLock(null); }
                     }}
                       style={{ background: "transparent", border: "1px solid " + T.txM, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.txM, cursor: "pointer" }}>Deactivate</button>
@@ -1784,8 +1818,9 @@ function StudyInner({ setErrorCtx }) {
                       charCount: ch.charCount
                     }))
                   };
-                  navigator.clipboard.writeText(JSON.stringify(errorData, null, 2));
-                  addNotif("success", "Error details copied to clipboard");
+                  navigator.clipboard.writeText(JSON.stringify(errorData, null, 2))
+                    .then(() => addNotif("success", "Error details copied to clipboard"))
+                    .catch(() => addNotif("error", "Clipboard not available — select and copy manually"));
                 }}
                   style={{ flex: 1, padding: 12, borderRadius: 8, border: "1px solid " + T.ac, background: T.acS, color: T.ac, cursor: "pointer", fontWeight: 600 }}>
                   Copy Error Details
@@ -2767,8 +2802,9 @@ function StudyInner({ setErrorCtx }) {
                             "Error: " + err.error + "\n" +
                             "Time: " + err.time.toISOString() + "\n\n" +
                             "DEBUG INFO:\n" + JSON.stringify(err.debugInfo, null, 2);
-                          try { navigator.clipboard.writeText(debugText); } catch(e) {}
-                          alert("Error details copied to clipboard. Paste into Claude to debug.");
+                          navigator.clipboard.writeText(debugText)
+                            .then(() => addNotif("success", "Error details copied to clipboard"))
+                            .catch(() => addNotif("error", "Clipboard not available — select and copy manually"));
                         }} style={{ fontSize: 10, padding: "3px 8px", background: T.sf, border: "1px solid " + T.bd, borderRadius: 4, color: T.txD, cursor: "pointer" }}>
                           Copy debug info
                         </button>
