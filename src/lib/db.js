@@ -59,21 +59,27 @@ export const DB = {
     if (usingSqlite && sqliteDb) {
       try {
         const courses = await sqliteDb.select('SELECT * FROM courses ORDER BY created DESC');
-        for (const course of courses) {
-          const mats = await sqliteDb.select('SELECT * FROM materials WHERE course_id = ?', [course.id]);
-          for (const mat of mats) {
-            mat.chunks = await sqliteDb.select(
-              'SELECT id, label, char_count as charCount, status, error_info as errorInfo, fail_count as failCount FROM chunks WHERE material_id = ?',
-              [mat.id]
-            );
-            mat.chunks = mat.chunks.map(ch => ({
-              ...ch,
-              errorInfo: ch.errorInfo ? JSON.parse(ch.errorInfo) : null
-            }));
+        if (courses.length > 0) {
+          for (const course of courses) {
+            const mats = await sqliteDb.select('SELECT * FROM materials WHERE course_id = ?', [course.id]);
+            for (const mat of mats) {
+              // Map SQL column names back to JS field names
+              mat.name = mat.name || mat.label;
+              mat.type = mat.type || mat.file_type;
+              mat.chunks = await sqliteDb.select(
+                'SELECT id, label, char_count as charCount, status, error_info as errorInfo, fail_count as failCount FROM chunks WHERE material_id = ?',
+                [mat.id]
+              );
+              mat.chunks = mat.chunks.map(ch => ({
+                ...ch,
+                errorInfo: ch.errorInfo ? JSON.parse(ch.errorInfo) : null
+              }));
+            }
+            course.materials = mats;
           }
-          course.materials = mats;
+          return courses;
         }
-        return courses;
+        // SQLite empty — check localStorage for migrateable data
       } catch (e) {
         console.error('SQLite getCourses failed:', e);
       }
@@ -95,12 +101,12 @@ export const DB = {
         for (const course of courses) {
           await sqliteDb.execute(
             'INSERT OR REPLACE INTO courses (id, name, created, updated) VALUES (?, ?, ?, ?)',
-            [course.id, course.name, course.created, Date.now()]
+            [course.id, course.name, course.created || course.createdAt, Date.now()]
           );
           for (const mat of (course.materials || [])) {
             await sqliteDb.execute(
               'INSERT OR REPLACE INTO materials (id, course_id, label, classification, file_type, active, created) VALUES (?, ?, ?, ?, ?, ?, ?)',
-              [mat.id, course.id, mat.label, mat.classification, mat.fileType, mat.active ? 1 : 0, mat.created || Date.now()]
+              [mat.id, course.id, mat.name || mat.label, mat.classification, mat.type || mat.fileType, mat.active !== false ? 1 : 0, mat.created || Date.now()]
             );
             for (const ch of (mat.chunks || [])) {
               await sqliteDb.execute(
@@ -110,6 +116,8 @@ export const DB = {
             }
           }
         }
+        // Also save to localStorage as backup
+        await this._lsSet("study-courses", courses);
         return true;
       } catch (e) {
         console.error('SQLite saveCourses failed:', e);
@@ -120,28 +128,32 @@ export const DB = {
 
   // --- Documents (chunk content) ---
   async saveDoc(cid, chunkId, doc) {
+    // Always save to localStorage (reliable, chunk row may not exist in SQLite yet)
+    await this._lsSet("study-doc:" + cid + ":" + chunkId, doc);
     if (usingSqlite && sqliteDb) {
       try {
         const content = typeof doc === 'string' ? doc : JSON.stringify(doc);
-        await sqliteDb.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
-        return true;
+        var result = await sqliteDb.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
+        // If chunk row doesn't exist yet (created later by saveCourses), UPDATE affects 0 rows — localStorage has it
       } catch (e) {
         console.error('SQLite saveDoc failed:', e);
       }
     }
-    return await this._lsSet("study-doc:" + cid + ":" + chunkId, doc);
+    return true;
   },
 
   async getDoc(cid, chunkId) {
     if (usingSqlite && sqliteDb) {
       try {
         const rows = await sqliteDb.select('SELECT content FROM chunks WHERE id = ? AND course_id = ?', [chunkId, cid]);
-        if (rows.length === 0) return null;
-        try {
-          return JSON.parse(rows[0].content);
-        } catch {
-          return { content: rows[0].content };
+        if (rows.length > 0 && rows[0].content) {
+          try {
+            return JSON.parse(rows[0].content);
+          } catch {
+            return { content: rows[0].content };
+          }
         }
+        // SQLite has no content — fall through to localStorage
       } catch (e) {
         console.error('SQLite getDoc failed:', e);
       }

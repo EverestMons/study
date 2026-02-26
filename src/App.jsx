@@ -1469,7 +1469,7 @@ function StudyInner({ setErrorCtx }) {
                     <span style={{ fontSize: 11, color: T.ac, padding: "6px 12px" }}>Activating...</span>
                   )}
                   
-                  {/* Activate button for materials with no chunks (never processed) */}
+                  {/* Activate button for materials with no chunks (never processed or chunks lost) */}
                   {hasNoChunks && !isProcessing && (
                     <button onClick={async () => {
                       if (globalLock) return;
@@ -1479,12 +1479,35 @@ function StudyInner({ setErrorCtx }) {
                       setStatus("Processing " + mat.name + "...");
                       extractionCancelledRef.current = false;
                       try {
-                        // Extract just this material
-                        await extractSkillTree(active.id, [mat], setStatus, false, addNotif, extractionCancelledRef, 
-                          (err) => setExtractionErrors(p => [...p, err].slice(-10)), setProcessingMatId);
+                        // Material has no chunks — try to load content and create a synthetic chunk
+                        var doc = await DB.getDoc(active.id, mat.id);
+                        // Also check chunk-style IDs
+                        if (!doc || !doc.content) doc = await DB.getDoc(active.id, mat.id + "-c0");
+                        if (!doc || !doc.content) {
+                          addNotif("error", "No content found for " + mat.name + ". Try removing and re-uploading.");
+                          return;
+                        }
+                        // Create chunk metadata and save
+                        var chunkId = mat.id + "-c0";
+                        var matWithChunks = { ...mat, chunks: [{ id: chunkId, label: mat.name, charCount: doc.content.length, status: "pending" }] };
+                        await DB.saveDoc(active.id, chunkId, doc);
+                        var updatedMats = active.materials.map(m => m.id !== mat.id ? m : matWithChunks);
+                        var updatedCourse = { ...active, materials: updatedMats };
+                        var allCourses = await DB.getCourses();
+                        allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
+                        await DB.saveCourses(allCourses);
+                        setCourses(allCourses); setActive(updatedCourse);
+                        // Now extract
+                        await extractSkillTree(active.id, [matWithChunks], setStatus, false, addNotif, extractionCancelledRef,
+                          (err) => {
+                            setExtractionErrors(p => [...p, err].slice(-10));
+                            if (err.error && /401|403|authentication|unauthorized|invalid.*key/i.test(err.error)) {
+                              addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
+                            }
+                          }, setProcessingMatId);
                         var refreshed = await DB.getCourses();
-                        var updatedCourse = refreshed.find(c => c.id === active.id);
-                        if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
+                        var refreshedCourse = refreshed.find(c => c.id === active.id);
+                        if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }
                         addNotif("success", "Extracted skills from " + mat.name);
                       } catch (e) { addNotif("error", "Extraction failed: " + e.message); }
                       finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }

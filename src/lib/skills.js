@@ -400,9 +400,9 @@ export const extractSkillTree = async (courseId, materialsMeta, onStatus, retryO
       onStatus("No failed chunks to retry.");
       return await DB.getSkills(courseId) || [];
     }
-    onStatus("No content found -- chunk storage may have failed.");
-    await DB.saveSkills(courseId, []);
-    return [];
+    onStatus("No processable chunks found.");
+    // Don't wipe existing skills — just return what we have
+    return await DB.getSkills(courseId) || [];
   }
 
   // 2. Load reference taxonomy
