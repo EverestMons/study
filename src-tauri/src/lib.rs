@@ -14,6 +14,12 @@ pub fn run() {
             description: "create_initial_tables",
             sql: include_str!("../migrations/001_initial.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "create_settings_table",
+            sql: include_str!("../migrations/002_settings.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 
