@@ -1821,7 +1821,57 @@ function StudyInner({ setErrorCtx }) {
         <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, marginBottom: 24 }}>&lt; Back</button>
         <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Skills</h1>
         <p style={{ fontSize: 14, color: T.txD, marginBottom: 24 }}>{active.name}</p>
-        
+
+        {/* Re-index button */}
+        {(() => {
+          var allChunks = (active.materials || []).flatMap(m => (m.chunks || []));
+          var activated = allChunks.filter(c => c.status !== "skipped");
+          var needsExtraction = activated.filter(c => c.status === "pending" || c.status === "failed");
+          return (
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
+              <button disabled={!!globalLock} onClick={async () => {
+                if (globalLock) return;
+                setGlobalLock({ message: "Re-indexing activated materials..." });
+                setBusy(true); setStatus("Checking activated materials...");
+                extractionCancelledRef.current = false;
+                try {
+                  var skills = await extractSkillTree(active.id, active.materials, setStatus, true, addNotif, extractionCancelledRef,
+                    (err) => {
+                      setExtractionErrors(p => [...p, err].slice(-10));
+                      if (err.error && /401|403|authentication|unauthorized|invalid.*key/i.test(err.error)) {
+                        addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
+                      }
+                    }, setProcessingMatId);
+                  if (Array.isArray(skills) && skills.length > 0) {
+                    try {
+                      var validation = await validateSkillTree(active.id, skills, setStatus);
+                      skills = validation.skills;
+                    } catch (e) { console.error("Validation failed:", e); }
+                  }
+                  var refreshed = await DB.getCourses();
+                  var updatedCourse = refreshed.find(c => c.id === active.id);
+                  if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
+                  var sk = await DB.getSkills(active.id) || [];
+                  var rt = await DB.getRefTaxonomy(active.id);
+                  setSkillViewData({ skills: sk, refTax: rt });
+                  addNotif("success", "Re-index complete. " + (Array.isArray(sk) ? sk.length : 0) + " skills total.");
+                } catch (e) {
+                  console.error("Re-index failed:", e);
+                  addNotif("error", "Re-index failed: " + e.message);
+                } finally {
+                  setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
+                }
+              }}
+                style={{ padding: "8px 16px", background: T.acS, border: "1px solid " + T.ac, borderRadius: 8, color: T.ac, cursor: globalLock ? "default" : "pointer", fontSize: 13, fontWeight: 600, opacity: globalLock ? 0.5 : 1 }}>
+                Re-index
+              </button>
+              {needsExtraction.length > 0 && (
+                <span style={{ fontSize: 12, color: "#F59E0B" }}>{needsExtraction.length} section(s) not yet extracted</span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Reference Taxonomy */}
         {skillViewData?.refTax && (
           <div style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: 14, marginBottom: 20 }}>
