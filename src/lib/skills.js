@@ -39,33 +39,34 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
     chunks: []
   };
 
+  // Buffer content to save after saveCourses creates the chunk rows
+  mat._pendingDocs = [];
+
   if (file.classification === "textbook" && file.chapters) {
     // Each chapter = one chunk. Never split a chapter.
     for (let i = 0; i < file.chapters.length; i++) {
       var ch = file.chapters[i];
       var chunkId = docIdPrefix + "-ch-" + i;
       var content = ch.content || "";
-      var saved = await DB.saveDoc(courseId, chunkId, { content: content });
+      mat._pendingDocs.push({ chunkId, doc: { content: content } });
       mat.chunks.push({
         id: chunkId,
         label: ch.title || "Chapter " + (i + 1),
         charCount: content.length,
-        status: saved ? "skipped" : "failed"  // Inactive by default
+        status: "skipped"
       });
-      if (!saved) console.error("storeAsChunks: failed to save chunk", chunkId);
     }
     mat.totalChars = file.totalChars || mat.chunks.reduce((s, c) => s + c.charCount, 0);
   } else if (file.content) {
     // Non-textbook: always one chunk per file
     var chunkId = docIdPrefix + "-c0";
-    var saved = await DB.saveDoc(courseId, chunkId, { content: file.content });
+    mat._pendingDocs.push({ chunkId, doc: { content: file.content } });
     mat.chunks.push({
       id: chunkId,
       label: file.name,
       charCount: file.content.length,
-      status: saved ? "skipped" : "failed"  // Inactive by default
+      status: "skipped"
     });
-    if (!saved) console.error("storeAsChunks: failed to save chunk", chunkId);
     mat.charCount = file.content.length;
   }
   return mat;
@@ -437,7 +438,15 @@ export const extractSkillTree = async (courseId, materialsMeta, onStatus, retryO
       wasCancelled = true;
       onStatus("Extraction cancelled. " + succeededChunkIds.size + " section(s) completed.");
       if (onSkillNotif) onSkillNotif("warn", "Extraction stopped. Progress saved.");
-      if (onMatProgress) onMatProgress(null); // Clear processing indicator
+      if (onMatProgress) onMatProgress(null);
+      // Revert remaining pending chunks to skipped
+      for (var ri = i; ri < chunksToProcess.length; ri++) {
+        var remainingChunk = chunksToProcess[ri];
+        var revertId = remainingChunk.originalChunkId || remainingChunk.chunkId;
+        if (!succeededChunkIds.has(revertId) && !failedChunkIds.has(revertId)) {
+          await updateChunkStatus(courseId, revertId, "skipped");
+        }
+      }
       break;
     }
 
@@ -607,8 +616,8 @@ export const validateSkillTree = async (courseId, skills, onStatus) => {
 export const mergeSkillTree = async (courseId, existingSkills, newMaterialsMeta, onStatus) => {
   if (!Array.isArray(existingSkills) || existingSkills.length === 0) {
     // No existing tree -- fall back to full extraction with all materials
-    const allMats = await DB.get("study-courses");
-    const course = Array.isArray(allMats) ? allMats.find(c => c.id === courseId) : null;
+    const allCourses = await DB.getCourses();
+    const course = allCourses.find(c => c.id === courseId);
     return extractSkillTree(courseId, course?.materials || newMaterialsMeta, onStatus);
   }
 

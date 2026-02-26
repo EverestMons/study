@@ -310,6 +310,13 @@ function StudyInner({ setErrorCtx }) {
       const newCourse = { id: courseId, name: cName.trim(), materials: mats, createdAt: new Date().toISOString() };
       const updated = [...courses.filter(c => c.id !== courseId), newCourse];
       await DB.saveCourses(updated);
+      // Flush buffered content now that chunk rows exist
+      for (const mat of mats) {
+        for (const pd of (mat._pendingDocs || [])) {
+          await DB.saveDoc(courseId, pd.chunkId, pd.doc);
+        }
+        delete mat._pendingDocs;
+      }
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
       setScreen("materials");
       var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
@@ -705,6 +712,13 @@ function StudyInner({ setErrorCtx }) {
     const allCourses = await DB.getCourses();
     const updatedCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
     await DB.saveCourses(updatedCourses);
+    // Flush buffered content now that chunk rows exist
+    for (const mat of newMeta) {
+      for (const pd of (mat._pendingDocs || [])) {
+        await DB.saveDoc(active.id, pd.chunkId, pd.doc);
+      }
+      delete mat._pendingDocs;
+    }
     setCourses(updatedCourses);
     setActive(updatedCourse);
     setFiles([]);
@@ -726,15 +740,12 @@ function StudyInner({ setErrorCtx }) {
     setGlobalLock({ message: "Removing " + (removedMat?.name || "material") + "..." });
     setBusy(true);
     try {
-      // Delete all chunk data
+      // Delete chunk data from SQLite
       if (removedMat?.chunks) {
         for (const ch of removedMat.chunks) {
-          await DB.del("study-doc:" + active.id + ":" + ch.id);
-          await DB.del("study-cskills:" + active.id + ":" + ch.id);
+          await DB.deleteChunk(active.id, ch.id);
         }
       }
-      // Legacy fallback
-      await DB.del("study-doc:" + active.id + ":" + docId);
       const updatedMats = active.materials.filter(m => m.id !== docId);
       const updatedCourse = { ...active, materials: updatedMats };
       setCourses(p => p.map(c => c.id === active.id ? updatedCourse : c));
@@ -1302,7 +1313,7 @@ function StudyInner({ setErrorCtx }) {
                     {extracted > 0 && <span style={{ color: T.gn }}>{extracted} active</span>}
                     {failed > 0 && <span style={{ color: "#F59E0B" }}>{failed} failed</span>}
                     {skipped > 0 && <span style={{ color: T.txM }}>{skipped} inactive</span>}
-                    {pending > 0 && <span style={{ color: T.ac }}>{pending} queued</span>}
+                    {pending > 0 && isProcessing && <span style={{ color: T.ac }}>{pending} extracting...</span>}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -2094,7 +2105,7 @@ function StudyInner({ setErrorCtx }) {
                           {extracted > 0 && <span style={{ color: T.gn }}>{extracted} active</span>}
                           {failed > 0 && <span style={{ color: "#F59E0B" }}>{failed} failed</span>}
                           {skipped > 0 && <span style={{ color: T.txD }}>{skipped} inactive</span>}
-                          {pending > 0 && <span style={{ color: T.ac }}>{pending} queued</span>}
+                          {pending > 0 && isProcessing && <span style={{ color: T.ac }}>{pending} extracting...</span>}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -2142,26 +2153,29 @@ function StudyInner({ setErrorCtx }) {
                               <span style={{ color: T.txD, flexShrink: 0 }}>{(ch.charCount || 0).toLocaleString()}</span>
                               {ch.status === "skipped" && (
                                 <button onClick={async () => {
-                                  if (busy) return;
-                                  // Re-enable this chunk
+                                  if (busy || globalLock) return;
+                                  // Re-enable and immediately extract this chunk
                                   var updatedMats = active.materials.map(m => m.id !== mat.id ? m : { ...m, chunks: m.chunks.map(c => c.id === ch.id ? { ...c, status: "pending" } : c) });
                                   var updatedCourse = { ...active, materials: updatedMats };
                                   var allCourses = await DB.getCourses();
                                   allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
                                   await DB.saveCourses(allCourses);
                                   setCourses(allCourses); setActive(updatedCourse);
+                                  // Trigger extraction
+                                  setGlobalLock({ message: "Extracting " + ch.label + "..." });
+                                  setProcessingMatId(mat.id);
+                                  setBusy(true);
+                                  extractionCancelledRef.current = false;
+                                  try {
+                                    var matToExtract = { ...mat, chunks: [{ ...ch, status: "pending" }] };
+                                    await extractSkillTree(active.id, [matToExtract], setStatus, false, addNotif, extractionCancelledRef,
+                                      (err) => setExtractionErrors(p => [...p, err].slice(-10)), setProcessingMatId);
+                                    var refreshed = await DB.getCourses();
+                                    var refreshedCourse = refreshed.find(c => c.id === active.id);
+                                    if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }
+                                  } catch (e) { addNotif("error", "Extraction failed: " + e.message); }
+                                  finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
                                 }} style={{ background: "none", border: "none", color: T.ac, cursor: "pointer", fontSize: 11, padding: 0 }}>enable</button>
-                              )}
-                              {ch.status === "pending" && (
-                                <button onClick={async () => {
-                                  if (busy) return;
-                                  var updatedMats = active.materials.map(m => m.id !== mat.id ? m : { ...m, chunks: m.chunks.map(c => c.id === ch.id ? { ...c, status: "skipped" } : c) });
-                                  var updatedCourse = { ...active, materials: updatedMats };
-                                  var allCourses = await DB.getCourses();
-                                  allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                                  await DB.saveCourses(allCourses);
-                                  setCourses(allCourses); setActive(updatedCourse);
-                                }} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 11, padding: 0 }}>skip</button>
                               )}
                             </div>
                           );

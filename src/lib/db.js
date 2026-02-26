@@ -78,7 +78,16 @@ export const DB = {
         );
         for (const ch of (mat.chunks || [])) {
           await db.execute(
-            'INSERT OR REPLACE INTO chunks (id, material_id, course_id, label, char_count, status, error_info, fail_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            `INSERT INTO chunks (id, material_id, course_id, label, char_count, status, error_info, fail_count)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               material_id = excluded.material_id,
+               course_id = excluded.course_id,
+               label = excluded.label,
+               char_count = excluded.char_count,
+               status = excluded.status,
+               error_info = excluded.error_info,
+               fail_count = excluded.fail_count`,
             [ch.id, mat.id, course.id, ch.label, ch.charCount || 0, ch.status || 'pending', ch.errorInfo ? JSON.stringify(ch.errorInfo) : null, ch.failCount || 0]
           );
         }
@@ -91,15 +100,9 @@ export const DB = {
   async saveDoc(cid, chunkId, doc) {
     const db = await getDb();
     const content = typeof doc === 'string' ? doc : JSON.stringify(doc);
-    // Try UPDATE first (chunk row may already exist)
-    const result = await db.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
-    // If no row matched, INSERT a placeholder chunk so content isn't lost
-    if (result.rowsAffected === 0) {
-      await db.execute(
-        'INSERT OR IGNORE INTO chunks (id, material_id, course_id, label, content, char_count, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [chunkId, '', cid, '', content, content.length, 'pending']
-      );
-    }
+    // UPDATE content on existing row; if row doesn't exist yet (created later by saveCourses),
+    // saveCourses will call saveDoc again via the content-backfill path
+    await db.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
     return true;
   },
 
@@ -131,6 +134,14 @@ export const DB = {
     const db = await getDb();
     const rows = await db.select('SELECT skill_data FROM chunk_skills WHERE chunk_id = ? AND course_id = ?', [chunkId, cid]);
     return rows.length > 0 ? JSON.parse(rows[0].skill_data) : null;
+  },
+
+  // --- Delete a single chunk and its skills ---
+  async deleteChunk(cid, chunkId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM chunk_skills WHERE chunk_id = ? AND course_id = ?', [chunkId, cid]);
+    await db.execute('DELETE FROM chunks WHERE id = ? AND course_id = ?', [chunkId, cid]);
+    return true;
   },
 
   // --- Course-level data (skills, taxonomy, validation, assignments) ---
