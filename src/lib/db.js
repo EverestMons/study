@@ -685,6 +685,26 @@ export const SubSkills = {
     );
   },
 
+  async incrementDiagnosticCount(skillId) {
+    const db = await getDb();
+    await db.execute(
+      `UPDATE sub_skills SET fitness = json_set(fitness,
+         '$.diagnosticCount', COALESCE(json_extract(fitness, '$.diagnosticCount'), 0) + 1,
+         '$.lastUsed', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+       ) WHERE id = ?`, [skillId]
+    );
+  },
+
+  async incrementDecayEvents(skillId) {
+    const db = await getDb();
+    await db.execute(
+      `UPDATE sub_skills SET fitness = json_set(fitness,
+         '$.decayEvents', COALESCE(json_extract(fitness, '$.decayEvents'), 0) + 1,
+         '$.lastUsed', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+       ) WHERE id = ?`, [skillId]
+    );
+  },
+
   // --- Re-extraction identity match update (16.14) ---
 
   async updateFromReextraction(skillId, { description, masteryCriteria, evidence,
