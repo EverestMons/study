@@ -355,7 +355,7 @@ function StudyInner({ setErrorCtx }) {
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
       setScreen("materials");
       var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-      addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s). Activate sections to start studying.");
+      addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s). Activate sections from your materials, then go to Skills to extract.");
     } catch (err) {
       console.error("Course creation failed:", err);
       addNotif("error", "Course creation failed: " + err.message);
@@ -365,52 +365,6 @@ function StudyInner({ setErrorCtx }) {
     setBooting(false); setStatus("");
   };
 
-  // --- Run extraction after chunk selection ---
-  const runExtraction = async (selectedChunkIds) => {
-    if (!chunkPicker || !active) { console.error("runExtraction: missing chunkPicker or active", { chunkPicker: !!chunkPicker, active: !!active }); return; }
-    
-    var matToExtract = chunkPicker.materials[0];
-    if (!matToExtract) { addNotif("error", "No material selected for extraction."); return; }
-
-    setStatus("Starting extraction...");
-    setBusy(true); setBooting(true);
-    setChunkPicker(null);
-    setGlobalLock({ message: "Extracting skills..." });
-    try {
-      extractionCancelledRef.current = false;
-      var result = await runExtractionV2(active.id, matToExtract.id, {
-        onStatus: setStatus,
-        onNotif: addNotif,
-        onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-      });
-      // Refresh course and skills
-      var refreshed = await DB.getCourses();
-      var refreshedCourse = refreshed.find(c => c.id === active.id);
-      if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }
-      var refreshedSkills = await loadSkillsV2(active.id);
-      if (refreshedSkills.length > 0) {
-        var rt = await DB.getRefTaxonomy(active.id);
-        setSkillViewData({ skills: refreshedSkills, refTax: rt, isV2: true });
-      }
-      if (result.success) {
-        addNotif("success", "Extracted " + result.totalSkills + " skills.");
-      } else {
-        addNotif("error", "Extraction completed with issues. Check skill view.");
-      }
-    } catch (e) {
-      console.error("Extraction failed:", e);
-      var eMsg = e.message || "";
-      if (/401|403|authentication|unauthorized|invalid.*key/i.test(eMsg)) {
-        addNotif("error", "API key is invalid or expired. Go to Settings to update it.");
-        setShowSettings(true);
-      } else {
-        addNotif("error", "Extraction failed: " + eMsg);
-      }
-    } finally {
-      setGlobalLock(null); setBusy(false); setBooting(false); setStatus("");
-      setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null);
-    }
-  };
   const enterStudy = async (course) => {
     setActive(course); setScreen("study");
     setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
@@ -465,7 +419,7 @@ function StudyInner({ setErrorCtx }) {
         setPickerData({ mode, items: enriched, _skills: skills });
       } else if (mode === "skills") {
         if (!Array.isArray(skills) || skills.length === 0) {
-          setPickerData({ mode, empty: true, message: "No skills yet. Activate sections from your materials first." });
+          setPickerData({ mode, empty: true, message: "No skills yet. Activate sections and extract skills first." });
           return;
         }
         const enriched = skills.map(s => {
@@ -1238,19 +1192,6 @@ function StudyInner({ setErrorCtx }) {
           )}
         </div>
         
-        {/* Extraction Progress */}
-        {processingMatId && (
-          <div style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: 16, marginBottom: 20, display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 10, height: 10, borderRadius: 5, background: T.ac, animation: "pulse 1.5s ease-in-out infinite" }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: T.ac, fontWeight: 600 }}>Extracting skills...</div>
-              <div style={{ fontSize: 12, color: T.txD, marginTop: 2 }}>{status}</div>
-            </div>
-            <button onClick={() => { extractionCancelledRef.current = true; }}
-              style={{ padding: "6px 12px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 6, fontSize: 12, color: T.txD, cursor: "pointer" }}>Stop</button>
-          </div>
-        )}
-        
         {/* Materials List */}
         <div style={{ fontSize: 12, color: T.txD, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Course Materials ({active.materials.length})</div>
         {active.materials.map(mat => {
@@ -1260,13 +1201,12 @@ function StudyInner({ setErrorCtx }) {
           const failed = chunks.filter(c => c.status === "failed").length;
           const skipped = chunks.filter(c => c.status === "skipped").length;
           const pending = chunks.filter(c => c.status === "pending").length;
-          const isProcessing = processingMatId === mat.id;
           const hasNoChunks = chunks.length === 0;
           const allExtracted = chunks.length > 0 && extracted === chunks.length;
           const allSkipped = chunks.length > 0 && skipped === chunks.length;
           
           return (
-            <div key={mat.id} style={{ background: T.sf, borderRadius: 12, marginBottom: 10, overflow: "hidden", border: isProcessing ? "2px solid " + T.ac : "1px solid " + T.bd }}>
+            <div key={mat.id} style={{ background: T.sf, borderRadius: 12, marginBottom: 10, overflow: "hidden", border: "1px solid " + T.bd }}>
               <div style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{mat.name}</div>
@@ -1277,36 +1217,26 @@ function StudyInner({ setErrorCtx }) {
                     {extracted > 0 && <span style={{ color: T.gn }}>{extracted} active</span>}
                     {failed > 0 && <span style={{ color: "#F59E0B" }}>{failed} failed</span>}
                     {skipped > 0 && <span style={{ color: T.txM }}>{skipped} inactive</span>}
-                    {pending > 0 && isProcessing && <span style={{ color: T.ac }}>{pending} extracting...</span>}
+                    {pending > 0 && <span style={{ color: T.ac }}>{pending} pending</span>}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  {/* Processing indicator */}
-                  {isProcessing && (
-                    <span style={{ fontSize: 11, color: T.ac, padding: "6px 12px" }}>Activating...</span>
-                  )}
-                  
                   {/* Activate button for materials with no chunks (never processed or chunks lost) */}
-                  {hasNoChunks && !isProcessing && (
+                  {hasNoChunks && (
                     <button onClick={async () => {
                       if (globalLock) return;
-                      setGlobalLock({ message: "Processing " + mat.name + "..." });
-                      setProcessingMatId(mat.id);
-                      setBusy(true);
-                      setStatus("Processing " + mat.name + "...");
-                      extractionCancelledRef.current = false;
+                      setGlobalLock({ message: "Activating " + mat.name + "..." });
                       try {
                         // Material has no chunks — try to load content and create a synthetic chunk
                         var doc = await DB.getDoc(active.id, mat.id);
-                        // Also check chunk-style IDs
                         if (!doc || !doc.content) doc = await DB.getDoc(active.id, mat.id + "-c0");
                         if (!doc || !doc.content) {
                           addNotif("error", "No content found for " + mat.name + ". Try removing and re-uploading.");
                           return;
                         }
-                        // Create chunk metadata and save — saveCourses first to create the row, then saveDoc to fill content
+                        // Create chunk metadata with status "extracted" (active) — no skill extraction here
                         var chunkId = mat.id + "-c0";
-                        var matWithChunks = { ...mat, chunks: [{ id: chunkId, label: mat.name, charCount: doc.content.length, status: "pending" }] };
+                        var matWithChunks = { ...mat, chunks: [{ id: chunkId, label: mat.name, charCount: doc.content.length, status: "extracted" }] };
                         var updatedMats = active.materials.map(m => m.id !== mat.id ? m : matWithChunks);
                         var updatedCourse = { ...active, materials: updatedMats };
                         var allCourses = await DB.getCourses();
@@ -1314,26 +1244,15 @@ function StudyInner({ setErrorCtx }) {
                         await DB.saveCourses(allCourses);
                         await DB.saveDoc(active.id, chunkId, doc);
                         setCourses(allCourses); setActive(updatedCourse);
-                        // Extract skills
-                        var result = await runExtractionV2(active.id, mat.id, {
-                          onStatus: setStatus,
-                          onNotif: addNotif,
-                          onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                        });
-                        var refreshed = await DB.getCourses();
-                        var refreshedCourse = refreshed.find(c => c.id === active.id);
-                        if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }
-                        addNotif(result.success ? "success" : "error",
-                          result.success ? "Extracted " + result.totalSkills + " skills from " + mat.name
-                          : "Extraction had issues for " + mat.name);
-                      } catch (e) { addNotif("error", "Extraction failed: " + e.message); }
-                      finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
+                        addNotif("success", "Activated " + mat.name + ". Go to Skills to extract.");
+                      } catch (e) { addNotif("error", "Activation failed: " + e.message); }
+                      finally { setGlobalLock(null); }
                     }}
                       style={{ background: T.acS, border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Activate</button>
                   )}
                   
                   {/* Deactivate button for single-section materials where active */}
-                  {allExtracted && !isProcessing && chunks.length === 1 && (
+                  {allExtracted && chunks.length === 1 && (
                     <button onClick={async () => {
                       if (globalLock) return;
                       setGlobalLock({ message: "Deactivating " + mat.name + "..." });
@@ -1360,7 +1279,7 @@ function StudyInner({ setErrorCtx }) {
                   )}
                   
                   {/* Edit Sections for multi-section materials where all active - opens in deactivate mode */}
-                  {allExtracted && !isProcessing && chunks.length > 1 && (
+                  {allExtracted && chunks.length > 1 && (
                     <button onClick={() => {
                       var activeIds = new Set(chunks.map(c => c.id));
                       setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: activeIds, mode: "deactivate" });
@@ -1369,17 +1288,11 @@ function StudyInner({ setErrorCtx }) {
                   )}
                   
                   {/* Activate button for single-section materials where inactive */}
-                  {allSkipped && !isProcessing && chunks.length === 1 && (
+                  {allSkipped && chunks.length === 1 && (
                     <button onClick={async () => {
                       if (globalLock) return;
                       setGlobalLock({ message: "Activating " + mat.name + "..." });
-                      // Single section - activate immediately
-                      var ch = chunks[0];
-                      setProcessingMatId(mat.id);
-                      setBusy(true);
-                      setStatus("Activating " + mat.name + "...");
                       try {
-                      // Re-activate: set chunk status back and re-extract if needed
                       var updatedMats = active.materials.map(m => m.id !== mat.id ? m : {
                         ...m,
                         chunks: m.chunks.map(c => ({ ...c, status: "extracted" }))
@@ -1389,14 +1302,14 @@ function StudyInner({ setErrorCtx }) {
                       allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
                       await DB.saveCourses(allCourses);
                       setCourses(allCourses); setActive(updatedCourse);
-                      addNotif("success", "Re-activated " + mat.name);
-                      } finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
+                      addNotif("success", "Activated " + mat.name);
+                      } finally { setGlobalLock(null); }
                     }}
                       style={{ background: T.acS, border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Activate</button>
                   )}
                   
                   {/* Select Sections for multi-section materials where all inactive */}
-                  {allSkipped && !isProcessing && chunks.length > 1 && (
+                  {allSkipped && chunks.length > 1 && (
                     <button onClick={() => {
                       var allChunkIds = new Set(chunks.map(c => c.id));
                       setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: allChunkIds, mode: "activate" });
@@ -1405,7 +1318,7 @@ function StudyInner({ setErrorCtx }) {
                   )}
                   
                   {/* Edit Sections for multi-section materials with mixed states */}
-                  {!allSkipped && !allExtracted && !isProcessing && chunks.length > 1 && (
+                  {!allSkipped && !allExtracted && chunks.length > 1 && (
                     <button onClick={() => {
                       var inactiveChunkIds = new Set(chunks.filter(c => c.status === "skipped" || c.status === "failed").map(c => c.id));
                       setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: inactiveChunkIds, mode: "activate" });
@@ -1420,7 +1333,7 @@ function StudyInner({ setErrorCtx }) {
                     
                     return (
                       <>
-                        {retriableChunks.length > 0 && !isProcessing && (
+                        {retriableChunks.length > 0 && (
                           <button onClick={async () => {
                             if (globalLock) return;
                             setGlobalLock({ message: "Retrying failed extractions..." });
@@ -1445,7 +1358,7 @@ function StudyInner({ setErrorCtx }) {
                             Retry ({retriableChunks.length})
                           </button>
                         )}
-                        {permanentlyFailed.length > 0 && !isProcessing && (
+                        {permanentlyFailed.length > 0 && (
                           <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
                             style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
                             Log Error ({permanentlyFailed.length})
@@ -1454,15 +1367,13 @@ function StudyInner({ setErrorCtx }) {
                       </>
                     );
                   })()}
-                  {!isProcessing && (
-                    <button onClick={() => {
+                  <button onClick={() => {
                       if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
                       else setPendingConfirm({ type: "removeMat", id: mat.id });
                     }}
                       style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
                       {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
                     </button>
-                  )}
                 </div>
               </div>
               {/* Chunk list - for multi-section materials, just show status */}
@@ -1601,7 +1512,23 @@ function StudyInner({ setErrorCtx }) {
                 <button onClick={() => setChunkPicker(null)} style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "1px solid " + T.bd, background: "transparent", color: T.txD, cursor: "pointer", fontSize: 14 }}>Cancel</button>
                 
                 {(chunkPicker.mode || "activate") === "activate" ? (
-                  <button onClick={() => runExtraction(chunkPicker.selectedChunks)} disabled={chunkPicker.selectedChunks.size === 0}
+                  <button onClick={async () => {
+                    if (chunkPicker.selectedChunks.size === 0) return;
+                    var mat = chunkPicker.materials[0];
+                    var selectedIds = chunkPicker.selectedChunks;
+                    // Mark selected chunks as extracted (active) — no skill extraction
+                    var updatedMats = active.materials.map(m => m.id !== mat.id ? m : {
+                      ...m,
+                      chunks: m.chunks.map(c => selectedIds.has(c.id) ? { ...c, status: "extracted" } : c)
+                    });
+                    var updatedCourse = { ...active, materials: updatedMats };
+                    var allCourses = await DB.getCourses();
+                    allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
+                    await DB.saveCourses(allCourses);
+                    setCourses(allCourses); setActive(updatedCourse);
+                    setChunkPicker(null);
+                    addNotif("success", "Activated " + selectedIds.size + " section(s). Go to Skills to extract.");
+                  }} disabled={chunkPicker.selectedChunks.size === 0}
                     style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "none", background: chunkPicker.selectedChunks.size > 0 ? T.ac : T.bd, color: chunkPicker.selectedChunks.size > 0 ? "#0F1115" : T.txD, cursor: chunkPicker.selectedChunks.size > 0 ? "pointer" : "default", fontWeight: 600, fontSize: 14 }}>
                     Activate ({chunkPicker.selectedChunks.size})
                   </button>
@@ -1760,11 +1687,11 @@ function StudyInner({ setErrorCtx }) {
           </div>
         )}
 
-        {/* Re-index button */}
+        {/* Extract Skills button */}
         <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
           <button disabled={!!globalLock} onClick={async () => {
             if (globalLock) return;
-            setGlobalLock({ message: "Re-indexing activated materials..." });
+            setGlobalLock({ message: "Extracting skills from activated materials..." });
             setBusy(true); setStatus("Scanning chunks for missing skills...");
             extractionCancelledRef.current = false;
             try {
@@ -1825,20 +1752,20 @@ function StudyInner({ setErrorCtx }) {
                   var rt = await DB.getRefTaxonomy(active.id);
                   setSkillViewData({ skills: sk, refTax: rt, isV2: true });
                   addNotif(result.success ? "success" : "warn",
-                    "Re-index complete. " + (result.totalSkills || 0) + " skills.");
+                    "Extraction complete. " + (result.totalSkills || 0) + " skills.");
                 } else {
-                  addNotif("error", "No materials with sections to re-index.");
+                  addNotif("error", "No materials with sections to extract from.");
                 }
               }
             } catch (e) {
-              console.error("Re-index failed:", e);
-              addNotif("error", "Re-index failed: " + e.message);
+              console.error("Extraction failed:", e);
+              addNotif("error", "Extraction failed: " + e.message);
             } finally {
               setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
             }
           }}
             style={{ padding: "8px 16px", background: T.acS, border: "1px solid " + T.ac, borderRadius: 8, color: T.ac, cursor: globalLock ? "default" : "pointer", fontSize: 13, fontWeight: 600, opacity: globalLock ? 0.5 : 1 }}>
-            Re-index
+            Extract Skills
           </button>
         </div>
 
@@ -1853,7 +1780,7 @@ function StudyInner({ setErrorCtx }) {
         {/* Skills by Category */}
         {(() => {
           var skills = skillViewData?.skills || [];
-          if (!skills.length) return <div style={{ color: T.txD, textAlign: "center", padding: 40 }}>No skills yet. Activate sections from your materials to build your skill tree.</div>;
+          if (!skills.length) return <div style={{ color: T.txD, textAlign: "center", padding: 40 }}>No skills yet. Activate sections from your materials, then click Extract Skills.</div>;
           
           var cats = {};
           for (var s of skills) {
