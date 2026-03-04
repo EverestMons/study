@@ -1,3 +1,13 @@
+# V1 Schema Archive
+
+**Archived:** March 1, 2026  
+**Reason:** Replaced by v2 schema redesign. No data migration — fresh start.
+
+This documents the original SQLite schema so it can be reconstructed if needed.
+
+## Migration 001: Initial Tables
+
+```sql
 -- Study App SQLite Schema v1
 
 -- Courses table
@@ -92,10 +102,51 @@ CREATE TABLE IF NOT EXISTS practice_sets (
     PRIMARY KEY (course_id, skill_id)
 );
 
--- Indexes for common queries
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_materials_course ON materials(course_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_material ON chunks(material_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_course ON chunks(course_id);
 CREATE INDEX IF NOT EXISTS idx_chunk_skills_course ON chunk_skills(course_id);
 CREATE INDEX IF NOT EXISTS idx_messages_course ON messages(course_id);
 CREATE INDEX IF NOT EXISTS idx_journal_course ON journal_entries(course_id);
+```
+
+## Migration 002: Settings Table
+
+```sql
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+```
+
+## V1 DB Layer (src/lib/db.js) Key Patterns
+
+The v1 DB layer used `@tauri-apps/plugin-sql` with `Database.load('sqlite:study.db')`.
+
+Key tables and their usage:
+- `courses` — Course metadata (id, name, created timestamp)
+- `materials` — Uploaded files within a course (label, classification, file type, active toggle)
+- `chunks` — Sections of materials (content text, char count, processing status)
+- `chunk_skills` — Skills extracted per chunk (JSON blob in skill_data)
+- `course_data` — Generic key-value per course (skills tree, taxonomy, validation, assignments stored as data_type + JSON)
+- `profiles` — Student progress per course (JSON skills object, session count)
+- `messages` — Chat history per course (role, content, metadata)
+- `journal_entries` — Learning journal per course (JSON entry data)
+- `practice_sets` — Practice mode state per course+skill (JSON data)
+- `settings` — App settings (API key stored here)
+
+## V1 Frontend Module Layout
+
+```
+src/
+  App.jsx          — Main app component (~4000 lines)
+  lib/
+    api.js         — Claude API calls (streaming + non-streaming)
+    classify.js    — Material classification heuristics
+    db.js          — SQLite DB layer (all CRUD operations)
+    parsers.js     — File parsers (EPUB, DOCX, PPTX, TXT, SRT/VTT)
+    skills.js      — Skill extraction, chunking, context building
+    study.js       — Study logic (mastery, practice, prompts, FSRS)
+    theme.jsx      — Theme constants and markdown renderer
+```

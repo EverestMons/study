@@ -1,5 +1,6 @@
-import { DB } from './db.js';
+import { DB, Materials, Chunks, SubSkills, SkillPrerequisites, Mastery } from './db.js';
 import { callClaude, extractJSON } from './api.js';
+import { chunkDocument } from './chunker.js';
 
 // --- Character budget per chunk (~25k tokens ~ 100k chars) ---
 export const CHUNK_CHAR_LIMIT = 40000; // ~10k tokens, safe for rate limits
@@ -9,17 +10,13 @@ export const splitTextChunks = (text, limit) => {
   const pieces = [];
   var remaining = text;
   while (remaining.length > limit) {
-    // Find the last double-newline (paragraph break) before the limit
     var cutRegion = remaining.substring(0, limit);
     var breakIdx = cutRegion.lastIndexOf("\n\n");
-    // Fallback: single newline
     if (breakIdx < limit * 0.5) breakIdx = cutRegion.lastIndexOf("\n");
-    // Fallback: last sentence boundary (. or ? or !)
     if (breakIdx < limit * 0.5) {
       var sentenceMatch = cutRegion.match(/.*[.!?]\s/s);
       breakIdx = sentenceMatch ? sentenceMatch[0].length : -1;
     }
-    // Last resort: hard cut at limit
     if (breakIdx < limit * 0.3) breakIdx = limit;
     pieces.push(remaining.substring(0, breakIdx).trimEnd());
     remaining = remaining.substring(breakIdx).trimStart();
@@ -29,8 +26,54 @@ export const splitTextChunks = (text, limit) => {
 };
 
 // --- Store parsed file as chunked material ---
-// Returns material metadata object with chunks array
+// Returns material metadata object with chunks array.
+//
+// Two paths:
+//   1. v2 structured (EPUB, DOCX with _structured) → chunkDocument → Chunks.createBatch
+//      Content is stored directly in chunks table. No _pendingDocs.
+//   2. v1 fallback (TXT, PPTX, CSV, etc.) → simple chunk creation with _pendingDocs
+//      Requires caller to flush via DB.saveDoc after saveCourses.
+
 export const storeAsChunks = async (courseId, file, docIdPrefix) => {
+  // --- V2 path: file has structured parser output ---
+  if (file._structured) {
+    // Create material record in v2 table
+    const matId = await Materials.create({
+      courseId,
+      label: file.name,
+      classification: file.classification || null,
+      fileType: file.type || file._structured.source_format || null,
+      originalFilename: file.name,
+    });
+
+    // Run v2 chunker on structured output
+    const chunks = await chunkDocument(file._structured, {
+      materialId: matId,
+      courseId,
+      classification: file.classification || 'other',
+    });
+
+    // Batch insert to v2 chunks table (content included — no _pendingDocs needed)
+    const chunkIds = await Chunks.createBatch(chunks);
+
+    // Build v1-compat metadata shape for App.jsx
+    const mat = {
+      id: matId,
+      name: file.name,
+      classification: file.classification,
+      type: file.type || file._structured.source_format,
+      chunks: chunks.map((ch, i) => ({
+        id: chunkIds[i],
+        label: ch.label,
+        charCount: ch.charCount,
+        status: 'skipped', // Not yet activated for extraction
+      })),
+    };
+    mat.totalChars = mat.chunks.reduce((s, c) => s + c.charCount, 0);
+    return mat;
+  }
+
+  // --- V1 fallback path: plain text, images, etc. ---
   const mat = {
     id: docIdPrefix,
     name: file.name,
@@ -38,12 +81,9 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
     type: file.type,
     chunks: []
   };
-
-  // Buffer content to save after saveCourses creates the chunk rows
   mat._pendingDocs = [];
 
   if (file.classification === "textbook" && file.chapters) {
-    // Each chapter = one chunk. Never split a chapter.
     for (let i = 0; i < file.chapters.length; i++) {
       var ch = file.chapters[i];
       var chunkId = docIdPrefix + "-ch-" + i;
@@ -58,7 +98,6 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
     }
     mat.totalChars = file.totalChars || mat.chunks.reduce((s, c) => s + c.charCount, 0);
   } else if (file.content) {
-    // Non-textbook: always one chunk per file
     var chunkId = docIdPrefix + "-c0";
     mat._pendingDocs.push({ chunkId, doc: { content: file.content } });
     mat.chunks.push({
@@ -76,6 +115,30 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
 // Returns { content, chunks } where content is the full text and chunks is array of {id, label, content}
 export const getMatContent = async (courseId, mat) => {
   if (mat.chunks && mat.chunks.length > 0) {
+    // Try v2 path first: read directly from chunks table
+    const dbChunks = await Chunks.getByMaterial(mat.id);
+    if (dbChunks.length > 0 && dbChunks[0].content) {
+      // v2 chunks have content stored inline.
+      // v1 chunks may have JSON-wrapped content from DB.saveDoc — detect and unwrap.
+      const allChunks = dbChunks.map(ch => {
+        let text = ch.content || '';
+        // Unwrap v1 JSON-encoded content: {"content":"..."}
+        if (text.startsWith('{')) {
+          try { const parsed = JSON.parse(text); if (parsed.content) text = parsed.content; } catch {}
+        }
+        return {
+          id: ch.id,
+          label: ch.label,
+          content: text,
+          charCount: ch.char_count || text.length,
+          status: ch.status || 'pending',
+        };
+      });
+      const fullText = allChunks.map(ch => ch.content).join('\n').trim();
+      return { content: fullText, chunks: allChunks };
+    }
+
+    // v1 fallback: content stored separately via DB.saveDoc / DB.getDoc
     var allChunks = [];
     var fullText = "";
     for (const ch of mat.chunks) {
@@ -90,11 +153,11 @@ export const getMatContent = async (courseId, mat) => {
   var doc = await DB.getDoc(courseId, mat.id);
   if (!doc) return { content: "", chunks: [] };
   if (doc.chapters) {
-    var allChunks = doc.chapters.map((ch, i) => ({
+    var legacyChunks = doc.chapters.map((ch, i) => ({
       id: mat.id + "-legacy-" + i, label: ch.title || "Chapter " + (i + 1),
       content: ch.content, charCount: ch.content?.length || 0, status: "pending"
     }));
-    return { content: doc.chapters.map(ch => ch.content).join("\n"), chunks: allChunks };
+    return { content: doc.chapters.map(ch => ch.content).join("\n"), chunks: legacyChunks };
   }
   return { content: doc.content || "", chunks: [{ id: mat.id, label: mat.name, content: doc.content || "", charCount: (doc.content || "").length, status: "pending" }] };
 };
@@ -141,551 +204,6 @@ export const verifyDocument = async (courseId, mat) => {
   return { status: "partial", summary: "Verification could not complete (API response was not parseable). Content may still be valid.", keyItems: [], issues: ["Automated verification failed"], questions: [] };
 };
 
-// --- Reference Taxonomy Generation ---
-// Generates a canonical skill taxonomy for the course subject, grounded in syllabus if available.
-// Returns { subject, level, taxonomy: [...], confidence, syllabusUsed }
-export const generateReferenceTaxonomy = async (courseId, courseName, materialsMeta, onStatus) => {
-  onStatus("Building reference taxonomy...");
-
-  // 1. Check for syllabus among materials
-  var syllabusContent = "";
-  var syllabusMat = materialsMeta.find(m => m.classification === "syllabus");
-  if (syllabusMat) {
-    var loaded = await getMatContent(courseId, syllabusMat);
-    syllabusContent = loaded.content || "";
-    // Cap syllabus at 50k chars -- syllabi are short, but be safe
-    if (syllabusContent.length > 50000) syllabusContent = syllabusContent.substring(0, 50000);
-  }
-
-  // 2. Gather material structure overview (titles/chapters, not full content)
-  var materialOutline = "";
-  for (const mat of materialsMeta) {
-    if (mat.classification === "syllabus") continue; // already captured
-    materialOutline += "\n- " + mat.name + " (" + mat.classification + ")";
-    if (mat.chunks && mat.chunks.length > 1) {
-      for (const ch of mat.chunks) {
-        materialOutline += "\n    - " + ch.label + " (" + (ch.charCount || 0).toLocaleString() + " chars)";
-      }
-    }
-  }
-
-  // 3. Build prompt
-  var prompt;
-  if (syllabusContent) {
-    onStatus("Analyzing syllabus for reference taxonomy...");
-    prompt = "You are an expert curriculum designer. A student has uploaded materials for a course. I need you to build a REFERENCE TAXONOMY -- the canonical set of skills, topics, and prerequisite relationships for this course.\n\nCOURSE NAME: " + courseName + "\n\nSYLLABUS:\n" + syllabusContent + "\n\nOTHER MATERIALS UPLOADED:\n" + materialOutline + "\n\nYour job:\n1. IDENTIFY the academic subject, level (intro/intermediate/advanced), and any specific focus areas from the syllabus.\n2. Extract the TOPIC SEQUENCE from the syllabus -- what is taught in what order.\n3. Generate a REFERENCE SKILL TAXONOMY: the standard set of skills a student should master in this course, based on the syllabus structure and your knowledge of how this subject is canonically taught.\n4. Wire PREREQUISITE RELATIONSHIPS between skills based on standard pedagogical order for this subject. Use your knowledge of the discipline -- don't just follow the syllabus week order blindly if the standard prerequisite chain differs.\n5. Flag any topics in the syllabus that are UNUSUAL for this level (taught in a non-standard order, or not typically part of this course).\n6. Rate your CONFIDENCE (0-100) in this taxonomy. High confidence = well-known subject with clear standard curriculum. Low confidence = interdisciplinary, niche, or non-standard course.\n\nRespond with ONLY a JSON object:\n{\n  \"subject\": \"e.g. Organic Chemistry\",\n  \"level\": \"intro|intermediate|advanced\",\n  \"focus\": \"any specific focus areas or specialization\",\n  \"confidence\": 85,\n  \"flags\": [\"any unusual topics or ordering noted\"],\n  \"taxonomy\": [\n    {\n      \"refId\": \"ref-1\",\n      \"name\": \"Skill/topic name\",\n      \"description\": \"What mastery of this skill means\",\n      \"prerequisites\": [\"ref-id\", ...],\n      \"category\": \"broad topic grouping\",\n      \"syllabusWeek\": \"week number or section from syllabus, if identifiable\",\n      \"standardOrder\": 1\n    }\n  ]\n}\n\nRules:\n- Be THOROUGH. Cover every topic the syllabus mentions.\n- Be GRANULAR. Break broad topics into specific skills (e.g. not just 'Derivatives' but 'Power Rule', 'Chain Rule', 'Product Rule').\n- Prerequisite wiring should reflect the DISCIPLINE's standard dependency chain, not just the order listed in the syllabus.\n- standardOrder is the typical teaching sequence in this discipline (1 = taught first).";
-  } else {
-    onStatus("Generating reference taxonomy from course structure...");
-    prompt = "You are an expert curriculum designer. A student has uploaded materials for a course but did NOT upload a syllabus. I need you to build a REFERENCE TAXONOMY -- the canonical set of skills, topics, and prerequisite relationships for this course.\n\nCOURSE NAME: " + courseName + "\n\nMATERIALS UPLOADED:\n" + materialOutline + "\n\nYour job:\n1. IDENTIFY the academic subject, level (intro/intermediate/advanced), and likely scope based on the course name and material titles.\n2. Generate a REFERENCE SKILL TAXONOMY: the standard set of skills a student would need to master in this type of course, based on your knowledge of how this subject is canonically taught.\n3. Wire PREREQUISITE RELATIONSHIPS between skills based on the standard pedagogical order for this discipline.\n4. Rate your CONFIDENCE (0-100) in this taxonomy. High = clear well-known subject. Low = ambiguous course name, unusual material mix, or interdisciplinary.\n\nRespond with ONLY a JSON object:\n{\n  \"subject\": \"e.g. Organic Chemistry\",\n  \"level\": \"intro|intermediate|advanced\",\n  \"focus\": \"best guess at specific focus areas\",\n  \"confidence\": 70,\n  \"flags\": [\"any uncertainties about the course scope\"],\n  \"taxonomy\": [\n    {\n      \"refId\": \"ref-1\",\n      \"name\": \"Skill/topic name\",\n      \"description\": \"What mastery of this skill means\",\n      \"prerequisites\": [\"ref-id\", ...],\n      \"category\": \"broad topic grouping\",\n      \"standardOrder\": 1\n    }\n  ]\n}\n\nRules:\n- Be THOROUGH but don't over-generate. Cover the standard curriculum for this subject at the identified level.\n- Be GRANULAR. Break broad topics into specific teachable skills.\n- Prerequisite wiring should reflect the DISCIPLINE's standard dependency chain.\n- If the course name or materials are ambiguous, generate for the most likely interpretation and flag the uncertainty.\n- standardOrder is the typical teaching sequence (1 = taught first).";
-  }
-
-  var result = await callClaude(prompt, [{ role: "user", content: "Generate the reference taxonomy for this course." }], 16384, true);
-  var parsed = extractJSON(result);
-
-  if (!parsed || !parsed.taxonomy) {
-    console.error("Reference taxonomy generation failed:", result.substring(0, 500));
-    onStatus("Reference taxonomy generation failed -- extraction will proceed without reference.");
-    return null;
-  }
-
-  onStatus("Reference taxonomy: " + parsed.taxonomy.length + " canonical skills for " + (parsed.subject || courseName) + " (confidence: " + (parsed.confidence || "?") + "%)");
-
-  // Store for future use
-  await DB.saveRefTaxonomy(courseId, parsed);
-  return parsed;
-};
-
-// --- Helper: Update chunk status in course metadata ---
-export const updateChunkStatus = async (courseId, chunkId, newStatus, errorInfo = null) => {
-  const allCourses = await DB.getCourses();
-  const updatedCourses = allCourses.map(c => {
-    if (c.id !== courseId) return c;
-    return {
-      ...c,
-      materials: (c.materials || []).map(mat => {
-        if (!mat.chunks) return mat;
-        return {
-          ...mat,
-          chunks: mat.chunks.map(ch => {
-            if (ch.id === chunkId) {
-              const updated = { ...ch, status: newStatus };
-              if (newStatus === "failed") {
-                updated.failCount = (ch.failCount || 0) + 1;
-                if (errorInfo) updated.lastError = errorInfo;
-              }
-              return updated;
-            }
-            return ch;
-          })
-        };
-      })
-    };
-  });
-  await DB.saveCourses(updatedCourses);
-};
-
-// --- Extract skills from a single chunk ---
-const extractChunkSkills = async (courseId, chunk, existingSkills, refTax, onStatus) => {
-  const { chunkId, label, content } = chunk;
-  const saveId = chunk.originalChunkId || chunkId; // Use original chunk ID for DB (part IDs don't exist in chunks table)
-
-  // Build context of what's already been extracted
-  var existingContext = "";
-  if (existingSkills && existingSkills.length > 0) {
-    var skillList = existingSkills.slice(-50).map(function(s) {
-      return "- " + s.name + (s.description ? ": " + s.description.substring(0, 60) : "");
-    }).join("\n");
-    existingContext = "\n\nALREADY EXTRACTED SKILLS (from other sections):\n" + skillList + "\n\nDo NOT re-extract these. Focus on NEW concepts not covered above.\n";
-  }
-
-  // Build reference taxonomy section
-  var refSection = "";
-  if (refTax && refTax.taxonomy && refTax.taxonomy.length > 0) {
-    refSection = "\n\nREFERENCE TAXONOMY (" + (refTax.subject || "unknown") + "):\n" +
-      JSON.stringify(refTax.taxonomy.slice(0, 30).map(function(t) { return { refId: t.refId, name: t.name, category: t.category }; }), null, 1) +
-      "\n\nMatch skills to reference where they align (set refMatch: true, refId).\n";
-  }
-
-  var skillPrompt = "You are a curriculum analyst extracting skills from course materials.\n\nSECTION: " + label + "\n\nCONTENT:\n" + content + existingContext + refSection + "\n\nRespond with ONLY a JSON array of skills found in THIS section. Each skill:\n{\n  \"id\": \"skill-" + chunkId.replace(/[^a-zA-Z0-9]/g, "-") + "-1\",\n  \"name\": \"Short skill name\",\n  \"description\": \"1-2 sentence description\",\n  \"prerequisites\": [],\n  \"sources\": [\"" + label + "\"],\n  \"category\": \"topic grouping\"" + (refTax ? ",\n  \"refMatch\": true/false,\n  \"refId\": \"ref-X or null\"" : "") + "\n}\n\nRules:\n- Extract EVERY discrete concept from this section\n- Use IDs starting with skill-" + chunkId.replace(/[^a-zA-Z0-9]/g, "-") + "-\n- If NO new skills (all already covered), return []\n- Be thorough but don't duplicate existing skills";
-
-  try {
-    var result = await callClaude(skillPrompt, [{ role: "user", content: "Extract skills from this section." }], 16384, true);
-    var parsed = extractJSON(result);
-
-    if (parsed && Array.isArray(parsed)) {
-      await DB.saveChunkSkills(courseId, saveId, parsed);
-      return { success: true, skills: parsed };
-    } else {
-      console.error("Chunk " + chunkId + " parse failed:", result.substring(0, 300));
-      return {
-        success: false,
-        skills: [],
-        error: "Failed to parse response",
-        debugInfo: {
-          chunkId: chunkId,
-          label: label,
-          contentLength: content.length,
-          responsePreview: result ? result.substring(0, 500) : "(empty response)",
-          parseAttempt: "extractJSON returned: " + (parsed === null ? "null" : typeof parsed)
-        }
-      };
-    }
-  } catch (e) {
-    var errMsg = e?.message || String(e);
-    console.error("Chunk " + chunkId + " API error:", errMsg);
-    return {
-      success: false,
-      skills: [],
-      error: errMsg,
-      debugInfo: {
-        chunkId: chunkId,
-        label: label,
-        contentLength: content.length,
-        errorType: e?.name || "Unknown",
-        errorMessage: errMsg,
-        stack: e?.stack ? e.stack.split("\n").slice(0, 3).join("\n") : "(no stack)"
-      }
-    };
-  }
-};
-
-// --- Merge and deduplicate skills from all chunks ---
-const mergeExtractedSkills = async (courseId, allSkills, refTax, onStatus) => {
-  // Small skill sets: just renumber, no API call needed
-  if (allSkills.length <= 20) {
-    var renumbered = allSkills.map(function(s, i) { return { ...s, id: "skill-" + (i + 1) }; });
-    await DB.saveSkills(courseId, renumbered);
-    return renumbered;
-  }
-
-  var mergeRefSection = "";
-  if (refTax && refTax.taxonomy && refTax.taxonomy.length > 0) {
-    mergeRefSection = "\n\nREFERENCE TAXONOMY:\n" +
-      JSON.stringify(refTax.taxonomy.map(function(t) { return { refId: t.refId, name: t.name, prerequisites: t.prerequisites }; }), null, 1) +
-      "\n\nSkills with same refId should be merged. Use reference prerequisite chains.\n";
-  }
-
-  var mergePrompt = "You are a curriculum analyst. Merge these skills into one clean skill tree.\n\nRAW SKILLS:\n" + JSON.stringify(allSkills, null, 1) + mergeRefSection + "\n\nYour job:\n1. DEDUPLICATE: Merge skills describing same concept (keep best description, combine sources)\n2. RENUMBER: Assign sequential IDs (skill-1, skill-2, etc.)\n3. FIX PREREQUISITES: Update references to new IDs, add cross-section links\n4. KEEP SOURCES: Preserve all source references\n5. DO NOT DROP: If similar but distinct, keep both\n\nRespond with ONLY the final merged JSON array.";
-
-  try {
-    onStatus("Merging " + allSkills.length + " skills...");
-    var result = await callClaude(mergePrompt, [{ role: "user", content: "Merge the skill tree." }], 16384, true);
-    var merged = extractJSON(result);
-
-    if (merged && Array.isArray(merged)) {
-      await DB.saveSkills(courseId, merged);
-      return merged;
-    }
-  } catch (e) {
-    console.error("Merge failed:", e.message);
-  }
-
-  // Fallback: save unmerged with sequential IDs
-  onStatus("Merge failed, saving unmerged...");
-  var fallback = allSkills.map(function(s, i) { return { ...s, id: "skill-" + (i + 1) }; });
-  await DB.saveSkills(courseId, fallback);
-  return fallback;
-};
-
-// --- Main extraction: processes chunks one at a time with immediate save ---
-export const extractSkillTree = async (courseId, materialsMeta, onStatus, retryOnly, onSkillNotif, cancelRef, onError, onMatProgress) => {
-  // 1. Gather chunks to process
-  var chunksToProcess = [];
-  for (var mi = 0; mi < materialsMeta.length; mi++) {
-    var mat = materialsMeta[mi];
-    var matClass = mat.classification || "material";
-    if (!mat.chunks || !mat.chunks.length) {
-      var loaded = await getMatContent(courseId, mat);
-      for (var ci = 0; ci < loaded.chunks.length; ci++) {
-        var ch = loaded.chunks[ci];
-        if (!ch.content || ch.content.length < 10) continue;
-        if (ch.status === "skipped") continue;
-        if (retryOnly && ch.status === "extracted") continue;
-
-        if (ch.content.length > CHUNK_CHAR_LIMIT) {
-          var parts = splitTextChunks(ch.content, CHUNK_CHAR_LIMIT);
-          for (var pi = 0; pi < parts.length; pi++) {
-            chunksToProcess.push({
-              chunkId: ch.id + "-p" + pi,
-              matId: mat.id,
-              matClass: matClass,
-              label: (loaded.chunks.length > 1 ? mat.name + " > " : "") + ch.label + " (part " + (pi + 1) + ")",
-              content: parts[pi],
-              originalChunkId: ch.id
-            });
-          }
-        } else {
-          chunksToProcess.push({
-            chunkId: ch.id,
-            matId: mat.id,
-            matClass: matClass,
-            label: (loaded.chunks.length > 1 ? mat.name + " > " : "") + ch.label,
-            content: ch.content
-          });
-        }
-      }
-    } else {
-      for (var cj = 0; cj < mat.chunks.length; cj++) {
-        var chk = mat.chunks[cj];
-        if (chk.status === "skipped") continue;
-        if (retryOnly && chk.status === "extracted") continue;
-
-        var doc = await DB.getDoc(courseId, chk.id);
-        var text = doc?.content || "";
-        if (text.length < 10) continue;
-
-        if (text.length > CHUNK_CHAR_LIMIT) {
-          var pts = splitTextChunks(text, CHUNK_CHAR_LIMIT);
-          for (var pj = 0; pj < pts.length; pj++) {
-            chunksToProcess.push({
-              chunkId: chk.id + "-p" + pj,
-              matId: mat.id,
-              matClass: matClass,
-              label: (mat.chunks.length > 1 ? mat.name + " > " : "") + chk.label + " (part " + (pj + 1) + ")",
-              content: pts[pj],
-              originalChunkId: chk.id
-            });
-          }
-        } else {
-          chunksToProcess.push({
-            chunkId: chk.id,
-            matId: mat.id,
-            matClass: matClass,
-            label: (mat.chunks.length > 1 ? mat.name + " > " : "") + chk.label,
-            content: text
-          });
-        }
-      }
-    }
-  }
-
-  if (!chunksToProcess.length) {
-    if (retryOnly) {
-      onStatus("No failed chunks to retry.");
-      return await DB.getSkills(courseId) || [];
-    }
-    onStatus("No processable chunks found.");
-    // Don't wipe existing skills — just return what we have
-    return await DB.getSkills(courseId) || [];
-  }
-
-  // 2. Load reference taxonomy
-  var refTax = await DB.getRefTaxonomy(courseId);
-
-  // 3. Gather already-extracted skills (for context on retry)
-  var existingSkills = [];
-  if (retryOnly) {
-    for (var mk = 0; mk < materialsMeta.length; mk++) {
-      var matk = materialsMeta[mk];
-      if (!matk.chunks) continue;
-      for (var ck = 0; ck < matk.chunks.length; ck++) {
-        if (matk.chunks[ck].status === "extracted") {
-          var cs = await DB.getChunkSkills(courseId, matk.chunks[ck].id);
-          if (Array.isArray(cs)) existingSkills.push(...cs);
-        }
-      }
-    }
-  }
-
-  // 4. Process each chunk one at a time
-  var succeededChunkIds = new Set();
-  var failedChunkIds = new Set();
-  var allExtractedSkills = existingSkills.slice(); // Start with existing
-  var wasCancelled = false;
-
-  onStatus("Processing " + chunksToProcess.length + " section" + (chunksToProcess.length !== 1 ? "s" : "") + "...");
-
-  for (var i = 0; i < chunksToProcess.length; i++) {
-    // Check for cancellation before each chunk
-    if (cancelRef && cancelRef.current) {
-      wasCancelled = true;
-      onStatus("Extraction cancelled. " + succeededChunkIds.size + " section(s) completed.");
-      if (onSkillNotif) onSkillNotif("warn", "Extraction stopped. Progress saved.");
-      if (onMatProgress) onMatProgress(null);
-      // Revert remaining pending chunks to skipped
-      for (var ri = i; ri < chunksToProcess.length; ri++) {
-        var remainingChunk = chunksToProcess[ri];
-        var revertId = remainingChunk.originalChunkId || remainingChunk.chunkId;
-        if (!succeededChunkIds.has(revertId) && !failedChunkIds.has(revertId)) {
-          await updateChunkStatus(courseId, revertId, "skipped");
-        }
-      }
-      // Save partial results before returning
-      if (allExtractedSkills.length > 0) {
-        try { await DB.saveSkills(courseId, allExtractedSkills); } catch (e) { console.warn("Failed to save partial skills on cancel:", e); }
-      }
-      return await DB.getSkills(courseId) || [];
-    }
-
-    var chunk = chunksToProcess[i];
-
-    // Track which material is being processed
-    if (onMatProgress) onMatProgress(chunk.matId);
-
-    onStatus("Extracting (" + (i + 1) + "/" + chunksToProcess.length + "): " + chunk.label);
-
-    // Rate limit: wait 3 seconds between API calls to stay under 30k tokens/minute
-    // Each chunk can be ~10-15k tokens, so 3 seconds gives ~20 tokens/min headroom
-    if (i > 0) {
-      onStatus("Rate limit pause... (" + (i + 1) + "/" + chunksToProcess.length + ")");
-      await new Promise(r => setTimeout(r, 3000));
-    }
-
-    var result;
-    try {
-      result = await extractChunkSkills(courseId, chunk, allExtractedSkills, refTax, onStatus);
-    } catch (e) {
-      console.error("extractChunkSkills threw:", e);
-      // Check if it's a rate limit error
-      if (e.message && e.message.includes("rate limit")) {
-        onStatus("Rate limited - waiting 60 seconds...");
-        await new Promise(r => setTimeout(r, 60000));
-        // Retry once
-        try {
-          result = await extractChunkSkills(courseId, chunk, allExtractedSkills, refTax, onStatus);
-        } catch (e2) {
-          result = { success: false, skills: [], error: e2.message };
-        }
-      } else {
-        result = { success: false, skills: [], error: e.message };
-      }
-    }
-    var trackId = chunk.originalChunkId || chunk.chunkId;
-
-    if (result.success) {
-      succeededChunkIds.add(trackId);
-      allExtractedSkills.push(...result.skills);
-
-      // Notify about extracted skills (truncate long labels)
-      if (onSkillNotif && result.skills.length > 0) {
-        var shortLabel = chunk.label.length > 25 ? chunk.label.substring(0, 25) + "..." : chunk.label;
-        var classLabel = chunk.matClass ? "[" + chunk.matClass + "] " : "";
-        for (var si = 0; si < Math.min(result.skills.length, 3); si++) {
-          onSkillNotif("skill", "Added: " + result.skills[si].name);
-        }
-        if (result.skills.length > 3) {
-          onSkillNotif("skill", "...+" + (result.skills.length - 3) + " more from " + classLabel + shortLabel);
-        }
-      }
-
-      // Update status immediately
-      await updateChunkStatus(courseId, trackId, "extracted");
-
-      // Auto-save skills after each successful chunk (crash protection)
-      try {
-        await DB.saveSkills(courseId, allExtractedSkills);
-      } catch (saveErr) {
-        console.warn("Auto-save skills failed:", saveErr);
-      }
-    } else {
-      failedChunkIds.add(trackId);
-
-      // Store error info with the chunk
-      var errorInfo = {
-        error: result.error || "Unknown error",
-        debugInfo: result.debugInfo || null,
-        time: new Date().toISOString()
-      };
-      await updateChunkStatus(courseId, trackId, "failed", errorInfo);
-
-      // Truncate label for notification
-      var shortLabel = chunk.label.length > 25 ? chunk.label.substring(0, 25) + "..." : chunk.label;
-      var classLabel = chunk.matClass ? "[" + chunk.matClass + "] " : "";
-      if (onSkillNotif) {
-        onSkillNotif("error", "Failed: " + classLabel + shortLabel);
-      }
-
-      // Store detailed error for debugging
-      if (onError && result.debugInfo) {
-        onError({
-          label: chunk.label,
-          error: result.error,
-          debugInfo: result.debugInfo,
-          time: new Date()
-        });
-      }
-    }
-  }
-
-  // 5. Check results
-  var failedCount = failedChunkIds.size;
-
-  // Clear processing indicator
-  if (onMatProgress) onMatProgress(null);
-
-  if (allExtractedSkills.length === 0) {
-    onStatus("No skills extracted." + (failedCount > 0 ? " " + failedCount + " section(s) failed." : ""));
-    // Don't wipe existing skills if nothing was extracted
-    return await DB.getSkills(courseId) || [];
-  }
-
-  // 6. Run merge/dedup pass
-  var mergedSkills = await mergeExtractedSkills(courseId, allExtractedSkills, refTax, onStatus);
-
-  onStatus("Complete: " + mergedSkills.length + " skills." + (failedCount > 0 ? " " + failedCount + " section(s) failed -- retry available." : ""));
-
-  return mergedSkills;
-};
-
-// --- Skill Tree Validation Pass ---
-// Reviews extracted skills against reference taxonomy for accuracy.
-// Can auto-fix prerequisite wiring, flag issues, and correct descriptions.
-// Returns { skills (corrected), report }
-export const validateSkillTree = async (courseId, skills, onStatus) => {
-  if (!Array.isArray(skills) || skills.length === 0) {
-    return { skills: [], report: { status: "empty", issues: [], fixes: [] } };
-  }
-
-  onStatus("Validating skill tree (" + skills.length + " skills)...");
-
-  var refTax = await DB.getRefTaxonomy(courseId);
-
-  // Build the validation prompt
-  var refSection = "";
-  if (refTax && refTax.taxonomy && refTax.taxonomy.length > 0) {
-    refSection = "\n\nREFERENCE TAXONOMY (" + (refTax.subject || "unknown") + ", " + (refTax.level || "unknown level") + ", confidence: " + (refTax.confidence || "?") + "%):\n" + JSON.stringify(refTax.taxonomy.map(t => ({ refId: t.refId, name: t.name, description: t.description, prerequisites: t.prerequisites, category: t.category, standardOrder: t.standardOrder })), null, 1);
-  }
-
-  var prompt = "You are a curriculum quality reviewer. You have been given an extracted skill tree from a student's course materials. Your job is to VALIDATE and CORRECT it.\n\nEXTRACTED SKILL TREE:\n" + JSON.stringify(skills, null, 1) + refSection + "\n\nPerform these checks:\n\n1. PREREQUISITE LOGIC: For each skill, verify its prerequisites make sense. A prerequisite must be something the student needs to know BEFORE learning this skill. Flag and fix:\n   - Circular dependencies (A requires B, B requires A)\n   - Missing prerequisites (skill requires knowledge not listed as a prerequisite)\n   - Unnecessary prerequisites (listed prerequisite isn't actually needed)\n   - Wrong direction (A listed as prereq of B, but B should be prereq of A)\n" + (refSection ? "   - Compare against reference taxonomy prerequisite chains. Reference chains reflect the discipline's standard -- prefer them over the extracted version when they conflict.\n" : "") + "\n2. DESCRIPTION ACCURACY: Each skill description should clearly state what mastery means. Flag vague descriptions like 'understand X' or 'know about Y' -- replace with specific, testable criteria.\n\n3. DUPLICATES: Flag any skills that appear to describe the same concept under different names. Merge them (keep the better name and description, combine sources).\n\n4. ORPHANED SKILLS: Flag skills with no prerequisites AND no other skill depends on them, unless they are genuinely foundational (first things taught) or standalone topics.\n\n5. COVERAGE GAPS: " + (refSection ? "Compare against the reference taxonomy. Flag any reference skills that should be present but are missing from the extracted tree." : "Based on the skill categories present, flag any obvious gaps where a prerequisite concept is implied but not explicitly listed as a skill.") + "\n\n6. CATEGORY CONSISTENCY: Ensure skills in the same category are genuinely related. Flag miscategorized skills.\n\nRespond with ONLY a JSON object:\n{\n  \"correctedSkills\": [ ... the full skill array with all fixes applied ... ],\n  \"report\": {\n    \"totalChecked\": 45,\n    \"prerequisiteFixes\": [\n      { \"skillId\": \"skill-5\", \"issue\": \"description of what was wrong\", \"fix\": \"what was changed\" }\n    ],\n    \"descriptionFixes\": [\n      { \"skillId\": \"skill-12\", \"before\": \"old description\", \"after\": \"new description\" }\n    ],\n    \"mergedDuplicates\": [\n      { \"kept\": \"skill-3\", \"removed\": \"skill-17\", \"reason\": \"both describe the same concept\" }\n    ],\n    \"coverageGaps\": [\n      { \"missingTopic\": \"topic name\", \"reason\": \"why it should be present\" }\n    ],\n    \"warnings\": [\n      \"any other observations about the skill tree quality\"\n    ]\n  }\n}\n\nRules:\n- The correctedSkills array must be complete -- include ALL skills (fixed and unfixed).\n- Preserve all existing fields (id, name, sources, category, refMatch, refId, etc.).\n- When merging duplicates, keep one ID and remove the other. Update any prerequisites that referenced the removed ID.\n- For coverage gaps, do NOT add new skills -- just report what's missing. The student may have intentionally excluded those topics.\n- Be conservative with fixes. Only change things that are clearly wrong, not merely stylistic preferences.";
-
-  try {
-    var result = await callClaude(prompt, [{ role: "user", content: "Validate and correct this skill tree." }], 16384, true);
-    var parsed = extractJSON(result);
-
-    if (parsed && parsed.correctedSkills && Array.isArray(parsed.correctedSkills)) {
-      var report = parsed.report || {};
-      var fixCount = (report.prerequisiteFixes?.length || 0) + (report.descriptionFixes?.length || 0) + (report.mergedDuplicates?.length || 0);
-      var gapCount = report.coverageGaps?.length || 0;
-
-      onStatus("Validation complete: " + fixCount + " fix" + (fixCount !== 1 ? "es" : "") + " applied" + (gapCount > 0 ? ", " + gapCount + " coverage gap" + (gapCount !== 1 ? "s" : "") + " noted" : "") + ".");
-
-      // Save corrected skills and report
-      await DB.saveSkills(courseId, parsed.correctedSkills);
-      await DB.saveValidation(courseId, report);
-
-      return { skills: parsed.correctedSkills, report: report };
-    }
-
-    // Parse failed -- keep original skills, log issue
-    console.error("Validation parse failed:", result.substring(0, 500));
-    onStatus("Validation response couldn't be parsed -- keeping original skills.");
-    await DB.saveValidation(courseId, { status: "parse_failed", raw: result.substring(0, 500) });
-    return { skills: skills, report: { status: "parse_failed" } };
-
-  } catch (e) {
-    console.error("Validation call failed:", e);
-    onStatus("Validation failed -- keeping original skills.");
-    return { skills: skills, report: { status: "error", message: e.message } };
-  }
-};
-
-// --- Incremental Skill Merge (for adding new materials) ---
-export const mergeSkillTree = async (courseId, existingSkills, newMaterialsMeta, onStatus) => {
-  if (!Array.isArray(existingSkills) || existingSkills.length === 0) {
-    // No existing tree -- fall back to full extraction with all materials
-    const allCourses = await DB.getCourses();
-    const course = allCourses.find(c => c.id === courseId);
-    return extractSkillTree(courseId, course?.materials || newMaterialsMeta, onStatus);
-  }
-
-  // Build content from ONLY the new materials
-  let newContent = "";
-  for (const mat of newMaterialsMeta) {
-    const loaded = await getMatContent(courseId, mat);
-    if (!loaded.content) continue;
-    for (const ch of loaded.chunks) {
-      newContent += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
-    }
-  }
-
-  if (!newContent.trim()) return existingSkills;
-
-  // Find the highest existing skill number to avoid ID collisions
-  let maxId = 0;
-  for (const s of existingSkills) {
-    const num = parseInt(s.id.replace(/\D/g, ""), 10);
-    if (num > maxId) maxId = num;
-  }
-
-  const existingList = existingSkills.map(s => s.id + ": " + s.name + " -- " + s.description).join("\n");
-
-  onStatus("Analyzing new materials against existing skills...");
-
-  const mergePrompt = "You are a curriculum analyst. A student has added new materials to their course. You need to figure out how these new materials relate to the EXISTING skill tree.\n\nEXISTING SKILLS (DO NOT change these IDs or names):\n" + existingList + "\n\nNEW MATERIALS:\n" + newContent + "\n\nYour job:\n1. Check if the new materials teach concepts already covered by existing skills. If so, add the new document as a source for that skill.\n2. If the new materials introduce concepts NOT covered by any existing skill, create NEW skills for them.\n3. New skill IDs must start from skill-" + (maxId + 1) + " to avoid collisions.\n4. New skills can list existing skills as prerequisites if appropriate.\n\nRespond with ONLY a JSON object:\n{\n  \"updatedSources\": [\n    { \"skillId\": \"skill-3\", \"addSources\": [\"new document name\"] }\n  ],\n  \"newSkills\": [\n    {\n      \"id\": \"skill-" + (maxId + 1) + "\",\n      \"name\": \"Short skill name\",\n      \"description\": \"1-2 sentence description\",\n      \"prerequisites\": [\"skill-id\", ...],\n      \"sources\": [\"new document name\"],\n      \"category\": \"broad topic grouping\"\n    }\n  ]\n}\n\nRules:\n- NEVER rename or re-ID existing skills. Student progress is tied to those IDs.\n- Only create new skills for genuinely new concepts.\n- If the new material just provides more depth on an existing skill, update its sources -- don't create a duplicate.\n- Be conservative: fewer new skills is better than duplicates.";
-
-  const result = await callClaude(mergePrompt, [{ role: "user", content: "Merge new materials into the existing skill tree." }], 16384, true);
-  const parsed = extractJSON(result);
-
-  if (parsed && typeof parsed === "object") {
-    // Apply source updates to existing skills
-    const merged = existingSkills.map(s => {
-      const update = parsed.updatedSources?.find(u => u.skillId === s.id);
-      if (update && update.addSources) {
-        const currentSources = s.sources || [];
-        return { ...s, sources: [...currentSources, ...update.addSources.filter(src => !currentSources.includes(src))] };
-      }
-      return s;
-    });
-
-    // Add new skills
-    if (parsed.newSkills && Array.isArray(parsed.newSkills)) {
-      for (const ns of parsed.newSkills) {
-        // Verify no ID collision
-        if (!merged.find(s => s.id === ns.id)) {
-          merged.push(ns);
-        }
-      }
-    }
-
-    await DB.saveSkills(courseId, merged);
-    return merged;
-  }
-
-  // Fallback: if merge parse failed, don't destroy existing tree
-  console.error("Skill merge parse failed, keeping existing tree");
-  return existingSkills;
-};
-
 // --- Assignment Decomposition ---
 export const decomposeAssignments = async (courseId, materialsMeta, skills, onStatus) => {
   let asgnContent = "";
@@ -718,4 +236,177 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
   // Parse failed — return empty array instead of raw string
   await DB.saveAsgn(courseId, []);
   return [];
+};
+
+// ============================================================
+// V2 Skill Loading & Extraction Integration
+// ============================================================
+
+import { extractCourse, enrichFromMaterial, reExtractCourse } from './extraction.js';
+
+/**
+ * Load skills from v2 tables with resolved prerequisites and mastery.
+ * Returns array matching the shape the UI expects.
+ *
+ * @param {string} courseId
+ * @returns {Promise<Array>} Enriched skill objects
+ */
+export const loadSkillsV2 = async (courseId) => {
+  const skills = await SubSkills.getByCourse(courseId);
+  if (!skills.length) return [];
+
+  // Batch load prerequisites
+  const prereqMap = new Map();
+  for (const s of skills) {
+    const prereqs = await SkillPrerequisites.getForSkill(s.id);
+    prereqMap.set(s.id, prereqs);
+  }
+
+  // Batch load mastery
+  const masteryRows = await Mastery.getBySkills(skills.map(s => s.id));
+  const masteryMap = new Map(masteryRows.map(m => [m.sub_skill_id, m]));
+
+  // Transform to UI shape
+  return skills.map(s => {
+    const prereqs = prereqMap.get(s.id) || [];
+    const mastery = masteryMap.get(s.id);
+    const criteria = typeof s.mastery_criteria === 'string'
+      ? JSON.parse(s.mastery_criteria || '[]') : (s.mastery_criteria || []);
+    const evidence = typeof s.evidence === 'string'
+      ? JSON.parse(s.evidence || '{}') : (s.evidence || {});
+    const fitness = typeof s.fitness === 'string'
+      ? JSON.parse(s.fitness || '{}') : (s.fitness || {});
+
+    return {
+      // Identity
+      id: s.id,
+      conceptKey: s.concept_key,
+      uuid: s.uuid,
+      name: s.name,
+      description: s.description,
+
+      // Classification
+      category: s.category,
+      skillType: s.skill_type,
+      bloomsLevel: s.blooms_level,
+
+      // Rich content
+      masteryCriteria: criteria,
+      evidence,
+      fitness,
+
+      // Graph
+      prerequisites: prereqs.map(p => ({
+        id: p.prerequisite_id,
+        name: p.name,
+        conceptKey: p.concept_key,
+        source: p.source,
+      })),
+
+      // Mastery (FSRS)
+      mastery: mastery ? {
+        difficulty: mastery.difficulty,
+        stability: mastery.stability,
+        retrievability: mastery.retrievability,
+        reps: mastery.reps,
+        lapses: mastery.lapses,
+        lastReviewAt: mastery.last_review_at,
+        nextReviewAt: mastery.next_review_at,
+        totalMasteryPoints: mastery.total_mastery_points,
+      } : null,
+
+      // Metadata
+      extractionModel: s.extraction_model,
+      schemaVersion: s.schema_version,
+      createdAt: s.created_at,
+      parentSkillId: s.parent_skill_id,
+
+      // V1 compat fields (for code that still expects them)
+      sources: (evidence.anchorTerms || []).slice(0, 3),
+    };
+  });
+};
+export const wasPreviouslyExtracted = async (materialId) => {
+  const chunks = await Chunks.getByMaterial(materialId);
+  return chunks.some(c => c.status === 'extracted');
+};
+
+/**
+ * Run v2 extraction pipeline.
+ * Determines which path: full extraction, enrichment, or re-extraction.
+ *
+ * - First v2 extraction for this course → extractCourse
+ * - Same material re-uploaded/re-extracted → reExtractCourse (identity matching)
+ * - Different material, existing skills → enrichFromMaterial
+ */
+export const runExtractionV2 = async (courseId, materialId, callbacks) => {
+  const { onStatus, onNotif, onChapterComplete } = callbacks;
+
+  try {
+    const existingV2 = await SubSkills.getByCourse(courseId);
+    const previouslyExtracted = await wasPreviouslyExtracted(materialId);
+
+    let result;
+
+    if (existingV2.length > 0 && previouslyExtracted) {
+      // --- Re-extraction: same material, identity matching ---
+      onStatus('Re-extracting with identity matching...');
+      result = await reExtractCourse(courseId, materialId, {
+        onProgress: onStatus,
+        onChapterComplete: (chapter, count) => {
+          onNotif('skill', `Chapter ${chapter}: ${count} skills re-extracted`);
+          onChapterComplete?.(chapter, count);
+        },
+      });
+      const totalSkills = (result.matched || 0) + (result.created || 0);
+      if (result.unmatchedExisting?.length > 0) {
+        onNotif('warn', `${result.unmatchedExisting.length} existing skill(s) not found in re-extraction. Review in Skills view.`);
+      }
+      onNotif('success', `Re-extraction: ${result.matched || 0} updated, ${result.created || 0} new.`);
+      return { success: true, totalSkills, issues: result.issues || [], unmatchedExisting: result.unmatchedExisting };
+
+    } else if (existingV2.length > 0) {
+      // --- Enrichment: different material, existing skills ---
+      onStatus('Enriching existing skills with new material...');
+      result = await enrichFromMaterial(courseId, materialId, {
+        onProgress: onStatus,
+      });
+      const totalSkills = result.totalSkills ?? ((result.enriched || 0) + (result.newSkills || 0));
+      if (result.issues?.length > 0) {
+        const errors = result.issues.filter(i => i.type.includes('fail') || i.type.includes('error'));
+        for (const e of errors) {
+          onNotif('error', `Extraction issue: ${e.type}${e.error ? ' - ' + e.error : ''}`);
+        }
+      }
+      onNotif('success', `Enrichment: ${result.enriched || 0} enriched, ${result.newSkills || 0} new.`);
+      return { success: true, totalSkills, issues: result.issues || [] };
+
+    } else {
+      // --- First extraction ---
+      onStatus('Running full skill extraction...');
+      result = await extractCourse(courseId, materialId, {
+        onProgress: onStatus,
+        onChapterComplete: (chapter, count) => {
+          onNotif('skill', `Chapter ${chapter}: ${count} skills extracted`);
+          onChapterComplete?.(chapter, count);
+        },
+      });
+      if (result.issues?.length > 0) {
+        const errors = result.issues.filter(i => i.type.includes('fail') || i.type.includes('error'));
+        for (const e of errors) {
+          onNotif('error', `Extraction issue: ${e.type}${e.error ? ' - ' + e.error : ''}`);
+        }
+      }
+      if (result.totalSkills > 0) {
+        onNotif('success', `Extracted ${result.totalSkills} skills from ${result.chapters?.length || 0} chapters.`);
+      } else {
+        onNotif('error', 'No skills extracted. Check material content and try again.');
+      }
+      return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
+    }
+  } catch (e) {
+    console.error('V2 extraction failed:', e);
+    onNotif('error', 'Extraction failed: ' + e.message);
+    return { success: false, totalSkills: 0, issues: [{ type: 'exception', error: e.message }] };
+  }
 };

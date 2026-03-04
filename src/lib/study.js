@@ -1,86 +1,97 @@
-import { DB } from './db.js';
+import { DB, Mastery } from './db.js';
 import { callClaude, extractJSON } from './api.js';
 import { getMatContent } from './skills.js';
+import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
 
-// --- Strength Decay Model ---
-const DECAY_BASE = 0.05; // Base decay rate per day
-const MIN_EASE = 1.3;
+// --- FSRS-backed Strength Model ---
+// effectiveStrength now reads from v2 skill objects (with .mastery field)
+// instead of v1 profile blobs.
+
+// Accepts either:
+//   - A v2 skill object (has .mastery with FSRS fields)
+//   - A mastery sub-object directly ({ stability, lastReviewAt, ... })
+//   - null/undefined → returns 0
+export const effectiveStrength = (skillOrMastery) => {
+  if (!skillOrMastery) return 0;
+  // If it's a v2 skill object, extract mastery
+  const m = skillOrMastery.mastery || skillOrMastery;
+  if (!m.stability || !m.lastReviewAt) return 0;
+  return currentRetrievability(m);
+};
+
+// Next review date: reads directly from FSRS-computed nextReviewAt
+export const nextReviewDate = (skillOrMastery) => {
+  if (!skillOrMastery) return null;
+  const m = skillOrMastery.mastery || skillOrMastery;
+  if (!m.nextReviewAt) return null;
+  // nextReviewAt may be epoch seconds (from DB) or ISO string
+  var raw = m.nextReviewAt;
+  var ms = typeof raw === 'number' ? (raw < 1e11 ? raw * 1000 : raw) : new Date(raw).getTime();
+  const next = new Date(ms);
+  const now = new Date();
+  if (next <= now) return "now";
+  return next.toISOString().split("T")[0];
+};
+
+// Keep DEFAULT_EASE export for any remaining references (backward compat)
 export const DEFAULT_EASE = 2.5;
-const MAX_EASE = 4.0;
 
-export const effectiveStrength = (skillData) => {
-  if (!skillData || !skillData.strength) return 0;
-  var lastPracticed = skillData.lastPracticed;
-  if (!lastPracticed) return skillData.strength;
-  var daysSince = (Date.now() - new Date(lastPracticed).getTime()) / (1000 * 60 * 60 * 24);
-  if (daysSince < 0) daysSince = 0;
-  // Higher ease = slower decay
-  var decayRate = DECAY_BASE / (skillData.ease || DEFAULT_EASE);
-  return skillData.strength * Math.exp(-decayRate * daysSince);
-};
-
-// Estimate next review date: when strength will drop below threshold
-export const nextReviewDate = (skillData, threshold) => {
-  if (!skillData || !skillData.strength || !skillData.lastPracticed) return null;
-  if (!threshold) threshold = 0.4;
-  if (skillData.strength <= threshold) return "now";
-  var decayRate = DECAY_BASE / (skillData.ease || DEFAULT_EASE);
-  // strength * e^(-rate * days) = threshold => days = -ln(threshold/strength) / rate
-  var days = -Math.log(threshold / skillData.strength) / decayRate;
-  var reviewDate = new Date(new Date(skillData.lastPracticed).getTime() + days * 86400000);
-  return reviewDate.toISOString().split("T")[0];
-};
-
-// --- Strength Update (replaces point-only system) ---
+// --- Strength Update (FSRS-backed) ---
+// Applies skill updates using FSRS state transitions and writes to Mastery table.
+// Also maintains profile.skills for backward-compatible journal/display data.
 export const applySkillUpdates = async (courseId, updates) => {
   if (!updates.length) return;
   var profile = await DB.getProfile(courseId);
-  var now = new Date().toISOString();
-  var date = now.split("T")[0];
+  var now = new Date();
+  var nowIso = now.toISOString();
+  var date = nowIso.split("T")[0];
+
+  // Point values by rating (for totalMasteryPoints tracking)
+  var POINTS = { struggled: 1, hard: 2, good: 3, easy: 5 };
 
   for (var u of updates) {
+    var grade = mapRating(u.rating);
+
+    // Load current mastery state from DB
+    var existing = await Mastery.getBySkill(u.skillId);
+    var card;
+    if (existing) {
+      card = {
+        difficulty: existing.difficulty,
+        stability: existing.stability,
+        reps: existing.reps,
+        lapses: existing.lapses,
+        lastReviewAt: existing.last_review_at ? new Date(existing.last_review_at * 1000).toISOString() : null,
+      };
+    } else {
+      card = initCard();
+    }
+
+    // FSRS state transition
+    var result = reviewCard(card, grade, now);
+    var updated = result.card;
+    var pts = POINTS[u.rating] || 2;
+    var totalPts = (existing?.total_mastery_points || 0) + pts;
+
+    // Write to mastery table (DB stores epoch seconds via now())
+    await Mastery.upsert(u.skillId, {
+      difficulty: updated.difficulty,
+      stability: updated.stability,
+      retrievability: result.retrievability,
+      reps: updated.reps,
+      lapses: updated.lapses,
+      lastReviewAt: Math.floor(new Date(updated.lastReviewAt).getTime() / 1000),
+      nextReviewAt: Math.floor(new Date(updated.nextReviewAt).getTime() / 1000),
+      totalMasteryPoints: totalPts,
+    });
+
+    // Also maintain profile.skills for journal entries and session history
     if (!profile.skills[u.skillId]) {
-      profile.skills[u.skillId] = { points: 0, strength: 0, ease: DEFAULT_EASE, lastPracticed: null, entries: [] };
+      profile.skills[u.skillId] = { points: 0, entries: [] };
     }
     var sk = profile.skills[u.skillId];
-
-    // Calculate current effective strength before update
-    var current = effectiveStrength(sk);
-
-    // Rating-based adjustments
-    var strengthGain, easeAdj, pointGain;
-    switch (u.rating) {
-      case "struggled":
-        strengthGain = 0.05;
-        easeAdj = -0.2;
-        pointGain = 1;
-        break;
-      case "hard":
-        strengthGain = 0.15;
-        easeAdj = 0;
-        pointGain = 2;
-        break;
-      case "good":
-        strengthGain = 0.25;
-        easeAdj = 0.1;
-        pointGain = 3;
-        break;
-      case "easy":
-        strengthGain = 0.35;
-        easeAdj = 0.15;
-        pointGain = 5;
-        break;
-      default:
-        strengthGain = 0.15;
-        easeAdj = 0;
-        pointGain = 2;
-    }
-
-    // Apply: strength is based on decayed value + gain, capped at 1.0
-    sk.strength = Math.min(1.0, current + strengthGain);
-    sk.ease = Math.max(MIN_EASE, Math.min(MAX_EASE, (sk.ease || DEFAULT_EASE) + easeAdj));
-    sk.lastPracticed = now;
-    sk.points = (sk.points || 0) + pointGain; // Keep points for display/backward compat
+    sk.points = (sk.points || 0) + pts;
+    if (!sk.entries) sk.entries = [];
     sk.entries.push({ date, rating: u.rating, reason: u.reason });
   }
 
@@ -100,12 +111,14 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
     for (const s of skills) {
       const cat = s.category || "General";
       if (!categories[cat]) categories[cat] = [];
-      const pts = profile.skills[s.id]?.points || 0;
-      const str = effectiveStrength(profile.skills[s.id]);
+      const str = effectiveStrength(s);
       const strPct = Math.round(str * 100);
-      const sessions = profile.skills[s.id]?.entries?.length || 0;
-      const lastRating = profile.skills[s.id]?.entries?.slice(-1)[0]?.rating || "";
-      categories[cat].push("  " + s.id + ": " + s.name + " [strength: " + strPct + "%" + (lastRating ? ", last: " + lastRating : "") + ", " + sessions + " sessions] -- " + s.description + (s.prerequisites?.length ? " (needs: " + s.prerequisites.join(", ") + ")" : ""));
+      const reps = s.mastery?.reps || 0;
+      const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
+      const lastRating = pd?.entries?.slice(-1)[0]?.rating || "";
+      var prereqStr = (s.prerequisites?.length) ? s.prerequisites.map(function(p) { return typeof p === "string" ? p : (p.name || p.conceptKey || p.id); }).join(", ") : "";
+      var skillLabel = s.conceptKey || s.id;
+      categories[cat].push("  " + skillLabel + ": " + s.name + " [strength: " + strPct + "%" + (lastRating ? ", last: " + lastRating : "") + ", " + reps + " reviews] -- " + s.description + (prereqStr ? " (needs: " + prereqStr + ")" : ""));
     }
     for (const [cat, items] of Object.entries(categories)) {
       ctx += "\n" + cat + ":\n" + items.join("\n") + "\n";
@@ -130,16 +143,16 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
   // 3. Student profile
   ctx += "\nSTUDENT PROFILE:\n";
   ctx += "Total study sessions: " + profile.sessions + "\n";
-  const skillEntries = Object.entries(profile.skills);
-  if (skillEntries.length > 0) {
-    const sorted = skillEntries.sort((a, b) => effectiveStrength(b[1]) - effectiveStrength(a[1]));
-    ctx += "Skill strength (accounts for time decay):\n";
-    for (const [sid, data] of sorted) {
-      const skillName = Array.isArray(skills) ? skills.find(s => s.id === sid)?.name || sid : sid;
-      const str = effectiveStrength(data);
-      ctx += "  " + skillName + ": " + Math.round(str * 100) + "% strength";
-      if (data.entries?.length) {
-        const last = data.entries[data.entries.length - 1];
+  if (Array.isArray(skills) && skills.some(s => s.mastery)) {
+    const sorted = [...skills].sort((a, b) => effectiveStrength(b) - effectiveStrength(a));
+    ctx += "Skill strength (FSRS retrievability):\n";
+    for (const s of sorted) {
+      const str = effectiveStrength(s);
+      if (str === 0 && !s.mastery) continue; // skip unreviewed
+      const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
+      ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength";
+      if (pd?.entries?.length) {
+        const last = pd.entries[pd.entries.length - 1];
         ctx += " (last: " + last.rating + " on " + last.date + ")";
       }
       ctx += "\n";
@@ -232,13 +245,13 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
     ctx += "\nREQUIRED SKILLS FOR THIS ASSIGNMENT:\n";
     const neededSources = new Set();
     for (const sid of requiredSkillIds) {
-      const skill = allSkills.find(s => s.id === sid);
-      const sd = profile.skills[sid];
-      const str = effectiveStrength(sd);
+      const skill = allSkills.find(s => s.id === sid || s.conceptKey === sid);
+      const str = effectiveStrength(skill);
       const strPct = Math.round(str * 100);
-      const lastRating = sd?.entries?.slice(-1)[0]?.rating || "untested";
+      const pd = profile.skills[sid] || (skill && profile.skills[skill.conceptKey]) || null;
+      const lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
       if (skill) {
-        ctx += "  " + sid + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "] -- " + skill.description + "\n";
+        ctx += "  " + (skill.conceptKey || sid) + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "] -- " + skill.description + "\n";
         if (skill.sources) skill.sources.forEach(src => neededSources.add(src.toLowerCase()));
       } else {
         ctx += "  " + sid + ": [strength: " + strPct + "%, last: " + lastRating + "]\n";
@@ -271,20 +284,30 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
 
   } else if (focus.type === "skill") {
     const skill = focus.skill;
-    const sd = profile.skills[skill.id];
-    const str = effectiveStrength(sd);
+    const str = effectiveStrength(skill);
     const strPct = Math.round(str * 100);
-    const lastRating = sd?.entries?.slice(-1)[0]?.rating || "untested";
-    ctx += "FOCUS SKILL: " + skill.id + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "]\n";
+    const pd = profile.skills[skill.id] || profile.skills[skill.conceptKey] || null;
+    const lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
+    var focusLabel = skill.conceptKey || skill.id;
+    ctx += "FOCUS SKILL: " + focusLabel + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "]\n";
     ctx += "Description: " + skill.description + "\n";
+    if (skill.masteryCriteria?.length) {
+      ctx += "Mastery criteria:\n";
+      for (const c of skill.masteryCriteria) {
+        ctx += "  - " + (typeof c === "string" ? c : c.text) + "\n";
+      }
+    }
     if (skill.prerequisites?.length) {
-      ctx += "Prerequisites: " + skill.prerequisites.join(", ") + "\n";
+      var prereqNames = skill.prerequisites.map(function(p) { return typeof p === "string" ? p : (p.name || p.conceptKey || p.id); });
+      ctx += "Prerequisites: " + prereqNames.join(", ") + "\n";
       ctx += "\nPREREQUISITE STATUS:\n";
-      for (const pid of skill.prerequisites) {
-        const prereq = allSkills.find(s => s.id === pid);
-        const pStr = effectiveStrength(profile.skills[pid]);
+      for (const p of skill.prerequisites) {
+        var pid = typeof p === "string" ? p : (p.id || p.conceptKey);
+        var pKey = typeof p === "string" ? p : (p.conceptKey || p.id);
+        const prereq = allSkills.find(s => s.id === pid || s.conceptKey === pKey);
+        const pStr = effectiveStrength(prereq);
         const pStrPct = Math.round(pStr * 100);
-        ctx += "  " + pid + ": " + (prereq?.name || pid) + " [strength: " + pStrPct + "%]\n";
+        ctx += "  " + (prereq?.name || pKey) + " [strength: " + pStrPct + "%]\n";
       }
     }
 
@@ -317,16 +340,15 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
     }
 
   } else if (focus.type === "recap") {
-    // Just profile summary, no materials
+    // Just skill summary, no materials
     ctx += "STUDENT PROFILE:\n";
     ctx += "Total sessions: " + profile.sessions + "\n";
-    const entries = Object.entries(profile.skills).sort((a, b) => effectiveStrength(b[1]) - effectiveStrength(a[1]));
-    if (entries.length > 0) {
+    if (allSkills.some(s => s.mastery)) {
+      const sorted = [...allSkills].filter(s => s.mastery).sort((a, b) => effectiveStrength(b) - effectiveStrength(a));
       ctx += "Skills engaged:\n";
-      for (const [sid, data] of entries) {
-        const name = allSkills.find(s => s.id === sid)?.name || sid;
-        const str = effectiveStrength(data);
-        ctx += "  " + name + ": " + Math.round(str * 100) + "% strength\n";
+      for (const s of sorted) {
+        const str = effectiveStrength(s);
+        ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength\n";
       }
     }
   }
@@ -504,7 +526,7 @@ export const generateProblems = async (practiceSet, skill, courseName, materialC
     "Language: " + (lang || "use pseudocode or general notation") + "\n" +
     "Tier " + tier + " (" + tierInfo.name + "): " + tierInfo.desc + "\n\n" +
     "TIER INSTRUCTIONS:\n" + tierInfo.instruction + "\n\n" +
-    (skill.prerequisites?.length ? "This skill has prerequisites: " + skill.prerequisites.join(", ") + ". For Tier 5 (Combine), reference these.\n\n" : "") +
+    (skill.prerequisites?.length ? "This skill has prerequisites: " + skill.prerequisites.map(function(p) { return typeof p === "string" ? p : (p.name || p.conceptKey || p.id); }).join(", ") + ". For Tier 5 (Combine), reference these.\n\n" : "") +
     (materialCtx ? "SOURCE MATERIAL FOR REFERENCE:\n" + materialCtx.substring(0, 8000) + "\n\n" : "") +
     "ALREADY USED PROBLEMS (generate COMPLETELY DIFFERENT scenarios, variable names, and structures):\n" + sigList + "\n\n" +
     "Return ONLY a JSON array of exactly 5 problems:\n" +

@@ -11,14 +11,14 @@ pub fn run() {
     let migrations = vec![
         Migration {
             version: 1,
-            description: "create_initial_tables",
-            sql: include_str!("../migrations/001_initial.sql"),
+            description: "v2_full_schema",
+            sql: include_str!("../migrations/001_v2_schema.sql"),
             kind: MigrationKind::Up,
         },
         Migration {
             version: 2,
-            description: "create_settings_table",
-            sql: include_str!("../migrations/002_settings.sql"),
+            description: "skill_extraction_v2",
+            sql: include_str!("../migrations/002_skill_extraction_v2.sql"),
             kind: MigrationKind::Up,
         }
     ];
