@@ -944,11 +944,13 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   const { onProgress } = options;
   const allIssues = [];
 
-  // Load existing skills (all active, across all courses for this student)
-  const existingSkills = await SubSkills.getAllConceptKeys();
+  // Load existing skills scoped to THIS course only.
+  // Using getAllConceptKeys() was wrong — it matched against skills from other
+  // courses, causing enrichment to update the wrong course's skills.
+  const existingSkills = await SubSkills.getByCourse(courseId);
   if (existingSkills.length === 0) {
-    // No existing skills — run full extraction instead
-    onProgress?.('No existing skills found. Running full extraction.');
+    // No existing skills in this course — run full extraction instead
+    onProgress?.('No existing skills found for this course. Running full extraction.');
     return extractCourse(courseId, materialId, options);
   }
 

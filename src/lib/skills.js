@@ -243,7 +243,7 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
 // V2 Skill Loading & Extraction Integration
 // ============================================================
 
-import { extractCourse, enrichFromMaterial, reExtractCourse } from './extraction.js';
+import { extractCourse, enrichFromMaterial } from './extraction.js';
 
 /**
  * Load skills from v2 tables with resolved prerequisites and mastery.
@@ -327,47 +327,27 @@ export const loadSkillsV2 = async (courseId) => {
     };
   });
 };
-export const wasPreviouslyExtracted = async (materialId) => {
-  const chunks = await Chunks.getByMaterial(materialId);
-  return chunks.some(c => c.status === 'extracted');
-};
 
 /**
  * Run v2 extraction pipeline.
- * Determines which path: full extraction, enrichment, or re-extraction.
- *
- * - First v2 extraction for this course → extractCourse
- * - Same material re-uploaded/re-extracted → reExtractCourse (identity matching)
- * - Different material, existing skills → enrichFromMaterial
+ * Two paths:
+ * - No existing skills for this course → extractCourse (full extraction)
+ * - Existing skills for this course → enrichFromMaterial (merge by concept key)
  */
 export const runExtractionV2 = async (courseId, materialId, callbacks) => {
   const { onStatus, onNotif, onChapterComplete } = callbacks;
 
   try {
     const existingV2 = await SubSkills.getByCourse(courseId);
-    const previouslyExtracted = await wasPreviouslyExtracted(materialId);
 
     let result;
 
-    if (existingV2.length > 0 && previouslyExtracted) {
-      // --- Re-extraction: same material, identity matching ---
-      onStatus('Re-extracting with identity matching...');
-      result = await reExtractCourse(courseId, materialId, {
-        onProgress: onStatus,
-        onChapterComplete: (chapter, count) => {
-          onNotif('skill', `Chapter ${chapter}: ${count} skills re-extracted`);
-          onChapterComplete?.(chapter, count);
-        },
-      });
-      const totalSkills = (result.matched || 0) + (result.created || 0);
-      if (result.unmatchedExisting?.length > 0) {
-        onNotif('warn', `${result.unmatchedExisting.length} existing skill(s) not found in re-extraction. Review in Skills view.`);
-      }
-      onNotif('success', `Re-extraction: ${result.matched || 0} updated, ${result.created || 0} new.`);
-      return { success: true, totalSkills, issues: result.issues || [], unmatchedExisting: result.unmatchedExisting };
-
-    } else if (existingV2.length > 0) {
-      // --- Enrichment: different material, existing skills ---
+    if (existingV2.length > 0) {
+      // --- Course already has skills: enrich with identity matching ---
+      // Handles both re-uploading the same material AND uploading a new one.
+      // enrichFromMaterial extracts from the new material then merges by concept
+      // key against this course's existing skills — matching concepts are enhanced,
+      // genuinely new concepts are added as new SubSkills.
       onStatus('Enriching existing skills with new material...');
       result = await enrichFromMaterial(courseId, materialId, {
         onProgress: onStatus,
@@ -383,7 +363,7 @@ export const runExtractionV2 = async (courseId, materialId, callbacks) => {
       return { success: true, totalSkills, issues: result.issues || [] };
 
     } else {
-      // --- First extraction ---
+      // --- First extraction for this course ---
       onStatus('Running full skill extraction...');
       result = await extractCourse(courseId, materialId, {
         onProgress: onStatus,
