@@ -338,6 +338,24 @@ export const runExtractionV2 = async (courseId, materialId, callbacks) => {
   const { onStatus, onNotif, onChapterComplete } = callbacks;
 
   try {
+    // --- Content dedup: skip if this material's chunks are already extracted ---
+    const newChunks = await Chunks.getByMaterial(materialId);
+    if (newChunks.length > 0) {
+      const hashChecks = await Promise.all(
+        newChunks
+          .filter(c => c.content_hash)
+          .map(c => Chunks.findByHash(c.content_hash))
+      );
+      // For each hash, check if it already exists in a DIFFERENT material for this course
+      const allDuplicates = hashChecks.every(matches =>
+        matches.some(m => m.course_id === courseId && m.material_id !== materialId)
+      );
+      if (allDuplicates && hashChecks.length > 0) {
+        onNotif('warn', 'Material Already Active \u2014 this content has already been extracted for this course.');
+        return { success: true, totalSkills: 0, skipped: true, issues: [] };
+      }
+    }
+
     const existingV2 = await SubSkills.getByCourse(courseId);
 
     let result;
