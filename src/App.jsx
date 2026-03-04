@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef, useCallback, Component, createConte
 // --- Module Imports ---
 import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, DB, Courses } from "./lib/db.js";
+import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery } from "./lib/db.js";
+import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
@@ -193,6 +194,8 @@ function StudyInner({ setErrorCtx }) {
   const [chunkPicker, setChunkPicker] = useState(null); // { courseId, materials, selectedChunks: Set }
   const [asgnWork, setAsgnWork] = useState(null); // { questions: [{id, description, unlocked, answer, done}], currentIdx: 0 }
   const [practiceMode, setPracticeMode] = useState(null); // { set: PracticeSet, skill: {}, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null }
+  const [profileData, setProfileData] = useState(null);
+  const [expandedProfile, setExpandedProfile] = useState({}); // { parentSkillId: true/false }
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -360,6 +363,64 @@ function StudyInner({ setErrorCtx }) {
       setGlobalLock(null); setBusy(false); setStatus("");
     }
     setBooting(false); setStatus("");
+  };
+
+  const quickCreateCourse = async () => {
+    if (!cName.trim()) return;
+    try {
+      await Courses.create({ name: cName.trim() });
+      const refreshed = await DB.getCourses();
+      setCourses(refreshed);
+      addNotif("success", "Course created: " + cName.trim());
+      setCName("");
+    } catch (e) {
+      addNotif("error", "Failed to create course: " + e.message);
+    }
+  };
+
+  const loadProfile = async () => {
+    try {
+      const allParents = await ParentSkills.getAll();
+      const results = [];
+      for (const parent of allParents) {
+        const subs = await SubSkills.getByParent(parent.id);
+        if (subs.length === 0) continue;
+        const subIds = subs.map(s => s.id);
+        const masteryRows = await Mastery.getBySkills(subIds);
+        const masteryMap = {};
+        for (const m of masteryRows) masteryMap[m.sub_skill_id] = m;
+
+        let totalPoints = 0;
+        let readinessSum = 0;
+        let readinessCount = 0;
+        let reviewedCount = 0;
+
+        for (const sub of subs) {
+          const m = masteryMap[sub.id];
+          if (m) {
+            totalPoints += m.total_mastery_points || 0;
+            reviewedCount++;
+            const r = currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at });
+            if (r > 0) { readinessSum += r; readinessCount++; }
+          }
+        }
+
+        results.push({
+          parent,
+          subSkills: subs,
+          masteryMap,
+          level: Math.floor(Math.sqrt(totalPoints)),
+          readiness: readinessCount > 0 ? readinessSum / readinessCount : 0,
+          subCount: subs.length,
+          reviewedCount,
+        });
+      }
+      results.sort((a, b) => b.level - a.level);
+      setProfileData(results);
+    } catch (e) {
+      console.error("Failed to load profile:", e);
+      addNotif("error", "Failed to load profile: " + e.message);
+    }
   };
 
   const enterStudy = async (course) => {
@@ -854,37 +915,194 @@ function StudyInner({ setErrorCtx }) {
 
   // --- HOME SCREEN ---
   if (screen === "home") return (
-    <div style={{ background: T.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32 }}>
+    <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
-      {/* Settings button */}
-      <button onClick={() => setShowSettings(true)}
-        style={{ position: "absolute", top: 20, right: 20, background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
-        ⚙ Settings
-      </button>
-      <div style={{ textAlign: "center", animation: "fadeIn 0.5s ease", maxWidth: 500 }}>
-        <div style={{ marginBottom: 48 }}>
-          <div style={{ fontSize: 42, fontWeight: 700, color: T.tx, letterSpacing: "-0.03em", marginBottom: 8 }}>Study</div>
-          <div style={{ fontSize: 15, color: T.txD, lineHeight: 1.6 }}>Your AI teacher. Upload your course materials,<br/>and master the material together.</div>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <button onClick={() => setScreen("upload")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 16, padding: "28px 32px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-            onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-            <div style={{ fontSize: 17, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Upload Course Data</div>
-            <div style={{ fontSize: 13, color: T.txD }}>Syllabus, textbooks, transcripts, assignments, notes</div>
-          </button>
-          <button onClick={() => courses.length ? setScreen("courses") : setScreen("upload")}
-            style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 16, padding: "28px 32px", cursor: "pointer", textAlign: "left" }}
+      {/* Top bar */}
+      <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <div />
+        <button onClick={() => setShowSettings(true)}
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          Settings
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, letterSpacing: "-0.03em", margin: 0, marginBottom: 4 }}>Study</h1>
+            <p style={{ fontSize: 14, color: T.txD, margin: 0 }}>Your courses and skill profile</p>
+          </div>
+          <button onClick={async () => { await loadProfile(); setScreen("profile"); }}
+            style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: "10px 18px", color: T.ac, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
             onMouseEnter={e => e.currentTarget.style.background = "rgba(108,156,252,0.15)"}
             onMouseLeave={e => e.currentTarget.style.background = T.acS}>
-            <div style={{ fontSize: 17, fontWeight: 600, color: T.ac, marginBottom: 4 }}>Study</div>
-            <div style={{ fontSize: 13, color: T.txD }}>{courses.length ? courses.length + " course" + (courses.length > 1 ? "s" : "") : "Upload materials first"}</div>
+            View Profile
+          </button>
+        </div>
+
+        {/* Course list */}
+        {courses.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+            No courses yet. Add one to get started.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+            {courses.map(c => {
+              const mats = c.materials || [];
+              const types = [...new Set(mats.map(m => m.classification))].filter(Boolean).map(v => CLS.find(cl => cl.v === v)?.l || v).join(", ");
+              return (
+                <div key={c.id} onClick={() => enterStudy(c)}
+                  style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, cursor: "pointer", transition: "all 0.2s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 17, fontWeight: 600, color: T.tx, marginBottom: 4 }}>{c.name}</div>
+                      <div style={{ fontSize: 13, color: T.txD }}>
+                        {mats.length} material{mats.length !== 1 ? "s" : ""}{types ? " \u00B7 " + types : ""}
+                      </div>
+                    </div>
+                    <button onClick={e => { e.stopPropagation();
+                        if (pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id) { setPendingConfirm(null); delCourse(c.id); }
+                        else setPendingConfirm({ type: "delCourse", id: c.id });
+                      }} style={{ background: "none", border: "none", color: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? T.rd : T.txM, cursor: "pointer", fontSize: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? 11 : 13, flexShrink: 0, marginLeft: 12 }}>
+                      {pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? "Confirm delete?" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Inline Add Course form */}
+        <div style={{ display: "flex", gap: 8, marginTop: courses.length === 0 ? 24 : 0, marginBottom: 16 }}>
+          <input value={cName} onChange={e => setCName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") quickCreateCourse(); }}
+            placeholder="New course name..."
+            style={{ flex: 1, padding: "12px 16px", background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, color: T.tx, fontSize: 14, outline: "none" }} />
+          <button onClick={quickCreateCourse} disabled={!cName.trim()}
+            style={{ padding: "12px 20px", borderRadius: 10, border: "none", background: cName.trim() ? T.ac : T.sf, color: cName.trim() ? "#0F1115" : T.txM, fontSize: 14, fontWeight: 600, cursor: cName.trim() ? "pointer" : "default" }}>
+            Add Course
           </button>
         </div>
       </div>
+      </div>
     </div>
   );
+
+  // --- PROFILE SCREEN ---
+  if (screen === "profile") {
+    const totalParents = profileData?.length || 0;
+    const totalSubs = profileData?.reduce((s, p) => s + p.subCount, 0) || 0;
+    const overallLevel = profileData?.reduce((s, p) => s + p.level, 0) || 0;
+
+    return (
+      <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
+        <style>{CSS}</style>
+        {/* Top bar */}
+        <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+          <button onClick={() => setShowSettings(true)}
+            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+            Settings
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Skill Profile</h1>
+          <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>Your knowledge across all courses</p>
+
+          {/* Summary stats */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+            {[
+              { label: "Skill Areas", value: totalParents },
+              { label: "Sub-skills", value: totalSubs },
+              { label: "Total Level", value: overallLevel },
+            ].map((stat, i) => (
+              <div key={i} style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "16px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 24, fontWeight: 700, color: T.ac }}>{stat.value}</div>
+                <div style={{ fontSize: 12, color: T.txD, marginTop: 4 }}>{stat.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Parent skill cards */}
+          {!profileData || profileData.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+              No skills yet. Study a course to start building your profile.
+            </div>
+          ) : profileData.map(({ parent, subSkills, masteryMap, level, readiness, subCount, reviewedCount }) => {
+            const readinessColor = readiness > 0.8 ? T.gn : readiness > 0.5 ? "#F59E0B" : T.rd;
+            const isExpanded = expandedProfile[parent.id];
+            // Group sub-skills by course
+            const byCourse = {};
+            for (const sub of subSkills) {
+              const cid = sub.source_course_id || "uncategorized";
+              if (!byCourse[cid]) byCourse[cid] = [];
+              byCourse[cid].push(sub);
+            }
+            const courseNames = {};
+            for (const c of courses) courseNames[c.id] = c.name;
+
+            return (
+              <div key={parent.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, marginBottom: 12 }}>
+                <div onClick={() => setExpandedProfile(p => ({ ...p, [parent.id]: !p[parent.id] }))}
+                  style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                  {/* Level badge */}
+                  <div style={{ width: 48, height: 48, borderRadius: 12, background: T.acS, border: "1px solid " + T.acB, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: T.ac }}>{level}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 4 }}>{parent.name}</div>
+                    <div style={{ fontSize: 12, color: T.txD, marginBottom: 6 }}>{subCount} sub-skill{subCount !== 1 ? "s" : ""} \u00B7 {reviewedCount} reviewed</div>
+                    {/* Readiness bar */}
+                    <div style={{ height: 6, background: T.bd, borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ width: Math.round(readiness * 100) + "%", height: "100%", background: readinessColor, borderRadius: 3, transition: "width 0.3s" }} />
+                    </div>
+                    <div style={{ fontSize: 11, color: readinessColor, marginTop: 3 }}>{Math.round(readiness * 100)}% readiness</div>
+                  </div>
+                  <span style={{ color: T.txD, fontSize: 12, flexShrink: 0 }}>{isExpanded ? "\u25B2" : "\u25BC"}</span>
+                </div>
+
+                {/* Expanded sub-skills */}
+                {isExpanded && (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
+                    {Object.entries(byCourse).map(([cid, subs]) => (
+                      <div key={cid} style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          {courseNames[cid] || "General"}
+                        </div>
+                        {subs.map(sub => {
+                          const m = masteryMap[sub.id];
+                          const subR = m ? currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at }) : 0;
+                          const subColor = subR > 0.8 ? T.gn : subR > 0.5 ? "#F59E0B" : T.rd;
+                          return (
+                            <div key={sub.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
+                              <div style={{ width: 8, height: 8, borderRadius: "50%", background: m ? subColor : T.bd, flexShrink: 0 }} />
+                              <div style={{ flex: 1, fontSize: 13, color: T.tx }}>{sub.name}</div>
+                              {m ? (
+                                <div style={{ fontSize: 11, color: subColor, flexShrink: 0 }}>{Math.round(subR * 100)}%</div>
+                              ) : (
+                                <div style={{ fontSize: 11, color: T.txM, flexShrink: 0 }}>new</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        </div>
+      </div>
+    );
+  }
 
   // --- UPLOAD SCREEN ---
   if (screen === "upload") {
@@ -910,12 +1128,20 @@ function StudyInner({ setErrorCtx }) {
     };
 
     return (
-      <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
+      <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
         <style>{CSS}</style>
+        {/* Top bar */}
+        <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+          <button onClick={() => setShowSettings(true)}
+            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+            Settings
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
-          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, marginBottom: 24 }}>&lt; Back</button>
-          <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Upload Course Data</h1>
-          <p style={{ fontSize: 14, color: T.txD, marginBottom: 32, lineHeight: 1.6 }}>Drop your files in. Study will auto-detect file types when possible.</p>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Upload Course Data</h1>
+          <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32, lineHeight: 1.6 }}>Drop your files in. Study will auto-detect file types when possible.</p>
 
           <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
             style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 16, padding: cur ? "24px 20px" : "48px 32px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent", marginBottom: 24, transition: "all 0.2s" }}>
@@ -1030,83 +1256,57 @@ function StudyInner({ setErrorCtx }) {
             </div>
           )}
         </div>
+        </div>
       </div>
     );
   }
-
-  // --- COURSES SCREEN ---
-  if (screen === "courses") return (
-    <>
-    {globalLock && lockOverlay}
-    <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
-      <style>{CSS}</style>
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, marginBottom: 24 }}>&lt; Back</button>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Your Courses</h1>
-        <p style={{ fontSize: 14, color: T.txD, marginBottom: 32 }}>Pick a course to study.</p>
-        {courses.map(c => {
-          const mats = c.materials || [];
-          const types = [...new Set(mats.map(m => m.classification))].map(v => CLS.find(cl => cl.v === v)?.l || v).join(", ");
-          return (
-            <div key={c.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 17, fontWeight: 600, color: T.tx, marginBottom: 6 }}>{c.name}</div>
-                  <div style={{ fontSize: 13, color: T.txD }}>{mats.length} materials | {types}</div>
-                </div>
-                <button onClick={e => { e.stopPropagation();
-                    if (pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id) { setPendingConfirm(null); delCourse(c.id); }
-                    else setPendingConfirm({ type: "delCourse", id: c.id });
-                  }} style={{ background: "none", border: "none", color: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? T.rd : T.txM, cursor: "pointer", fontSize: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? 11 : 13 }}>
-                  {pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? "Confirm delete?" : "Delete"}
-                </button>
-              </div>
-              <button onClick={() => enterStudy(c)}
-                style={{ marginTop: 14, width: "100%", padding: "12px 20px", borderRadius: 10, border: "1px solid " + T.acB, background: T.acS, color: T.ac, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                Start Studying
-              </button>
-            </div>
-          );
-        })}
-        <button onClick={() => setScreen("upload")} style={{ width: "100%", padding: "16px", borderRadius: 12, border: "1px dashed " + T.bd, background: "transparent", color: T.txD, fontSize: 14, cursor: "pointer", marginTop: 8 }}>+ Add New Course</button>
-      </div>
-    </div>
-    </>
-  );
 
   // --- COURSE MANAGEMENT SCREEN ---
   if (screen === "manage" && active) return (
     <>
     {globalLock && lockOverlay}
-    <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
+    <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
-      <div style={{ maxWidth: 500, margin: "0 auto" }}>
-        <button onClick={() => { if (!processingMatId) setScreen("study"); }} 
-          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, marginBottom: 24, opacity: processingMatId ? 0.5 : 1 }}>
+      {/* Top bar */}
+      <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <button onClick={() => { if (!processingMatId) setScreen("study"); }}
+          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: 0, opacity: processingMatId ? 0.5 : 1 }}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, marginBottom: 8 }}>{active.name}</h1>
-        <p style={{ fontSize: 14, color: T.txD, marginBottom: 32 }}>Manage your course content</p>
-        
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <button onClick={() => setScreen("materials")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left" }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Materials</div>
-            <div style={{ fontSize: 12, color: T.txD }}>{active.materials.length} files uploaded</div>
-          </button>
-          
-          <button onClick={async () => {
-            // Try v2 skills first, fall back to v1
-            var sk = await loadSkillsV2(active.id);
-            // V2 only — no v1 fallback needed
-            var rt = await DB.getRefTaxonomy(active.id);
-            setSkillViewData({ skills: sk, refTax: rt, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
-            setScreen("skills");
-          }}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left" }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Skills</div>
-            <div style={{ fontSize: 12, color: T.txD }}>View skill tree from active sections</div>
-          </button>
+        <button onClick={() => setShowSettings(true)}
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          Settings
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+          <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>{active.name}</h1>
+          <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32 }}>Manage your course content</p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <button onClick={() => setScreen("materials")}
+              style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+              onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+              onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Materials</div>
+              <div style={{ fontSize: 12, color: T.txD }}>{active.materials.length} files uploaded</div>
+            </button>
+
+            <button onClick={async () => {
+              // Try v2 skills first, fall back to v1
+              var sk = await loadSkillsV2(active.id);
+              // V2 only — no v1 fallback needed
+              var rt = await DB.getRefTaxonomy(active.id);
+              setSkillViewData({ skills: sk, refTax: rt, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
+              setScreen("skills");
+            }}
+              style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+              onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+              onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Skills</div>
+              <div style={{ fontSize: 12, color: T.txD }}>View skill tree from active sections</div>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1117,15 +1317,23 @@ function StudyInner({ setErrorCtx }) {
   if (screen === "materials" && active) return (
     <>
     {globalLock && lockOverlay}
-    <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
+    <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
-      <div style={{ maxWidth: 600, margin: "0 auto" }}>
-        <button onClick={() => { if (!processingMatId) setScreen("manage"); }} 
-          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, marginBottom: 24, opacity: processingMatId ? 0.5 : 1 }}>
+      {/* Top bar */}
+      <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <button onClick={() => { if (!processingMatId) setScreen("manage"); }}
+          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: 0, opacity: processingMatId ? 0.5 : 1 }}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Materials</h1>
-        <p style={{ fontSize: 14, color: T.txD, marginBottom: 24 }}>{active.name}</p>
+        <button onClick={() => setShowSettings(true)}
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          Settings
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Materials</h1>
+        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
         
         {/* Add Materials */}
         <div style={{ marginBottom: 24 }}>
@@ -1601,6 +1809,7 @@ function StudyInner({ setErrorCtx }) {
           </div>
         )}
       </div>
+      </div>
     </div>
     </>
   );
@@ -1608,12 +1817,20 @@ function StudyInner({ setErrorCtx }) {
   // --- SKILLS SCREEN ---
   if (screen === "skills" && active) return (<>
     {globalLock && lockOverlay}
-    <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
+    <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
-      <div style={{ maxWidth: 650, margin: "0 auto" }}>
-        <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, marginBottom: 24 }}>&lt; Back</button>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Skills</h1>
-        <p style={{ fontSize: 14, color: T.txD, marginBottom: 24 }}>{active.name}</p>
+      {/* Top bar */}
+      <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+        <button onClick={() => setShowSettings(true)}
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          Settings
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Skills</h1>
+        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
 
         {/* V1→V2 Migration Banner */}
         {skillViewData && !skillViewData.isV2 && skillViewData.skills?.length > 0 && (
@@ -1811,17 +2028,26 @@ function StudyInner({ setErrorCtx }) {
           );
         })()}
       </div>
+      </div>
     </div>
   </>);
 
   // --- NOTIFICATIONS SCREEN ---
   if (screen === "notifs" && active) return (
-    <div style={{ background: T.bg, minHeight: "100vh", padding: 32 }}>
+    <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
-      <div style={{ maxWidth: 500, margin: "0 auto" }}>
-        <button onClick={() => setScreen("study")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, marginBottom: 24 }}>&lt; Back</button>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, marginBottom: 8 }}>Notifications</h1>
-        <p style={{ fontSize: 14, color: T.txD, marginBottom: 24 }}>{active.name}</p>
+      {/* Top bar */}
+      <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <button onClick={() => setScreen("study")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+        <button onClick={() => setShowSettings(true)}
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          Settings
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Notifications</h1>
+        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
         
         {/* Extraction Errors */}
         {extractionErrors.length > 0 && (
@@ -1862,6 +2088,7 @@ function StudyInner({ setErrorCtx }) {
           </div>
         )}
       </div>
+      </div>
     </div>
   );
 
@@ -1874,10 +2101,20 @@ function StudyInner({ setErrorCtx }) {
       {globalLock && lockOverlay}
       <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
         <style>{CSS}</style>
-        {/* Simple header - just back button */}
-        <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", alignItems: "center", flexShrink: 0 }}>
-          <button onClick={async () => { await saveSessionToJournal(); setScreen("courses"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; }}
-            style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14 }}>&lt; Back to courses</button>
+        {/* Top bar */}
+        <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <button onClick={async () => {
+              if (sessionMode || pickerData || chunkPicker || practiceMode) {
+                setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null);
+              } else {
+                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null;
+              }
+            }}
+            style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+          <button onClick={() => setShowSettings(true)}
+            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+            Settings
+          </button>
         </div>
 
         {/* Materials Panel (includes Add functionality) */}
@@ -2775,13 +3012,10 @@ function StudyInner({ setErrorCtx }) {
             )}
 
             {!sessionMode && !booting && !chunkPicker && !practiceMode && (
-              <div style={{ padding: "60px 20px", animation: "fadeIn 0.3s" }}>
-                <div style={{ textAlign: "center", marginBottom: 32 }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: T.tx, marginBottom: 16 }}>{active.name}</div>
-                  <div style={{ fontSize: 22, fontWeight: 600, color: T.tx, marginBottom: 8 }}>What are we doing today?</div>
-                  <div style={{ fontSize: 13, color: T.txD }}>Pick a direction and we'll get started.</div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 420, margin: "0 auto" }}>
+              <div style={{ padding: 32, maxWidth: 640, margin: "0 auto", animation: "fadeIn 0.3s" }}>
+                <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>{active.name}</h1>
+                <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32 }}>Pick a direction and we'll get started.</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <button onClick={() => selectMode("assignment")}
                     style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
                     onMouseEnter={e => e.currentTarget.style.background = "rgba(108,156,252,0.15)"}
@@ -2806,16 +3040,22 @@ function StudyInner({ setErrorCtx }) {
                 </div>
                 
                 {/* Bottom navigation - Course Management & Notifications */}
-                <div style={{ marginTop: 60, display: "flex", gap: 12, justifyContent: "center" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 32 }}>
                   <button onClick={() => setScreen("manage")}
-                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 20px", cursor: "pointer", fontSize: 13, color: T.txD }}>
-                    Course Management
+                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Course Management</div>
+                    <div style={{ fontSize: 12, color: T.txD }}>Materials, skills, and course settings</div>
                   </button>
                   <button onClick={() => { setScreen("notifs"); setLastSeenNotif(Date.now()); }}
-                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 20px", cursor: "pointer", fontSize: 13, color: T.txD, position: "relative" }}>
-                    Notifications
+                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s", position: "relative" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Notifications</div>
+                    <div style={{ fontSize: 12, color: T.txD }}>{notifs.length} notification{notifs.length !== 1 ? "s" : ""}</div>
                     {notifs.filter(n => n.time.getTime() > lastSeenNotif).length > 0 && (
-                      <span style={{ position: "absolute", top: -6, right: -6, background: T.rd || "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 8, padding: "2px 6px" }}>
+                      <span style={{ position: "absolute", top: 12, right: 16, background: T.rd || "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, borderRadius: 8, padding: "2px 6px" }}>
                         {notifs.filter(n => n.time.getTime() > lastSeenNotif).length}
                       </span>
                     )}
@@ -2825,10 +3065,7 @@ function StudyInner({ setErrorCtx }) {
             )}
 
             {pickerData && !booting && (
-              <div style={{ padding: "40px 20px", animation: "fadeIn 0.3s" }}>
-                <button onClick={() => { setSessionMode(null); setPickerData(null); }}
-                  style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 13, marginBottom: 20, padding: 0 }}>&lt; Back</button>
-
+              <div style={{ padding: 32, maxWidth: 640, margin: "0 auto", animation: "fadeIn 0.3s" }}>
                 {pickerData.empty ? (
                   <div style={{ textAlign: "center", padding: 40 }}>
                     <div style={{ color: T.txD, fontSize: 14, marginBottom: 16 }}>{pickerData.message}</div>
