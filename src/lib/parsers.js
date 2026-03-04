@@ -197,7 +197,7 @@ const parseXlsx = async (buf, filename) => {
 // Main entry point — reads a File object, returns parsed result
 // ============================================================
 
-export const readFile = (file) => new Promise(async (resolve) => {
+export const readFile = async (file) => {
   const ext = file.name.split('.').pop().toLowerCase();
 
   // --- EPUB: v2 structured parser ---
@@ -213,19 +213,18 @@ export const readFile = (file) => new Promise(async (resolve) => {
         charCount: sec.char_count,
       }));
 
-      resolve({
+      return {
         type: 'epub',
         name: file.name,
         chapters,
         totalChars: chapters.reduce((s, c) => s + c.charCount, 0),
         content: '[EPUB: ' + chapters.length + ' chapters]',
         _structured: structured, // v2 output for future pipeline
-      });
+      };
     } catch (e) {
       console.error('EPUB v2 parse failed:', e);
-      resolve({ type: 'text', name: file.name, content: '[EPUB failed: ' + e.message + ']' });
+      return { type: 'text', name: file.name, content: '[EPUB failed: ' + e.message + ']' };
     }
-    return;
   }
 
   // --- DOCX: v2 structured parser ---
@@ -235,105 +234,104 @@ export const readFile = (file) => new Promise(async (resolve) => {
 
       // .doc (legacy binary) can't be parsed by our DOCX parser
       if (ext === 'doc') {
-        resolve({
+        return {
           type: 'text', name: file.name,
           content: '[.doc format not supported. Please save as .docx in Word, then re-upload.]'
-        });
-        return;
+        };
       }
 
       const structured = await parseDocx(buf, file.name);
 
       if (!structured.markdown.trim()) {
-        resolve({
+        return {
           type: 'text', name: file.name,
           content: '[Could not extract text from ' + file.name + '. Try saving as .txt first.]'
-        });
-        return;
+        };
       }
 
-      resolve({
+      return {
         type: 'text',
         name: file.name,
         content: structured.markdown,
         _structured: structured, // v2 output for future pipeline
-      });
+      };
     } catch (e) {
       console.error('DOCX v2 parse failed:', e);
-      resolve({ type: 'text', name: file.name, content: '[DOCX parse failed: ' + e.message + ']' });
+      return { type: 'text', name: file.name, content: '[DOCX parse failed: ' + e.message + ']' };
     }
-    return;
   }
 
   // --- PPTX ---
   if (ext === 'pptx') {
     try {
-      resolve(await parsePptx(await file.arrayBuffer(), file.name));
+      return await parsePptx(await file.arrayBuffer(), file.name);
     } catch (e) {
-      resolve({ type: 'text', name: file.name, content: '[PPTX parse failed: ' + e.message + ']', parseOk: false });
+      return { type: 'text', name: file.name, content: '[PPTX parse failed: ' + e.message + ']', parseOk: false };
     }
-    return;
   }
 
   // --- Spreadsheets ---
   if (ext === 'xlsx' || ext === 'xls' || ext === 'xlsm' || ext === 'csv') {
     if (ext === 'csv') {
-      const reader = new FileReader();
-      reader.onload = () => resolve({ type: 'text', name: file.name, content: reader.result });
-      reader.readAsText(file);
-      return;
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ type: 'text', name: file.name, content: reader.result });
+        reader.readAsText(file);
+      });
     }
     try {
-      resolve(await parseXlsx(await file.arrayBuffer(), file.name));
+      return await parseXlsx(await file.arrayBuffer(), file.name);
     } catch (e) {
       console.error('XLSX parse failed:', e);
-      resolve({ type: 'text', name: file.name, content: '[Spreadsheet parse failed: ' + e.message + '. Try exporting as .csv or .txt from Excel.]' });
+      return { type: 'text', name: file.name, content: '[Spreadsheet parse failed: ' + e.message + '. Try exporting as .csv or .txt from Excel.]' };
     }
-    return;
   }
 
   // --- PDF (not yet supported — sidecar pending) ---
   if (ext === 'pdf') {
-    resolve({
+    return {
       type: 'text', name: file.name,
       content: '[PDF not supported: ' + file.name + ' -- Open in Preview or Acrobat, Select All (Cmd+A), Copy, paste into a .txt file, then upload that.]'
-    });
-    return;
+    };
   }
 
   // --- Subtitles (SRT/VTT) ---
   if (ext === 'srt' || ext === 'vtt') {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const raw = reader.result;
-      const cleaned = raw
-        .replace(/^\d+\s*$/gm, '')
-        .replace(/[\d:,.]+ --> [\d:,.]+/g, '')
-        .replace(/WEBVTT.*$/m, '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/\n{2,}/g, '\n')
-        .trim();
-      resolve({ type: 'text', name: file.name, content: cleaned });
-    };
-    reader.readAsText(file);
-    return;
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = reader.result;
+        const cleaned = raw
+          .replace(/^\d+\s*$/gm, '')
+          .replace(/[\d:,.]+ --> [\d:,.]+/g, '')
+          .replace(/WEBVTT.*$/m, '')
+          .replace(/<[^>]+>/g, '')
+          .replace(/\n{2,}/g, '\n')
+          .trim();
+        resolve({ type: 'text', name: file.name, content: cleaned });
+      };
+      reader.readAsText(file);
+    });
   }
 
   // --- Images ---
   if (file.type.startsWith('image/')) {
-    const reader = new FileReader();
-    reader.onload = () => resolve({
-      type: 'image', name: file.name,
-      content: '[Image: ' + file.name + ']',
-      base64: reader.result.split(',')[1],
-      mediaType: file.type
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        type: 'image', name: file.name,
+        content: '[Image: ' + file.name + ']',
+        base64: reader.result.split(',')[1],
+        mediaType: file.type
+      });
+      reader.readAsDataURL(file);
     });
-    reader.readAsDataURL(file);
-    return;
   }
 
   // --- Plain text fallback ---
-  const reader = new FileReader();
-  reader.onload = () => resolve({ type: 'text', name: file.name, content: reader.result });
-  reader.readAsText(file);
-});
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ type: 'text', name: file.name, content: reader.result });
+    reader.readAsText(file);
+  });
+};

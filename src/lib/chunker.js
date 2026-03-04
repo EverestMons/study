@@ -45,9 +45,7 @@ async function contentHash(text) {
  * @param {string} options.classification - Material classification (textbook, assignment, etc.)
  * @returns {Promise<Array<object>>} Chunks ready for Chunks.createBatch()
  */
-export async function chunkDocument(parsed, { materialId, courseId, classification = 'other' }) {
-  const splitLevel = SPLIT_LEVELS[classification] || 2;
-
+export async function chunkDocument(parsed, { materialId, courseId }) {
   // If the parser already split into sections, use those
   let sections = parsed.sections || [];
 

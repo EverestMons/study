@@ -180,7 +180,7 @@ export async function migrateV1ToV2(courseId, options = {}) {
         try {
           await SkillPrerequisites.create(skillId, prereqV2Id, 'v1_migration');
           prereqCount++;
-        } catch (e) {
+        } catch {
           // Duplicate or other issue — skip silently
         }
       }
@@ -226,7 +226,7 @@ export async function migrateV1ToV2(courseId, options = {}) {
             confidence: 0.6, // lower confidence for v1 best-effort match
           });
           bindingCount++;
-        } catch (e) {
+        } catch {
           // Skip duplicates
         }
       }

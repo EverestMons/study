@@ -7,10 +7,9 @@ import { getApiKey, setApiKey, DB, Courses } from "./lib/db.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
-  storeAsChunks, getMatContent, verifyDocument,
-  decomposeAssignments, loadSkillsV2, runExtractionV2
+  storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2
 } from "./lib/skills.js";
-import { needsV1Migration, migrateV1ToV2 } from "./lib/migrate.js";
+import { migrateV1ToV2 } from "./lib/migrate.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates,
   buildContext, buildFocusedContext, generateSessionEntry,
@@ -179,13 +178,13 @@ function StudyInner({ setErrorCtx }) {
   const [globalLock, setGlobalLock] = useState(null); // null or { message: "Extracting skills..." }
   const [lockElapsed, setLockElapsed] = useState(0);
 
-  const [showManage, setShowManage] = useState(false);
+  const [showManage, _setShowManage] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
   const [skillViewData, setSkillViewData] = useState(null); // { skills, report, refTax }
   const [expandedCats, setExpandedCats] = useState({}); // { categoryName: true/false }
   const [pendingConfirm, setPendingConfirm] = useState(null);
   const [notifs, setNotifs] = useState([]); // [{ id, type, msg, time }]
-  const [showNotifs, setShowNotifs] = useState(false);
+  const [showNotifs, _setShowNotifs] = useState(false);
   const [lastSeenNotif, setLastSeenNotif] = useState(0);
   const [extractionErrors, setExtractionErrors] = useState([]); // [{ label, error, debugInfo, time }]
   const [sessionMode, setSessionMode] = useState(null);
@@ -194,8 +193,6 @@ function StudyInner({ setErrorCtx }) {
   const [chunkPicker, setChunkPicker] = useState(null); // { courseId, materials, selectedChunks: Set }
   const [asgnWork, setAsgnWork] = useState(null); // { questions: [{id, description, unlocked, answer, done}], currentIdx: 0 }
   const [practiceMode, setPracticeMode] = useState(null); // { set: PracticeSet, skill: {}, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null }
-  const [showCourseManagement, setShowCourseManagement] = useState(false);
-  const [showNotifsSection, setShowNotifsSection] = useState(false);
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -691,40 +688,6 @@ function StudyInner({ setErrorCtx }) {
     } finally {
       setGlobalLock(null);
       setBusy(false);
-    }
-  };
-
-  // --- Reprocess Material (re-verify only, no skill extraction) ---
-  const reprocessMat = async (mat) => {
-    if (!active || globalLock) return;
-    setGlobalLock({ message: "Verifying \"" + mat.name + "\"..." });
-    setBusy(true);
-    setStatus("Verifying \"" + mat.name + "\"...");
-    try {
-      const v = await verifyDocument(active.id, mat);
-      const updatedMats = active.materials.map(m => m.id === mat.id ? { ...m, verification: v.status } : m);
-      const updatedCourse = { ...active, materials: updatedMats };
-      setCourses(p => p.map(c => c.id === active.id ? updatedCourse : c));
-      setActive(updatedCourse);
-      if (v.status === "verified") {
-        addNotif("success", "Verified: " + mat.name);
-      } else {
-        addNotif("warn", "Verification issues for \"" + mat.name + "\": " + (v.issues?.join("; ") || v.summary));
-      }
-    } catch (err) {
-      addNotif("error", "Verification failed: " + err.message);
-    } finally {
-      setGlobalLock(null);
-      setBusy(false);
-      setStatus("");
-    }
-  };
-
-  // --- Async Error Reporter ---
-  const catchAsync = (fn) => async (...args) => {
-    try { return await fn(...args); } catch (e) {
-      console.error("Async error:", e);
-      setAsyncError({ message: e.message || String(e), stack: e.stack || "no stack" });
     }
   };
 
@@ -1550,13 +1513,10 @@ function StudyInner({ setErrorCtx }) {
                       await DB.saveCourses(allCourses);
                       setCourses(allCourses); setActive(updatedCourse);
                       
-                      // Prune skills from deactivated chunks
-                      var deactivatedLabels = mat.chunks.filter(c => selectedIds.has(c.id)).map(c => c.label.toLowerCase());
-                      // V1: prune skills by source labels. V2: skills stay in DB.
-                      // Skills remain in DB (v2) — deactivation only changes chunk status
+                      // V2: skills stay in DB — deactivation only changes chunk status
                       
                       setChunkPicker(null);
-                      addNotif("success", "Deactivated " + selectedIds.size + " section(s)." + (prunedCount > 0 ? " " + prunedCount + " skills removed." : ""));
+                      addNotif("success", "Deactivated " + selectedIds.size + " section(s).");
                     }} 
                     disabled={chunkPicker.selectedChunks.size === 0}
                     style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "none", background: chunkPicker.selectedChunks.size > 0 ? T.rd : T.bd, color: chunkPicker.selectedChunks.size > 0 ? "#fff" : T.txD, cursor: chunkPicker.selectedChunks.size > 0 ? "pointer" : "default", fontWeight: 600, fontSize: 14 }}>
@@ -1700,7 +1660,6 @@ function StudyInner({ setErrorCtx }) {
               var resetCount = 0;
               for (var mat of (active.materials || [])) {
                 var chunks = mat.chunks || [];
-                var needsWork = false;
                 var updatedChunks = [];
                 for (var ch of chunks) {
                   if (ch.status === "skipped") { updatedChunks.push(ch); continue; }
@@ -1709,7 +1668,6 @@ function StudyInner({ setErrorCtx }) {
                   if (!chunkSkills || !Array.isArray(chunkSkills) || chunkSkills.length === 0) {
                     // No skills for this chunk — reset to pending so extraction picks it up
                     updatedChunks.push({ ...ch, status: "pending" });
-                    needsWork = true;
                     resetCount++;
                   } else {
                     updatedChunks.push(ch);
@@ -1748,7 +1706,7 @@ function StudyInner({ setErrorCtx }) {
                   var refreshed = await DB.getCourses();
                   var rc = refreshed.find(c => c.id === active.id);
                   if (rc) { setCourses(refreshed); setActive(rc); }
-                  var sk = await loadSkillsV2(active.id);
+                  sk = await loadSkillsV2(active.id);
                   var rt = await DB.getRefTaxonomy(active.id);
                   setSkillViewData({ skills: sk, refTax: rt, isV2: true });
                   addNotif(result.success ? "success" : "warn",
@@ -2059,7 +2017,7 @@ function StudyInner({ setErrorCtx }) {
                                   setBusy(true);
                                   extractionCancelledRef.current = false;
                                   try {
-                                    var result = await runExtractionV2(active.id, mat.id, {
+                                    await runExtractionV2(active.id, mat.id, {
                                       onStatus: setStatus,
                                       onNotif: addNotif,
                                       onChapterComplete: (ch2, cnt) => setStatus("Chapter " + ch2 + ": " + cnt + " skills"),
@@ -2285,7 +2243,6 @@ function StudyInner({ setErrorCtx }) {
           var curIdx = pm.currentProblemIdx;
           var problem = problems[curIdx];
           var passCount = problems.filter(p => p.passed === true).length;
-          var answeredCount = problems.filter(p => p.passed !== null).length;
 
           return (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -2346,8 +2303,8 @@ function StudyInner({ setErrorCtx }) {
                         // Retry - generate new problems for same tier
                         setPracticeMode(prev => ({ ...prev, generating: true, tierComplete: null }));
                         try {
-                          var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
-                          var updated = await generateProblems(pset, pm.skill, active.name, matCtx);
+                          matCtx = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
+                          updated = await generateProblems(pset, pm.skill, active.name, matCtx);
                           await DB.savePractice(active.id, pm.skill.id, updated);
                           setPracticeMode({ set: updated, skill: pm.skill, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
                         } catch (e) {
@@ -2778,7 +2735,36 @@ function StudyInner({ setErrorCtx }) {
                     <div style={{ fontSize: 12, color: T.txD, alignSelf: "center" }}>
                       {chunkPicker.selectedChunks.size} of {chunkPicker.materials.flatMap(m => m.chunks || []).length} sections selected
                     </div>
-                    <button onClick={() => runExtraction(chunkPicker.selectedChunks)}
+                    <button onClick={async () => {
+                      if (!active || globalLock) return;
+                      setChunkPicker(null);
+                      setGlobalLock({ message: "Extracting skills..." });
+                      setBusy(true);
+                      setStatus("Extracting skills...");
+                      extractionCancelledRef.current = false;
+                      try {
+                        var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0);
+                        if (!matToExtract) {
+                          addNotif("error", "No materials with sections to extract.");
+                        } else {
+                          var result = await runExtractionV2(active.id, matToExtract.id, {
+                            onStatus: setStatus,
+                            onNotif: addNotif,
+                            onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
+                          });
+                          var refreshed = await DB.getCourses();
+                          var updatedCourse = refreshed.find(c => c.id === active.id);
+                          if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
+                          if (result.success) {
+                            addNotif("success", "Extracted " + result.totalSkills + " skills.");
+                          } else {
+                            addNotif("error", "Extraction completed with issues.");
+                          }
+                        }
+                      } catch (e) {
+                        addNotif("error", "Extraction failed: " + e.message);
+                      } finally { setGlobalLock(null); setBusy(false); setStatus(""); }
+                    }}
                       disabled={chunkPicker.selectedChunks.size === 0}
                       style={{ background: chunkPicker.selectedChunks.size > 0 ? T.ac : T.bd, color: chunkPicker.selectedChunks.size > 0 ? "#0F1115" : T.txD, border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 14, fontWeight: 600, cursor: chunkPicker.selectedChunks.size > 0 ? "pointer" : "default" }}>
                       Extract skills
@@ -3085,7 +3071,7 @@ function StudyInner({ setErrorCtx }) {
               </div>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-              {asgnWork.questions.map((q, i) => (
+              {asgnWork.questions.map((q) => (
                 <div key={q.id} style={{ marginBottom: 12 }}>
                   {q.done ? (
                     /* Completed question - collapsed */

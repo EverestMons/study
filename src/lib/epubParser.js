@@ -392,10 +392,7 @@ function parseNavXhtml(html) {
 function parseNcx(xml) {
   const entries = [];
   // navPoint elements with navLabel/text and content/@src
-  const navPointRegex = /<navPoint[^>]*>([\s\S]*?)<\/navPoint>/gi;
   let match;
-  // NCX can be nested, so we do a flat parse and track depth by indentation
-  const allPoints = xml.match(/<navPoint[\s\S]*?<\/navPoint>/gi) || [];
 
   // Simple flat extraction — depth detection is unreliable with regex on nested XML
   const labelRegex = /<navLabel>\s*<text>([^<]+)<\/text>/gi;

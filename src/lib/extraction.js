@@ -8,7 +8,7 @@
 import { callClaude, extractJSON } from './api.js';
 import {
   Chunks, SubSkills, ChunkSkillBindings, SkillPrerequisites,
-  ParentSkills, Materials, generateConceptKey, getDb, withTransaction
+  ParentSkills, Materials, withTransaction
 } from './db.js';
 
 // ============================================================
@@ -563,7 +563,7 @@ export function postProcessChapterSkills(skills, chapterProfile, materialLabel) 
  */
 export function resolveChunkBindings(skills, chapterGroup, skillIdMap) {
   const bindings = [];
-  const { sectionHeadings, chunkIds, chunks } = chapterGroup;
+  const { chunkIds, chunks } = chapterGroup;
 
   // Build heading → chunkId lookup
   const headingToChunks = new Map();
@@ -687,7 +687,6 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
     .join('\n\n---\n\n');
 
   let response = null;
-  let lastError = null;
 
   // Retry loop
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -711,7 +710,6 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
 
       break; // success
     } catch (e) {
-      lastError = e;
       if (attempt === MAX_RETRIES) {
         return {
           skills: [],
@@ -828,7 +826,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
 
     // --- Save to DB in a single transaction ---
     try {
-      await withTransaction(async (db) => {
+      await withTransaction(async () => {
         // Prepare skill records
         const skillRecords = result.skills.map(s => ({
           parentSkillId: parentSkillId,
@@ -1238,7 +1236,7 @@ export async function reExtractCourse(courseId, materialId, options = {}) {
   const conceptKeyToId = new Map();
 
   try {
-    await withTransaction(async (db) => {
+    await withTransaction(async () => {
       // 1. Update matched skills
       for (const m of matched) {
         await SubSkills.updateFromReextraction(m.existingId, {

@@ -253,7 +253,7 @@ function parseBody(docXml, styleMap) {
   return { markdown, metadata, imageRefs };
 }
 
-function parseParagraph(xml, styleMap, paraIndex) {
+function parseParagraph(xml, styleMap) {
   const result = {
     text: '', markdown: '', boldTerms: [], imageRef: null,
     isCode: false, hasEquation: false,

@@ -188,7 +188,7 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
 
   for (const mat of materials) {
     const loaded = await getMatContent(courseId, mat);
-    var activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
+    const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
     if (!activeChunks.length) continue;
 
     const nameLower = mat.name.toLowerCase();
@@ -262,7 +262,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
     ctx += "\nSOURCE MATERIAL:\n";
     for (const mat of materials) {
       const loaded = await getMatContent(courseId, mat);
-      var activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
+      const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
       if (!activeChunks.length) continue;
       const nameLower = mat.name.toLowerCase();
       const isNeeded = neededSources.has(nameLower) ||
@@ -319,7 +319,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
       ctx += "\nSOURCE MATERIAL:\n";
       for (const mat of materials) {
         const loaded = await getMatContent(courseId, mat);
-        var activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
+        const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
         if (!activeChunks.length) continue;
         const nameLower = mat.name.toLowerCase();
         const isNeeded = neededSources.has(nameLower) ||
@@ -655,7 +655,7 @@ export const loadPracticeMaterialCtx = async (courseId, materials, skill) => {
   var ctx = "";
   for (var mat of materials) {
     var loaded = await getMatContent(courseId, mat);
-    var activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
+    const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
     for (var ch of activeChunks) {
       var tl = ch.label.toLowerCase();
       if ([...neededSources].some(src => tl.includes(src) || src.includes(tl.substring(0, 15)))) {

@@ -85,9 +85,9 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
 
   if (file.classification === "textbook" && file.chapters) {
     for (let i = 0; i < file.chapters.length; i++) {
-      var ch = file.chapters[i];
-      var chunkId = docIdPrefix + "-ch-" + i;
-      var content = ch.content || "";
+      const ch = file.chapters[i];
+      const chunkId = docIdPrefix + "-ch-" + i;
+      const content = ch.content || "";
       mat._pendingDocs.push({ chunkId, doc: { content: content } });
       mat.chunks.push({
         id: chunkId,
@@ -98,7 +98,7 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
     }
     mat.totalChars = file.totalChars || mat.chunks.reduce((s, c) => s + c.charCount, 0);
   } else if (file.content) {
-    var chunkId = docIdPrefix + "-c0";
+    const chunkId = docIdPrefix + "-c0";
     mat._pendingDocs.push({ chunkId, doc: { content: file.content } });
     mat.chunks.push({
       id: chunkId,
@@ -124,7 +124,7 @@ export const getMatContent = async (courseId, mat) => {
         let text = ch.content || '';
         // Unwrap v1 JSON-encoded content: {"content":"..."}
         if (text.startsWith('{')) {
-          try { const parsed = JSON.parse(text); if (parsed.content) text = parsed.content; } catch {}
+          try { const parsed = JSON.parse(text); if (parsed.content) text = parsed.content; } catch { /* ignored */ }
         }
         return {
           id: ch.id,
@@ -139,21 +139,21 @@ export const getMatContent = async (courseId, mat) => {
     }
 
     // v1 fallback: content stored separately via DB.saveDoc / DB.getDoc
-    var allChunks = [];
-    var fullText = "";
+    const allChunks = [];
+    let fullText = "";
     for (const ch of mat.chunks) {
-      var doc = await DB.getDoc(courseId, ch.id);
-      var text = doc?.content || "";
+      const doc = await DB.getDoc(courseId, ch.id);
+      const text = doc?.content || "";
       allChunks.push({ id: ch.id, label: ch.label, content: text, charCount: text.length, status: ch.status });
       fullText += text + "\n";
     }
     return { content: fullText.trim(), chunks: allChunks };
   }
   // Legacy: flat doc storage
-  var doc = await DB.getDoc(courseId, mat.id);
+  const doc = await DB.getDoc(courseId, mat.id);
   if (!doc) return { content: "", chunks: [] };
   if (doc.chapters) {
-    var legacyChunks = doc.chapters.map((ch, i) => ({
+    const legacyChunks = doc.chapters.map((ch, i) => ({
       id: mat.id + "-legacy-" + i, label: ch.title || "Chapter " + (i + 1),
       content: ch.content, charCount: ch.content?.length || 0, status: "pending"
     }));
@@ -177,6 +177,7 @@ export const verifyDocument = async (courseId, mat) => {
     keyItems: [], issues: ["No meaningful content"], questions: []
   };
 
+  // eslint-disable-next-line no-control-regex
   var garbledRatio = (loaded.content.match(/[\x00-\x08\x0E-\x1F\uFFFD]/g) || []).length / Math.max(loaded.content.length, 1);
   if (garbledRatio > 0.05) return {
     status: "error",

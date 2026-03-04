@@ -8,7 +8,7 @@ const initTauriFetch = async () => {
     const { fetch: tf } = await import("@tauri-apps/plugin-http");
     tauriFetch = tf;
     return tf;
-  } catch (e) {
+  } catch {
     console.log("Tauri HTTP not available, using browser fetch");
     return fetch;
   }
@@ -95,7 +95,6 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
     let full = "";
     let buffer = "";
     let stopReason = null;
-    let lastChunkTime = Date.now();
 
     while (true) {
       // Add per-chunk timeout (30 seconds of no data = stalled)
@@ -107,14 +106,13 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
       let result;
       try {
         result = await Promise.race([readPromise, chunkTimeout]);
-      } catch (e) {
+      } catch {
         console.warn("Stream timeout, returning partial response");
         break;
       }
 
       const { done, value } = result;
       if (done) break;
-      lastChunkTime = Date.now();
       buffer += decoder.decode(value, { stream: true });
 
       // Parse SSE events from buffer
@@ -137,7 +135,7 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
           if (evt.type === "error") {
             throw new Error(evt.error?.message || "Stream error");
           }
-        } catch (parseErr) {
+        } catch {
           // Skip non-JSON lines (event type lines, etc.)
           if (data !== "[DONE]" && !data.startsWith("{")) continue;
         }
@@ -178,7 +176,7 @@ export const testApiKey = async (key) => {
     });
     if (r.ok) return { valid: true };
     var errBody = await r.text();
-    try { var parsed = JSON.parse(errBody); errBody = parsed.error?.message || errBody; } catch {}
+    try { var parsed = JSON.parse(errBody); errBody = parsed.error?.message || errBody; } catch { /* ignored */ }
     if (r.status === 401) return { valid: false, error: "Invalid API key" };
     if (r.status === 403) return { valid: false, error: "API key not authorized" };
     return { valid: false, error: "API error " + r.status + ": " + errBody.substring(0, 100) };
@@ -189,13 +187,13 @@ export const testApiKey = async (key) => {
 
 // --- JSON Extractor ---
 export const extractJSON = (text) => {
-  try { return JSON.parse(text); } catch {}
+  try { return JSON.parse(text); } catch { /* ignored */ }
   const m1 = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (m1) try { return JSON.parse(m1[1].trim()); } catch {}
+  if (m1) try { return JSON.parse(m1[1].trim()); } catch { /* ignored */ }
   const m2 = text.match(/\[[\s\S]*\]/);
-  if (m2) try { return JSON.parse(m2[0]); } catch {}
+  if (m2) try { return JSON.parse(m2[0]); } catch { /* ignored */ }
   const m3 = text.match(/\{[\s\S]*\}/);
-  if (m3) try { return JSON.parse(m3[0]); } catch {}
+  if (m3) try { return JSON.parse(m3[0]); } catch { /* ignored */ }
 
   // Try to repair truncated JSON arrays by finding last complete object
   const arrayMatch = text.match(/\[\s*\{[\s\S]*/);
@@ -215,7 +213,7 @@ export const extractJSON = (text) => {
           try {
             const obj = JSON.parse(jsonStr.substring(start, i + 1));
             objects.push(obj);
-          } catch {}
+          } catch { /* ignored */ }
           start = -1;
         }
       }
