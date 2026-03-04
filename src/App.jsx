@@ -2723,12 +2723,26 @@ function StudyInner({ setErrorCtx }) {
                             if (allDone) {
                               var tierResult = completeTierAttempt(updatedSet);
                               await DB.savePractice(active.id, pm.skill.id, updatedSet);
+
+                              // Derive FSRS rating from practice performance
+                              var practiceRating;
+                              if (tierResult.attemptNum === 1 && tierResult.passCount >= 4) practiceRating = 'easy';
+                              else if (tierResult.attemptNum <= 2 && tierResult.passCount >= 4) practiceRating = 'good';
+                              else if (tierResult.passCount >= 4) practiceRating = 'hard';
+                              else practiceRating = 'struggled';
+
+                              await applySkillUpdates(active.id, [{
+                                skillId: pm.skill.id,
+                                rating: practiceRating,
+                                reason: "Practice Tier " + tier + " (" + tierResult.tierName + ") - " + tierResult.passCount + "/5 on attempt " + tierResult.attemptNum,
+                                source: 'practice',
+                                context: 'guided',
+                              }]);
+
+                              // Increment practice attempts for fitness tracking
+                              try { await SubSkills.incrementPracticeAttempts(pm.skill.id); } catch (e) { /* non-critical */ }
+
                               if (tierResult.points > 0) {
-                                await applySkillUpdates(active.id, [{
-                                  skillId: pm.skill.id, skill: pm.skill.name,
-                                  delta: tierResult.points, rating: tierResult.rating,
-                                  reason: "Practice Tier " + (tier) + " (" + tierResult.tierName + ") - attempt " + tierResult.attemptNum
-                                }]);
                                 addNotif("skill", pm.skill.name + ": +" + tierResult.points + " pts (Tier " + tier + " " + tierResult.tierName + ")");
                               }
                               // Show tier complete after a brief delay to let feedback show

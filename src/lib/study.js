@@ -53,6 +53,20 @@ export const nextReviewDate = (skillOrMastery) => {
 // Keep DEFAULT_EASE export for any remaining references (backward compat)
 export const DEFAULT_EASE = 2.5;
 
+// --- Mastery Confidence Label ---
+// Computed from fitness counters. Indicates quality of evidence behind a skill's mastery score.
+export const masteryConfidence = (fitness) => {
+  if (!fitness) return 'untested';
+  var practice = fitness.practiceAttempts || fitness.practiceSuccesses || 0;
+  var diagnostic = fitness.diagnosticCount || 0;
+  var tutor = fitness.tutoringReferences || 0;
+  var verified = practice + diagnostic;
+  if (verified >= 3) return 'verified';
+  if (verified >= 1) return 'partially-verified';
+  if (tutor > 0) return 'unverified';
+  return 'untested';
+};
+
 // --- Strength Update (FSRS-backed, weighted by context/source/bloom's) ---
 // Applies skill updates using FSRS state transitions with evidence-quality weighting.
 // Tutor-assessed interactions carry less weight than practice/diagnostic verification.
@@ -157,6 +171,35 @@ export const applySkillUpdates = async (courseId, updates) => {
         await SubSkills.incrementDiagnosticCount(u.skillId);
       }
     } catch (e) { /* fitness update failed, non-critical */ }
+
+    // --- Mastery criteria verification ---
+    if (u.criteria && (context === 'diagnostic' || context === 'transfer' || source === 'practice') &&
+        (u.rating === 'good' || u.rating === 'easy')) {
+      try {
+        var skillData = skillRow || await SubSkills.getById(u.skillId);
+        if (skillData) {
+          var rawCriteria = typeof skillData.mastery_criteria === 'string'
+            ? JSON.parse(skillData.mastery_criteria || '[]')
+            : (skillData.mastery_criteria || []);
+          var changed = false;
+          var updated_criteria = rawCriteria.map(function(c) {
+            var text = typeof c === 'string' ? c : c.text;
+            var obj = typeof c === 'string' ? { text: c, verified: false } : { ...c };
+            if (!obj.verified && text && u.criteria &&
+                text.toLowerCase().includes(u.criteria.toLowerCase().substring(0, 30))) {
+              obj.verified = true;
+              obj.verifiedAt = date;
+              obj.verifiedBy = source + ':' + context;
+              changed = true;
+            }
+            return obj;
+          });
+          if (changed) {
+            await SubSkills.update(u.skillId, { masteryCriteria: updated_criteria });
+          }
+        }
+      } catch (e) { /* criteria update failed, non-critical */ }
+    }
 
     // --- Profile.skills for journal/session history (backward compat) ---
     if (!profile.skills[u.skillId]) {
