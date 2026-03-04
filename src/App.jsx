@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, Component, createConte
 // --- Module Imports ---
 import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery } from "./lib/db.js";
+import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -1296,8 +1296,7 @@ function StudyInner({ setErrorCtx }) {
               // Try v2 skills first, fall back to v1
               var sk = await loadSkillsV2(active.id);
               // V2 only — no v1 fallback needed
-              var rt = await DB.getRefTaxonomy(active.id);
-              setSkillViewData({ skills: sk, refTax: rt, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
+              setSkillViewData({ skills: sk, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
               setScreen("skills");
             }}
               style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
@@ -1847,10 +1846,8 @@ function StudyInner({ setErrorCtx }) {
                 });
                 if (result.migrated > 0) {
                   addNotif("success", "Migrated " + result.migrated + " skills, " + result.mastery + " mastery records.");
-                  // Reload as v2
                   var sk = await loadSkillsV2(active.id);
-                  var rt = await DB.getRefTaxonomy(active.id);
-                  setSkillViewData({ skills: sk, refTax: rt, isV2: true });
+                  setSkillViewData({ skills: sk, isV2: true });
                 } else {
                   addNotif("warn", "Migration returned 0 skills. " + (result.issues?.[0]?.type || "Unknown issue."));
                 }
@@ -1880,9 +1877,9 @@ function StudyInner({ setErrorCtx }) {
                 var updatedChunks = [];
                 for (var ch of chunks) {
                   if (ch.status === "skipped") { updatedChunks.push(ch); continue; }
-                  // Check if this chunk actually has skills saved
-                  var chunkSkills = await DB.getChunkSkills(active.id, ch.id);
-                  if (!chunkSkills || !Array.isArray(chunkSkills) || chunkSkills.length === 0) {
+                  // Check if this chunk has v2 skill bindings in DB
+                  var bindings = await ChunkSkillBindings.getByChunk(ch.id);
+                  if (!bindings || bindings.length === 0) {
                     // No skills for this chunk — reset to pending so extraction picks it up
                     updatedChunks.push({ ...ch, status: "pending" });
                     resetCount++;
@@ -1899,8 +1896,7 @@ function StudyInner({ setErrorCtx }) {
                 var sk = await loadSkillsV2(active.id);
                 if (sk.length > 0) {
                   // V2: skills already in DB, just display
-                  var rt0 = await DB.getRefTaxonomy(active.id);
-                  setSkillViewData({ skills: sk, refTax: rt0, isV2: true });
+                  setSkillViewData({ skills: sk, isV2: true });
                   addNotif("success", "Skill tree loaded. " + sk.length + " skills.");
                 }
               } else {
@@ -1924,8 +1920,7 @@ function StudyInner({ setErrorCtx }) {
                   var rc = refreshed.find(c => c.id === active.id);
                   if (rc) { setCourses(refreshed); setActive(rc); }
                   sk = await loadSkillsV2(active.id);
-                  var rt = await DB.getRefTaxonomy(active.id);
-                  setSkillViewData({ skills: sk, refTax: rt, isV2: true });
+                  setSkillViewData({ skills: sk, isV2: true });
                   addNotif(result.success ? "success" : "warn",
                     "Extraction complete. " + (result.totalSkills || 0) + " skills.");
                 } else {
@@ -2421,8 +2416,7 @@ function StudyInner({ setErrorCtx }) {
                                   if (busy) return;
                                   setBusy(true); setStatus("Re-examining " + sk.name + "...");
                                   try {
-                                    var refTax = await DB.getRefTaxonomy(active.id);
-                                    var refCtx = refTax && refTax.taxonomy ? "\n\nREFERENCE TAXONOMY CONTEXT:\n" + JSON.stringify(refTax.taxonomy.filter(t => t.refId === sk.refId || t.category === sk.category).slice(0, 10), null, 1) : "";
+                                    var refCtx = "";
                                     var flagPrompt = "A student flagged this skill as potentially incorrect in their course skill tree.\n\nFLAGGED SKILL:\n" + JSON.stringify(sk, null, 2) + "\n\nFULL SKILL TREE CONTEXT (nearby skills):\n" + JSON.stringify(skillViewData.skills.filter(s => s.category === sk.category || (sk.prerequisites && sk.prerequisites.includes(s.id)) || (s.prerequisites && s.prerequisites.includes(sk.id))).slice(0, 15), null, 1) + refCtx + "\n\nRe-examine this skill. Check:\n1. Is the name accurate for what the source material actually teaches?\n2. Is the description specific and testable?\n3. Are the prerequisites correct and complete?\n4. Is it categorized correctly?\n5. Should it be split into multiple skills or merged with another?\n\nRespond with ONLY a JSON object:\n{\n  \"action\": \"keep|modify|split|merge\",\n  \"explanation\": \"why this action\",\n  \"correctedSkill\": { ...the skill with any fixes applied... },\n  \"splitInto\": [ ...if splitting, the new skills... ]\n}";
                                     var result = await callClaude(flagPrompt, [{ role: "user", content: "Re-examine this flagged skill." }], 4096);
                                     var parsed = extractJSON(result);
