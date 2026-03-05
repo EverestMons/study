@@ -230,6 +230,9 @@ function StudyInner({ setErrorCtx }) {
   const [sessionSummary, setSessionSummary] = useState(null); // { entry, skillChanges, duration, courseName }
   const sessionStartTime = useRef(null); // Date.now() set in bootWithFocus
   const discussedChunks = useRef(new Set()); // Track chunks already loaded in this session
+  const [sessionElapsed, setSessionElapsed] = useState(0); // minutes elapsed in session
+  const [breakDismissed, setBreakDismissed] = useState(false); // break reminder dismissed
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false); // assignment sidebar collapsed
 
   // Notification helper: type = "info" | "warn" | "error" | "skill" | "success"
   const addNotif = (type, msg) => {
@@ -283,6 +286,15 @@ function StudyInner({ setErrorCtx }) {
   useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { if (codeMode) { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, codeMode]);
+
+  // Session elapsed timer — updates every minute when a session is active
+  useEffect(() => {
+    if (!sessionStartTime.current) { setSessionElapsed(0); return; }
+    var update = () => setSessionElapsed(Math.floor((Date.now() - sessionStartTime.current) / 60000));
+    update();
+    var iv = setInterval(update, 60000);
+    return () => clearInterval(iv);
+  }, [msgs.length]);
 
   const saveSessionToJournal = useCallback(async () => {
     if (!active || msgs.length <= sessionStartIdx.current + 1) return;
@@ -539,6 +551,9 @@ function StudyInner({ setErrorCtx }) {
     sessionStartTime.current = null;
     discussedChunks.current = new Set();
     setSessionSummary(null);
+    setSessionElapsed(0);
+    setBreakDismissed(false);
+    setSidebarCollapsed(false);
     // Save previous session to journal before clearing
     try {
       const savedMsgs = await DB.getChat(course.id);
@@ -1115,7 +1130,9 @@ function StudyInner({ setErrorCtx }) {
               addNotif("error", "Reset failed: " + e.message);
             }
           }}
-            style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.rd, borderRadius: 8, color: T.rd, fontSize: 12, cursor: "pointer", width: "100%" }}>
+            style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.rd, borderRadius: 8, color: T.rd, fontSize: 12, cursor: "pointer", width: "100%", transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             Reset Skill Data
           </button>
           <div style={{ fontSize: 11, color: T.txM, marginTop: 6 }}>Removes all skills, mastery, and progress. Keeps courses and materials.</div>
@@ -1132,7 +1149,9 @@ function StudyInner({ setErrorCtx }) {
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <div />
         <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
           Settings
         </button>
       </div>
@@ -1178,7 +1197,9 @@ function StudyInner({ setErrorCtx }) {
                     <button onClick={e => { e.stopPropagation();
                         if (pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id) { setPendingConfirm(null); delCourse(c.id); }
                         else setPendingConfirm({ type: "delCourse", id: c.id });
-                      }} style={{ background: "none", border: "none", color: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? T.rd : T.txM, cursor: "pointer", fontSize: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? 11 : 13, flexShrink: 0, marginLeft: 12 }}>
+                      }} style={{ background: "none", border: "none", color: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? T.rd : T.txM, cursor: "pointer", fontSize: pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? 11 : 13, flexShrink: 0, marginLeft: 12, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "none"}>
                       {pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id ? "Confirm delete?" : "Delete"}
                     </button>
                   </div>
@@ -1233,8 +1254,12 @@ function StudyInner({ setErrorCtx }) {
       <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
         <style>{CSS}</style>
         <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-          <button onClick={() => { setScreen("home"); setExpandedSubSkill(null); }} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
-          <button onClick={() => setShowSettings(true)} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>Settings</button>
+          <button onClick={() => { setScreen("home"); setExpandedSubSkill(null); }} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
+          <button onClick={() => setShowSettings(true)} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+            onMouseLeave={e => e.currentTarget.style.background = T.sf}>Settings</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
         <div style={{ maxWidth: 680, margin: "0 auto" }}>
@@ -1554,9 +1579,13 @@ function StudyInner({ setErrorCtx }) {
         <style>{CSS}</style>
         {/* Top bar */}
         <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
           <button onClick={() => setShowSettings(true)}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+            onMouseLeave={e => e.currentTarget.style.background = T.sf}>
             Settings
           </button>
         </div>
@@ -1692,11 +1721,15 @@ function StudyInner({ setErrorCtx }) {
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <button onClick={() => { if (!processingMatId) setScreen("study"); }}
-          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: 0, opacity: processingMatId ? 0.5 : 1 }}>
+          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, opacity: processingMatId ? 0.5 : 1, transition: "all 0.15s ease" }}
+          onMouseEnter={e => { if (!processingMatId) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+          onMouseLeave={e => e.currentTarget.style.background = "none"}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
         <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
           Settings
         </button>
       </div>
@@ -1743,11 +1776,15 @@ function StudyInner({ setErrorCtx }) {
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <button onClick={() => { if (!processingMatId) setScreen("manage"); }}
-          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: 0, opacity: processingMatId ? 0.5 : 1 }}>
+          style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, opacity: processingMatId ? 0.5 : 1, transition: "all 0.15s ease" }}
+          onMouseEnter={e => { if (!processingMatId) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+          onMouseLeave={e => e.currentTarget.style.background = "none"}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
         <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
           Settings
         </button>
       </div>
@@ -1952,7 +1989,7 @@ function StudyInner({ setErrorCtx }) {
                         )}
                         {permanentlyFailed.length > 0 && (
                           <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
-                            style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
+                            style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
                             Log Error ({permanentlyFailed.length})
                           </button>
                         )}
@@ -1963,7 +2000,9 @@ function StudyInner({ setErrorCtx }) {
                       if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
                       else setPendingConfirm({ type: "removeMat", id: mat.id });
                     }}
-                      style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
+                      style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer", transition: "all 0.15s ease" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "none"}>
                       {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
                     </button>
                 </div>
@@ -2242,9 +2281,13 @@ function StudyInner({ setErrorCtx }) {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+        <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+          onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
         <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
           Settings
         </button>
       </div>
@@ -2455,9 +2498,13 @@ function StudyInner({ setErrorCtx }) {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => setScreen("study")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+        <button onClick={() => setScreen("study")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+          onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
         <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
           Settings
         </button>
       </div>
@@ -2540,9 +2587,20 @@ function StudyInner({ setErrorCtx }) {
                 await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
               }
             }}
-            style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+            style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
+          {/* Session timer */}
+          {msgs.length > 0 && sessionElapsed > 0 && (
+            <span style={{ fontSize: 11, color: T.txM, fontWeight: 400, marginLeft: 12 }}>
+              {sessionElapsed < 60 ? sessionElapsed + "m" : Math.floor(sessionElapsed / 60) + "h " + (sessionElapsed % 60) + "m"}
+            </span>
+          )}
+          <div style={{ flex: 1 }} />
           <button onClick={() => setShowSettings(true)}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
+            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = T.sfH}
+            onMouseLeave={e => e.currentTarget.style.background = T.sf}>
             Settings
           </button>
         </div>
@@ -2651,7 +2709,9 @@ function StudyInner({ setErrorCtx }) {
                             if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
                             else setPendingConfirm({ type: "removeMat", id: mat.id });
                           }} disabled={busy}
-                          style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "4px 8px", fontSize: 11, color: T.rd, cursor: busy ? "default" : "pointer" }}>
+                          style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: busy ? "default" : "pointer", transition: "all 0.15s ease" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "none"}>
                           {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
                         </button>
                       </div>
@@ -2986,7 +3046,7 @@ function StudyInner({ setErrorCtx }) {
                 </div>
               ) : problem ? (
                 <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-                  <div style={{ maxWidth: 700, margin: "0 auto" }}>
+                  <div style={{ maxWidth: 640, margin: "0 auto" }}>
                     {/* IES Rec 2: Worked Example (Tiers 1-3 only, before attempting problem) */}
                     {tier <= 3 && problem.workedExample && !problem.exampleViewed && problem.passed === null ? (
                       <div>
@@ -2996,7 +3056,7 @@ function StudyInner({ setErrorCtx }) {
                         </div>
                         <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: 16, marginBottom: 16 }}>
                           <div style={{ fontSize: 12, color: T.ac, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Example Problem</div>
-                          <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.workedExample.problem}</div>
+                          <div style={{ fontSize: 15, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.workedExample.problem}</div>
                           <div style={{ fontSize: 12, color: T.ac, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Solution</div>
                           <div style={{ fontSize: 13, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap", fontFamily: "'SF Mono', 'Fira Code', monospace", background: "#1A1D24", padding: 12, borderRadius: 8 }}>{problem.workedExample.solution}</div>
                           <div style={{ fontSize: 12, color: T.txD, fontStyle: "italic", borderLeft: "2px solid " + T.ac, paddingLeft: 12 }}>{problem.workedExample.keyInsight}</div>
@@ -3029,7 +3089,7 @@ function StudyInner({ setErrorCtx }) {
                           </div>
                         )}
                         {/* Problem prompt */}
-                        <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.prompt}</div>
+                        <div style={{ fontSize: 15, color: T.tx, lineHeight: 1.7, marginBottom: 16, whiteSpace: "pre-wrap" }}>{problem.prompt}</div>
 
                         {/* IES Rec 6a: Confidence Rating (before allowing answer) */}
                         {problem.confidenceRating === null && problem.passed === null && (
@@ -3346,7 +3406,7 @@ function StudyInner({ setErrorCtx }) {
 
 
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", order: 1 }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+          <div style={{ maxWidth: 640, margin: "0 auto" }}>
             {/* Chunk Selection Picker */}
             {chunkPicker && !booting && (
               <div style={{ padding: "40px 20px", animation: "fadeIn 0.3s" }}>
@@ -3852,6 +3912,16 @@ function StudyInner({ setErrorCtx }) {
                 )}
               </div>
             )}
+            {/* Break reminder banner */}
+            {sessionElapsed >= 25 && !breakDismissed && msgs.length > 0 && (
+              <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: 10, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, animation: "fadeIn 0.3s" }}>
+                <span style={{ fontSize: 13, color: T.am, lineHeight: 1.5 }}>You've been studying for 25+ minutes. A short break can help retention.</span>
+                <button onClick={() => setBreakDismissed(true)}
+                  style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 12, flexShrink: 0, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "none"}>Dismiss</button>
+              </div>
+            )}
             {msgs.map((m, i) => {
               const isUser = m.role === "user";
               const isAsst = m.role === "assistant";
@@ -3861,9 +3931,9 @@ function StudyInner({ setErrorCtx }) {
               const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
               const ratingBg = { easy: T.gnS, good: T.gnS, hard: T.amS, struggled: T.amS };
               return (
-              <div key={i} style={{ marginBottom: 20, animation: "fadeIn 0.25s", display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start" }}>
+              <div key={i} style={{ marginBottom: 28, animation: "fadeIn 0.25s", display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start" }}>
                 {/* Thin separator before user messages (after the first) */}
-                {isUser && i > 0 && <div style={{ width: "100%", height: 1, background: T.bd, opacity: 0.3, marginBottom: 16 }} />}
+                {isUser && i > 0 && <div style={{ width: "100%", height: 1, background: T.bd, opacity: 0.3, marginBottom: 20 }} />}
                 {isAsst && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                     <div style={{ fontSize: 11, color: T.ac, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>Study</div>
@@ -3877,7 +3947,7 @@ function StudyInner({ setErrorCtx }) {
                   borderLeft: isAsst ? "2px solid rgba(108,156,252,0.25)" : "none",
                   borderRadius: isUser ? "16px 16px 4px 16px" : "0",
                   padding: isUser ? "12px 16px" : "4px 0 4px 12px",
-                  color: T.tx, lineHeight: 1.7, fontSize: 14
+                  color: T.tx, lineHeight: 1.7, fontSize: 15
                 }}>
                   {isAsst ? (m.content ? renderMd(m.content) : (
                     <span style={{ display: "inline-flex", gap: 4, alignItems: "center", height: 16, verticalAlign: "middle" }}>
@@ -3934,9 +4004,28 @@ function StudyInner({ setErrorCtx }) {
 
         {/* Assignment Panel */}
         {asgnWork && msgs.length > 0 && (
-          <div style={{ width: 340, borderLeft: "1px solid " + T.bd, overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "16px 16px 8px", borderBottom: "1px solid " + T.bd }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: T.tx, marginBottom: 4 }}>
+          <div style={{ width: sidebarCollapsed ? 48 : 340, borderLeft: "1px solid " + T.bd, overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", transition: "width 0.2s ease", overflow: "hidden" }}>
+            {/* Toggle button */}
+            <div style={{ padding: sidebarCollapsed ? "12px 0" : "8px 12px 0", display: "flex", justifyContent: sidebarCollapsed ? "center" : "flex-end" }}>
+              <button onClick={() => setSidebarCollapsed(c => !c)}
+                style={{ width: 24, height: 24, background: "none", border: "none", color: T.txD, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4, transition: "all 0.15s ease", fontSize: 12, flexShrink: 0 }}
+                onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                {sidebarCollapsed ? "\u25C0" : "\u25B6"}
+              </button>
+            </div>
+            {sidebarCollapsed ? (
+              /* Collapsed: show only progress */
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.ac, writingMode: "vertical-rl", textOrientation: "mixed" }}>
+                  {asgnWork.questions.filter(q => q.done).length}/{asgnWork.questions.length}
+                </div>
+              </div>
+            ) : (
+              /* Expanded: full sidebar */
+              <>
+            <div style={{ padding: "8px 16px 8px", borderBottom: "1px solid " + T.bd }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.tx, marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {focusContext?.assignment?.title || "Assignment"}
               </div>
               <div style={{ fontSize: 11, color: T.txD }}>
@@ -3959,7 +4048,7 @@ function StudyInner({ setErrorCtx }) {
                     /* Active question - expanded with answer box */
                     <div style={{ background: T.sf, border: "1px solid " + T.acB, borderRadius: 12, padding: 14, animation: "fadeIn 0.3s" }}>
                       <div style={{ fontSize: 11, color: T.ac, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 8 }}>{q.id}</div>
-                      <div style={{ fontSize: 13, color: T.tx, lineHeight: 1.6, marginBottom: 12 }}>{q.description}</div>
+                      <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.6, marginBottom: 12 }}>{q.description}</div>
                       <textarea
                         value={q.answer}
                         onChange={e => {
@@ -4013,6 +4102,8 @@ function StudyInner({ setErrorCtx }) {
                 </button>
               </div>
             )}
+              </>
+            )}
           </div>
         )}
 
@@ -4022,7 +4113,7 @@ function StudyInner({ setErrorCtx }) {
         {/* Input Bar - only show after session has started, hidden during practice */}
         {msgs.length > 0 && !practiceMode && (
         <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", flexShrink: 0 }}>
-          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+          <div style={{ maxWidth: 640, margin: "0 auto" }}>
             {/* Mode context bar */}
             {(focusContext || sessionMode) && (
               <div style={{ fontSize: 11, color: T.txM, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -4117,13 +4208,15 @@ function StudyInner({ setErrorCtx }) {
                 title="Code mode (Ctrl+Shift+C)"
               >&lt;/&gt;</button>
               <button onClick={sendMessage} disabled={!input.trim() || busy}
+                onMouseEnter={e => { if (input.trim() && !busy) e.currentTarget.style.background = "#7DAAFD"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = input.trim() && !busy ? T.ac : T.sf; }}
                 style={{
                   background: input.trim() && !busy ? T.ac : T.sf,
                   color: input.trim() && !busy ? "#0F1115" : T.txM,
                   border: "none", borderRadius: 12, width: 44, height: 44,
                   cursor: input.trim() && !busy ? "pointer" : "default",
                   flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                  transition: "all 0.2s"
+                  transition: "all 0.15s ease"
                 }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 12h14M12 5l7 7-7 7" />

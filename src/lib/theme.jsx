@@ -5,8 +5,8 @@ export const T = {
   sfH: "#22262F",
   bd: "#2A2F3A",
   tx: "#E8EAF0",
-  txD: "#6B7280",
-  txM: "#4B5563",
+  txD: "#8B95A5",
+  txM: "#64748B",
   ac: "#6C9CFC",
   acS: "rgba(108,156,252,0.1)",
   acB: "rgba(108,156,252,0.2)",
@@ -91,7 +91,7 @@ export const renderMd = (text) => {
     } else if (ln.trim() === "") {
       els.push(<div key={i} style={{ height: 8 }} />);
     } else {
-      els.push(<p key={i} style={{ margin: "4px 0", lineHeight: 1.7 }}>{inl(ln)}</p>);
+      els.push(<p key={i} style={{ margin: "4px 0", lineHeight: 1.7, fontSize: 15 }}>{inl(ln)}</p>);
     }
     i++;
   }
