@@ -550,7 +550,7 @@ function StudyInner({ setErrorCtx }) {
       if (mode === "assignment") {
         const asgn = await DB.getAsgn(active.id);
         if (!Array.isArray(asgn) || asgn.length === 0) {
-          setPickerData({ mode, empty: true, message: "No assignments found. Upload assignment files and recreate the course, or switch to skill work." });
+          setPickerData({ mode, empty: true, message: "No assignments found. Upload an assignment in the material manager and extract skills from your course materials first." });
           return;
         }
         // Enrich assignments with readiness info
