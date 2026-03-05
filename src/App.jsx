@@ -1260,7 +1260,9 @@ function StudyInner({ setErrorCtx }) {
                                 <div style={{ flex: 1, fontSize: 13, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.name}</div>
                                 {sub.bloomsLevel && <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 4, background: (bloomsColors[sub.bloomsLevel] || T.txD) + "18", color: bloomsColors[sub.bloomsLevel] || T.txD }}>{sub.bloomsLevel}</span>}
                                 {sub.mastery ? (
-                                  <span style={{ fontSize: 11, color: subColor, flexShrink: 0, fontWeight: 500 }}>{Math.round(r * 100)}%</span>
+                                  <div style={{ width: 52, height: 4, borderRadius: 2, background: T.bd, flexShrink: 0, overflow: "hidden" }}>
+                                    <div style={{ width: Math.round(r * 100) + "%", height: "100%", background: subColor, borderRadius: 2 }} />
+                                  </div>
                                 ) : (
                                   <span style={{ fontSize: 11, color: T.txM, flexShrink: 0 }}>{confidenceLabels[sub.confidence] || "New"}</span>
                                 )}
