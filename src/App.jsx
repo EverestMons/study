@@ -3316,9 +3316,17 @@ function StudyInner({ setErrorCtx }) {
                       setStatus("Extracting skills...");
                       extractionCancelledRef.current = false;
                       try {
-                        var extractableMats = (active.materials || []).filter(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
-                        if (!extractableMats.length) {
-                          addNotif("error", "No materials with sections to extract.");
+                        var extractableMats = (active.materials || []).filter(m =>
+                          (m.chunks || []).length > 0 &&
+                          m.classification !== "assignment" &&
+                          (m.chunks || []).some(c => c.status === "pending" || c.status === "failed")
+                        );
+                        // Always try decomposing assignments regardless of extraction
+                        var allMats = active.materials || [];
+                        var hasAssignments = allMats.some(m => m.classification === "assignment");
+
+                        if (!extractableMats.length && !hasAssignments) {
+                          addNotif("warn", "All materials already extracted. Upload new materials or retry failed sections.");
                         } else {
                           var totalSkills = 0;
                           for (var mi = 0; mi < extractableMats.length; mi++) {
@@ -3336,16 +3344,17 @@ function StudyInner({ setErrorCtx }) {
                           if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                           if (totalSkills > 0) {
                             addNotif("success", "Extracted " + totalSkills + " skills from " + extractableMats.length + " material" + (extractableMats.length !== 1 ? "s" : "") + ".");
-                            // Decompose assignments if any exist
-                            var mats = updatedCourse?.materials || active.materials || [];
-                            if (mats.some(m => m.classification === "assignment")) {
+                          } else if (extractableMats.length > 0) {
+                            addNotif("error", "Extraction completed with issues.");
+                          }
+                          // Decompose assignments if any exist and we have skills
+                          if (hasAssignments) {
+                            var sk = await loadSkillsV2(active.id);
+                            if (sk.length > 0) {
                               setStatus("Decomposing assignments...");
-                              var sk = await loadSkillsV2(active.id);
-                              await decomposeAssignments(active.id, mats, sk, setStatus);
+                              await decomposeAssignments(active.id, allMats, sk, setStatus);
                               addNotif("success", "Assignments decomposed.");
                             }
-                          } else {
-                            addNotif("error", "Extraction completed with issues.");
                           }
                         }
                       } catch (e) {
@@ -3437,9 +3446,16 @@ function StudyInner({ setErrorCtx }) {
                           setStatus(isRetry ? "Retrying failed chunks..." : "Extracting skills...");
                           extractionCancelledRef.current = false;
                           try {
-                            var extractableMats = (active.materials || []).filter(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
-                            if (!extractableMats.length) {
-                              addNotif("error", "No materials with sections to extract.");
+                            var extractableMats = (active.materials || []).filter(m =>
+                              (m.chunks || []).length > 0 &&
+                              m.classification !== "assignment" &&
+                              (m.chunks || []).some(c => c.status === "pending" || c.status === "failed")
+                            );
+                            var allMats = active.materials || [];
+                            var hasAssignments = allMats.some(m => m.classification === "assignment");
+
+                            if (!extractableMats.length && !hasAssignments) {
+                              addNotif("warn", "All materials already extracted.");
                             } else {
                               var totalSkills = 0;
                               for (var mi = 0; mi < extractableMats.length; mi++) {
@@ -3457,15 +3473,16 @@ function StudyInner({ setErrorCtx }) {
                               if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                               if (totalSkills > 0) {
                                 addNotif("success", "Extracted " + totalSkills + " skills from " + extractableMats.length + " material" + (extractableMats.length !== 1 ? "s" : "") + ".");
-                                var mats = updatedCourse?.materials || active.materials || [];
-                                if (mats.some(m => m.classification === "assignment")) {
+                              } else if (extractableMats.length > 0) {
+                                addNotif("error", "Extraction completed with issues.");
+                              }
+                              if (hasAssignments) {
+                                var sk = await loadSkillsV2(active.id);
+                                if (sk.length > 0) {
                                   setStatus("Decomposing assignments...");
-                                  var sk = await loadSkillsV2(active.id);
-                                  await decomposeAssignments(active.id, mats, sk, setStatus);
+                                  await decomposeAssignments(active.id, allMats, sk, setStatus);
                                   addNotif("success", "Assignments decomposed.");
                                 }
-                              } else {
-                                addNotif("error", "Extraction completed with issues.");
                               }
                             }
                           } catch (e) {
