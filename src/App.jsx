@@ -1989,7 +1989,9 @@ function StudyInner({ setErrorCtx }) {
                         )}
                         {permanentlyFailed.length > 0 && (
                           <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
-                            style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer" }}>
+                            style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer", transition: "all 0.15s ease" }}
+                            onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                             Log Error ({permanentlyFailed.length})
                           </button>
                         )}
@@ -2584,7 +2586,7 @@ function StudyInner({ setErrorCtx }) {
                 setAsgnWork(null);
                 setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork });
               } else {
-                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
+                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
               }
             }}
             style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
@@ -2593,7 +2595,7 @@ function StudyInner({ setErrorCtx }) {
           {/* Session timer */}
           {msgs.length > 0 && sessionElapsed > 0 && (
             <span style={{ fontSize: 11, color: T.txM, fontWeight: 400, marginLeft: 12 }}>
-              {sessionElapsed < 60 ? sessionElapsed + "m" : Math.floor(sessionElapsed / 60) + "h " + (sessionElapsed % 60) + "m"}
+              {sessionElapsed < 60 ? sessionElapsed + "m" : Math.floor(sessionElapsed / 60) + "h" + (sessionElapsed % 60 > 0 ? " " + (sessionElapsed % 60) + "m" : "")}
             </span>
           )}
           <div style={{ flex: 1 }} />
@@ -4302,7 +4304,7 @@ function StudyInner({ setErrorCtx }) {
               )}
 
               <button onClick={() => {
-                setSessionSummary(null); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set();
+                setSessionSummary(null); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
               }}
                 style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
                 Done
