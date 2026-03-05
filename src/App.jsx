@@ -11,6 +11,7 @@ import {
   storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2
 } from "./lib/skills.js";
 import { migrateV1ToV2 } from "./lib/migrate.js";
+import { generateSubmission, downloadBlob } from "./lib/export.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
@@ -189,6 +190,7 @@ function StudyInner({ setErrorCtx }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [codeMode, setCodeMode] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [booting, setBooting] = useState(false);
   const [status, setStatus] = useState("");
@@ -2508,8 +2510,9 @@ function StudyInner({ setErrorCtx }) {
                   return { ...u, name: sk?.name || u.skillId, strength: sk ? effectiveStrength(sk) : 0 };
                 });
                 await saveSessionToJournal();
+                var capturedAsgnWork = asgnWork;
                 setAsgnWork(null);
-                setSessionSummary({ entry, skillChanges, duration, courseName: active.name });
+                setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork });
               } else {
                 await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
               }
@@ -3882,27 +3885,21 @@ function StudyInner({ setErrorCtx }) {
               ))}
             </div>
 
-            {/* Export button */}
+            {/* Export DOCX button */}
             {asgnWork.questions.some(q => q.done) && (
               <div style={{ padding: 12, borderTop: "1px solid " + T.bd }}>
-                <button onClick={() => {
-                  var content = "# " + (focusContext?.assignment?.title || "Assignment") + "\n\n";
-                  for (var q of asgnWork.questions) {
-                    if (q.done) {
-                      content += "## " + q.id + ": " + q.description + "\n\n";
-                      content += q.answer + "\n\n---\n\n";
-                    }
+                <button disabled={exporting} onClick={async () => {
+                  setExporting(true);
+                  try {
+                    var title = focusContext?.assignment?.title || "Assignment";
+                    var blob = await generateSubmission(title, asgnWork.questions, active?.name || "Course");
+                    if (blob) downloadBlob(blob, title.replace(/[^a-zA-Z0-9]/g, "_") + "_answers.docx");
+                  } finally {
+                    setExporting(false);
                   }
-                  var blob = new Blob([content], { type: "text/markdown" });
-                  var url = URL.createObjectURL(blob);
-                  var a = document.createElement("a");
-                  a.href = url;
-                  a.download = (focusContext?.assignment?.title || "assignment").replace(/[^a-zA-Z0-9]/g, "_") + "_answers.md";
-                  a.click();
-                  URL.revokeObjectURL(url);
                 }}
-                  style={{ width: "100%", background: T.ac, color: "#0F1115", border: "none", borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  Export answers
+                  style={{ width: "100%", background: T.ac, color: "#0F1115", border: "none", borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", opacity: exporting ? 0.5 : 1 }}>
+                  {exporting ? "Exporting..." : "Export answers"}
                 </button>
               </div>
             )}
@@ -4080,6 +4077,23 @@ function StudyInner({ setErrorCtx }) {
                     <div key={i} style={{ fontSize: 12, color: T.txD, padding: "6px 10px", background: T.gnS, borderRadius: 8, marginBottom: 4, fontStyle: "italic" }}>"{w}"</div>
                   ))}
                 </div>
+              )}
+
+              {/* Export DOCX button — only if assignment work exists */}
+              {sessionSummary.asgnWork?.questions?.some(q => q.done) && (
+                <button disabled={exporting} onClick={async () => {
+                  setExporting(true);
+                  try {
+                    var title = sessionSummary.asgnWork.title || "Assignment";
+                    var blob = await generateSubmission(title, sessionSummary.asgnWork.questions, sessionSummary.courseName || "Course");
+                    if (blob) downloadBlob(blob, title.replace(/[^a-zA-Z0-9]/g, "_") + "_answers.docx");
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+                  style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "1px solid " + T.bd, background: T.sf, color: T.tx, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8, opacity: exporting ? 0.5 : 1 }}>
+                  {exporting ? "Exporting..." : "Export answers (.docx)"}
+                </button>
               )}
 
               <button onClick={() => {
