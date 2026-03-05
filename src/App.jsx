@@ -1000,6 +1000,32 @@ function StudyInner({ setErrorCtx }) {
             {keyVerifying ? "Verifying..." : "Save"}
           </button>
         </div>
+        {/* Dev: Reset skill data */}
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
+          <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Data Management</div>
+          <button onClick={async () => {
+            if (!confirm("Reset all skill data? This removes all extracted skills, mastery progress, and parent skills. Courses and materials are kept.")) return;
+            try {
+              const { getDb } = await import("./lib/db.js");
+              const rawDb = await getDb();
+              await rawDb.execute("DELETE FROM skill_prerequisites");
+              await rawDb.execute("DELETE FROM chunk_skill_bindings");
+              await rawDb.execute("DELETE FROM sub_skill_mastery");
+              await rawDb.execute("DELETE FROM sub_skills");
+              await rawDb.execute("DELETE FROM parent_skills");
+              await rawDb.execute("DELETE FROM settings WHERE key LIKE '%asgn%'");
+              setProfileData(null);
+              addNotif("success", "Skill data reset. Re-extract from materials to rebuild.");
+              setShowSettings(false);
+            } catch (e) {
+              addNotif("error", "Reset failed: " + e.message);
+            }
+          }}
+            style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.rd, borderRadius: 8, color: T.rd, fontSize: 12, cursor: "pointer", width: "100%" }}>
+            Reset Skill Data
+          </button>
+          <div style={{ fontSize: 11, color: T.txM, marginTop: 6 }}>Removes all skills, mastery, and progress. Keeps courses and materials.</div>
+        </div>
       </div>
     </div>
   );
