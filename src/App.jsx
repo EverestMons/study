@@ -633,6 +633,17 @@ function StudyInner({ setErrorCtx }) {
           };
         }).sort((a, b) => a.strength - b.strength);
         setPickerData({ mode, items: enriched });
+      } else if (mode === "exam") {
+        // Show material/chunk multi-select picker for exam scope
+        var mats = (active.materials || []).filter(m => (m.chunks || []).some(c => c.status === "extracted"));
+        if (!mats.length) {
+          setPickerData({ mode, empty: true, message: "No extracted materials found. Extract skills from your course materials first." });
+          return;
+        }
+        setPickerData({ mode, materials: mats, selectedMats: new Set() });
+      } else if (mode === "explore") {
+        // Show freeform topic input
+        setPickerData({ mode, exploreTopic: "" });
       }
     } catch (e) {
       console.error("Picker load failed:", e);
@@ -651,6 +662,9 @@ function StudyInner({ setErrorCtx }) {
     } else if (focus.type === "skill") {
       var lang2 = detectLanguage(active.name, focus.skill?.name || "", focus.skill?.description || "");
       if (lang2) setCodeMode(true);
+    } else {
+      var lang3 = detectLanguage(active.name, "", "");
+      if (lang3) setCodeMode(true);
     }
     try {
       const skills = await loadSkillsV2(active.id);
@@ -716,6 +730,13 @@ function StudyInner({ setErrorCtx }) {
       } else if (focus.type === "skill") {
         userMsg = "I want to work on: " + focus.skill.name;
         modeHint = "\n\nMODE: SKILL MASTERY. The student chose this specific skill to strengthen. You have the skill details and source material loaded. Start by asking a diagnostic question to find where their understanding breaks down.";
+      } else if (focus.type === "exam") {
+        var matNames = (focus.materials || []).map(m => m.name || m).join(", ");
+        userMsg = "I'm preparing for an exam covering: " + matNames;
+        modeHint = "\n\nMODE: EXAM PREPARATION. The student is preparing for an exam covering the selected materials. Use interleaved practice across topics. Ask questions that test understanding at increasing difficulty. Focus on common exam question formats. Identify weak areas and drill them. Mix retrieval practice with elaborative interrogation.";
+      } else if (focus.type === "explore") {
+        userMsg = "I want to explore: " + (focus.topic || "this course");
+        modeHint = "\n\nMODE: OPEN EXPLORATION. The student wants to freely explore a topic. Be conversational and curious. Follow their interests. Share interesting connections. Still track skill demonstrations but don't force structured assessment. If they show genuine understanding, note it, but keep the tone light and exploratory.";
       }
 
       const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + studentContext + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
@@ -759,7 +780,7 @@ function StudyInner({ setErrorCtx }) {
         skills = await loadSkillsV2(active.id);
         profile = await DB.getProfile(active.id);
         journal = await DB.getJournal(active.id);
-        if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill")) {
+        if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam" || focusContext.type === "explore")) {
           ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
         } else {
           const asgn = await DB.getAsgn(active.id) || [];
@@ -777,7 +798,9 @@ function StudyInner({ setErrorCtx }) {
       const asstTs = Date.now();
       const updates = parseSkillUpdates(response);
       if (updates.length) {
-        await applySkillUpdates(active.id, updates);
+        var intentWeights = { assignment: 1.0, exam: 0.8, skills: 1.0, recap: 0.4, explore: 0.2 };
+        var intentWeight = intentWeights[sessionMode] || 1.0;
+        await applySkillUpdates(active.id, updates, intentWeight);
         sessionSkillLog.current.push(...updates);
         for (var u of updates) addNotif("skill", u.skillId + ": " + u.rating + (u.context !== 'guided' ? " (" + u.context + ")" : ""));
         // Refresh cached context after skill updates (mastery + profile changed)
@@ -3480,6 +3503,20 @@ function StudyInner({ setErrorCtx }) {
                     <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Skill work</div>
                     <div style={{ fontSize: 12, color: T.txD }}>Pick a skill to strengthen and go deep.</div>
                   </button>
+                  <button onClick={() => selectMode("exam")}
+                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Prepare for exam</div>
+                    <div style={{ fontSize: 12, color: T.txD }}>Select materials and drill across topics with interleaved practice.</div>
+                  </button>
+                  <button onClick={() => selectMode("explore")}
+                    style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Explore a topic</div>
+                    <div style={{ fontSize: 12, color: T.txD }}>Freely explore something you're curious about.</div>
+                  </button>
                 </div>
                 
                 {/* Bottom navigation - Course Management & Notifications */}
@@ -3669,6 +3706,79 @@ function StudyInner({ setErrorCtx }) {
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                ) : pickerData.mode === "exam" ? (
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: T.tx, marginBottom: 4 }}>Select exam scope</div>
+                    <div style={{ fontSize: 13, color: T.txD, marginBottom: 20 }}>Pick the materials you want to review for the exam.</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 500 }}>
+                      {pickerData.materials.map((mat, i) => {
+                        var isSelected = pickerData.selectedMats.has(mat.id);
+                        var chunkCount = (mat.chunks || []).filter(c => c.status === "extracted").length;
+                        return (
+                          <div key={i} onClick={() => setPickerData(prev => {
+                            var next = new Set(prev.selectedMats);
+                            if (next.has(mat.id)) next.delete(mat.id); else next.add(mat.id);
+                            return { ...prev, selectedMats: next };
+                          })}
+                            style={{ background: isSelected ? T.acS : T.sf, border: "1px solid " + (isSelected ? T.acB : T.bd), borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s" }}
+                            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = T.sfH; }}
+                            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? T.acS : T.sf; }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <div style={{ width: 18, height: 18, borderRadius: 4, border: "2px solid " + (isSelected ? T.ac : T.bd), background: isSelected ? T.ac : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                  {isSelected && <span style={{ color: "#0F1115", fontSize: 12, fontWeight: 700 }}>&#10003;</span>}
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 13, fontWeight: 500, color: T.tx }}>{mat.name}</div>
+                                  <div style={{ fontSize: 11, color: T.txD }}>{chunkCount} section{chunkCount !== 1 ? "s" : ""} | {mat.classification || "material"}</div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+                      <button onClick={() => {
+                        var selected = pickerData.materials.filter(m => pickerData.selectedMats.has(m.id));
+                        if (!selected.length) return;
+                        bootWithFocus({ type: "exam", materials: selected });
+                      }}
+                        disabled={pickerData.selectedMats.size === 0}
+                        style={{ background: pickerData.selectedMats.size > 0 ? T.ac : T.bd, color: pickerData.selectedMats.size > 0 ? "#0F1115" : T.txD, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: pickerData.selectedMats.size > 0 ? "pointer" : "default" }}>
+                        Start exam prep ({pickerData.selectedMats.size} selected)
+                      </button>
+                      <button onClick={() => { setPickerData(null); setSessionMode(null); }}
+                        style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 10, color: T.txD, fontSize: 13, cursor: "pointer" }}>Back</button>
+                    </div>
+                  </div>
+                ) : pickerData.mode === "explore" ? (
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: T.tx, marginBottom: 4 }}>What do you want to explore?</div>
+                    <div style={{ fontSize: 13, color: T.txD, marginBottom: 20 }}>Type a topic, concept, or question you're curious about.</div>
+                    <input
+                      type="text"
+                      value={pickerData.exploreTopic || ""}
+                      onChange={e => setPickerData(prev => ({ ...prev, exploreTopic: e.target.value }))}
+                      onKeyDown={e => { if (e.key === "Enter" && pickerData.exploreTopic?.trim()) bootWithFocus({ type: "explore", topic: pickerData.exploreTopic.trim() }); }}
+                      placeholder="e.g., eigenvalues and eigenvectors"
+                      maxLength={200}
+                      autoFocus
+                      style={{ width: "100%", padding: "12px 16px", background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, color: T.tx, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+                    />
+                    <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                      <button onClick={() => {
+                        if (!pickerData.exploreTopic?.trim()) return;
+                        bootWithFocus({ type: "explore", topic: pickerData.exploreTopic.trim() });
+                      }}
+                        disabled={!pickerData.exploreTopic?.trim()}
+                        style={{ background: pickerData.exploreTopic?.trim() ? T.ac : T.bd, color: pickerData.exploreTopic?.trim() ? "#0F1115" : T.txD, border: "none", borderRadius: 10, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: pickerData.exploreTopic?.trim() ? "pointer" : "default" }}>
+                        Start exploring
+                      </button>
+                      <button onClick={() => { setPickerData(null); setSessionMode(null); }}
+                        style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 10, color: T.txD, fontSize: 13, cursor: "pointer" }}>Back</button>
                     </div>
                   </div>
                 ) : (
@@ -3917,12 +4027,14 @@ function StudyInner({ setErrorCtx }) {
             {(focusContext || sessionMode) && (
               <div style={{ fontSize: 11, color: T.txM, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ background: T.acS, color: T.ac, padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
-                  {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "recap" ? "RC" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
+                  {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "recap" ? "RC" : focusContext?.type === "exam" ? "XM" : focusContext?.type === "explore" ? "XP" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
                 </span>
                 <span>
                   {focusContext?.type === "assignment" ? "Assignment: " + (focusContext.assignment?.title || "")
                     : focusContext?.type === "skill" ? "Skill: " + (focusContext.skill?.name || "")
                     : focusContext?.type === "recap" ? "Session Recap"
+                    : focusContext?.type === "exam" ? "Exam Prep: " + (focusContext.materials?.map(m => m.name).join(", ") || "")
+                    : focusContext?.type === "explore" ? "Explore: " + (focusContext.topic || "")
                     : sessionMode || ""}
                 </span>
               </div>

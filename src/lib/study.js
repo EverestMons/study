@@ -71,7 +71,8 @@ export const masteryConfidence = (fitness) => {
 // Applies skill updates using FSRS state transitions with evidence-quality weighting.
 // Tutor-assessed interactions carry less weight than practice/diagnostic verification.
 // Also maintains profile.skills for backward-compatible journal/display data.
-export const applySkillUpdates = async (courseId, updates) => {
+export const applySkillUpdates = async (courseId, updates, intentWeight) => {
+  if (intentWeight === undefined || intentWeight === null) intentWeight = 1.0;
   if (!updates.length) return;
   var profile = await DB.getProfile(courseId);
   var now = new Date();
@@ -145,7 +146,7 @@ export const applySkillUpdates = async (courseId, updates) => {
 
     // --- Weighted points ---
     var basePts = BASE_POINTS[u.rating] || 2;
-    var weightedPts = Math.max(1, Math.round(basePts * contextMult * bloomsMult * sourceWeight * decayBonus));
+    var weightedPts = Math.max(1, Math.round(basePts * contextMult * bloomsMult * sourceWeight * decayBonus * intentWeight));
     var totalPts = (existing?.total_mastery_points || 0) + weightedPts;
 
     // Write to mastery table
@@ -490,6 +491,119 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
       for (const s of sorted) {
         const str = effectiveStrength(s);
         ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength\n";
+      }
+    }
+
+  } else if (focus.type === "exam") {
+    // Load ALL chunks from the selected materials for broad exam coverage
+    var selectedMats = focus.materials || [];
+    var selectedNames = new Set(selectedMats.map(m => (m.name || m).toLowerCase()));
+
+    ctx += "EXAM PREPARATION SCOPE:\n";
+    ctx += "Materials selected for review: " + selectedMats.map(m => m.name || m).join(", ") + "\n\n";
+
+    // Skill tree filtered to skills related to selected materials
+    var examSkillIds = new Set();
+    ctx += "RELEVANT SKILLS:\n";
+    for (var s of allSkills) {
+      var isRelevant = false;
+      if (s.sources) {
+        for (var src of s.sources) {
+          if (selectedNames.has(src.toLowerCase()) || [...selectedNames].some(function(n) { return src.toLowerCase().includes(n) || n.includes(src.toLowerCase().substring(0, 15)); })) {
+            isRelevant = true;
+            break;
+          }
+        }
+      }
+      // Also include if the skill's parent chunk is from one of the selected materials
+      if (!isRelevant && s.chunkId) {
+        for (var sm of selectedMats) {
+          if (sm.chunks && sm.chunks.some(function(ch) { return ch.id === s.chunkId; })) {
+            isRelevant = true;
+            break;
+          }
+        }
+      }
+      if (isRelevant) {
+        examSkillIds.add(s.id);
+        var str = effectiveStrength(s);
+        var strPct = Math.round(str * 100);
+        var pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
+        var lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
+        ctx += "  " + (s.conceptKey || s.id) + ": " + s.name + " [strength: " + strPct + "%, last: " + lastRating + "] -- " + s.description + "\n";
+      }
+    }
+    // If no skills matched by source, include all skills
+    if (examSkillIds.size === 0) {
+      for (var s2 of allSkills) {
+        var str2 = effectiveStrength(s2);
+        var strPct2 = Math.round(str2 * 100);
+        ctx += "  " + (s2.conceptKey || s2.id) + ": " + s2.name + " [strength: " + strPct2 + "%] -- " + s2.description + "\n";
+      }
+    }
+
+    // Load all chunks from selected materials
+    ctx += "\nSOURCE MATERIAL:\n";
+    for (var mat of materials) {
+      var nameLower = mat.name.toLowerCase();
+      var isSelected = selectedNames.has(nameLower) || [...selectedNames].some(function(n) { return nameLower.includes(n) || n.includes(nameLower.substring(0, 15)); });
+      if (!isSelected) continue;
+      var loaded = await getMatContent(courseId, mat);
+      var activeChunks = loaded.chunks.filter(function(ch) { return ch.status !== "skipped"; });
+      if (!activeChunks.length) continue;
+      for (var ch of activeChunks) {
+        ctx += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
+      }
+    }
+
+  } else if (focus.type === "explore") {
+    // Lightweight context prioritizing chunks matching the topic
+    var sanitizedTopic = (focus.topic || "").replace(/[\n\r]/g, " ").trim().substring(0, 200);
+    var topic = sanitizedTopic.toLowerCase();
+    var topicWords = topic.split(/\s+/).filter(function(w) { return w.length > 3; });
+
+    ctx += "EXPLORATION TOPIC: " + (sanitizedTopic || "General") + "\n\n";
+
+    // Include full skill tree for reference
+    ctx += "SKILL TREE:\n";
+    for (var s3 of allSkills) {
+      var str3 = effectiveStrength(s3);
+      var strPct3 = Math.round(str3 * 100);
+      ctx += "  " + (s3.conceptKey || s3.id) + ": " + s3.name + " [strength: " + strPct3 + "%] -- " + s3.description + "\n";
+    }
+
+    // Load chunks matching the topic, prioritized
+    ctx += "\nSOURCE MATERIAL:\n";
+    var loadedCount = 0;
+    for (var mat2 of materials) {
+      var loaded2 = await getMatContent(courseId, mat2);
+      var activeChunks2 = loaded2.chunks.filter(function(ch) { return ch.status !== "skipped"; });
+      if (!activeChunks2.length) continue;
+
+      // Prioritize chunks whose label or content matches topic words
+      var relevant = activeChunks2.filter(function(ch) {
+        var tl = ch.label.toLowerCase();
+        var preview = ch.content.substring(0, 1000).toLowerCase();
+        return topicWords.some(function(kw) { return tl.includes(kw) || preview.includes(kw); });
+      });
+
+      for (var ch2 of relevant.slice(0, 3)) {
+        ctx += "\n--- " + ch2.label + " ---\n" + ch2.content + "\n";
+        loadedCount++;
+      }
+      if (loadedCount >= 5) break;
+    }
+
+    if (loadedCount === 0) {
+      // No topic matches — load first few chunks as general context
+      for (var mat3 of materials) {
+        var loaded3 = await getMatContent(courseId, mat3);
+        var activeChunks3 = loaded3.chunks.filter(function(ch) { return ch.status !== "skipped"; });
+        for (var ch3 of activeChunks3.slice(0, 2)) {
+          ctx += "\n--- " + ch3.label + " ---\n" + ch3.content + "\n";
+          loadedCount++;
+        }
+        if (loadedCount >= 3) break;
       }
     }
   }
