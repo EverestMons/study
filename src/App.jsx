@@ -3413,7 +3413,7 @@ function StudyInner({ setErrorCtx }) {
                 {pickerData.empty ? (
                   <div style={{ textAlign: "center", padding: 40 }}>
                     <div style={{ color: T.txD, fontSize: 14, marginBottom: 16 }}>{pickerData.message}</div>
-                    {(() => {
+                    {pickerData.mode !== "assignment" && (() => {
                       var failedChunks = (active?.materials || []).flatMap(m => (m.chunks || []).filter(c => c.status === "failed"));
                       var hasExtracted = (active?.materials || []).flatMap(m => (m.chunks || []).filter(c => c.status === "extracted")).length > 0;
                       return <>
@@ -3466,6 +3466,8 @@ function StudyInner({ setErrorCtx }) {
                         </button>
                       </>;
                     })()}
+                    <button onClick={() => { setPickerData(null); setSessionMode(null); }}
+                      style={{ marginTop: 12, padding: "8px 16px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: T.txD, fontSize: 12, cursor: "pointer" }}>Back</button>
                   </div>
                 ) : pickerData.mode === "assignment" ? (
                   <div>
