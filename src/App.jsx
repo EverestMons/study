@@ -3781,13 +3781,12 @@ function StudyInner({ setErrorCtx }) {
               </div>
               );
             })}
-            {((booting && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].content)) || (busy && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant"))) && !processingMatId && (
+            {/* Books loader — only during boot before streaming starts (status text visible) */}
+            {booting && status && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].content !== undefined) && !processingMatId && (
               <div style={{ padding: "16px 0", animation: "fadeIn 0.2s" }}>
-                <div style={{ fontSize: 11, color: T.ac, marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>{booting ? status || "Reading materials..." : "Study"}</div>
+                <div style={{ fontSize: 11, color: T.ac, marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>{status || "Reading materials..."}</div>
                 <svg width="64" height="28" viewBox="0 0 64 28" style={{ display: "block" }}>
-                  {/* shelf */}
                   <rect x="2" y="24" width="60" height="2" rx="1" fill={T.bd} style={{ animation: "shelfPulse 2s ease-in-out infinite" }} />
-                  {/* books - pixel style rectangles with different colors */}
                   <rect x="8" y="10" width="6" height="14" rx="1" fill={T.ac} style={{ animation: "bookSlide1 3.2s ease-in-out infinite" }} />
                   <rect x="16" y="12" width="5" height="12" rx="1" fill="#F59E0B" style={{ animation: "bookSlide2 2.8s ease-in-out 0.3s infinite" }} />
                   <rect x="23" y="8" width="7" height="16" rx="1" fill={T.ac} opacity="0.6" style={{ animation: "bookSlide3 3.5s ease-in-out 0.6s infinite" }} />
@@ -3795,7 +3794,7 @@ function StudyInner({ setErrorCtx }) {
                   <rect x="39" y="11" width="6" height="13" rx="1" fill={T.ac} opacity="0.8" style={{ animation: "bookSlide1 3.4s ease-in-out 0.8s infinite" }} />
                   <rect x="47" y="13" width="5" height="11" rx="1" fill="#F59E0B" opacity="0.7" style={{ animation: "bookSlide2 3.1s ease-in-out 0.5s infinite" }} />
                 </svg>
-                {booting && status && status.toLowerCase().includes("extract") && (
+                {status.toLowerCase().includes("extract") && (
                   <button onClick={() => { extractionCancelledRef.current = true; }}
                     style={{ marginTop: 12, padding: "6px 14px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 6, fontSize: 11, color: T.txD, cursor: "pointer" }}>
                     Stop extraction
