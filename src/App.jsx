@@ -2496,6 +2496,7 @@ function StudyInner({ setErrorCtx }) {
                   return { ...u, name: sk?.name || u.skillId, strength: sk ? effectiveStrength(sk) : 0 };
                 });
                 await saveSessionToJournal();
+                setAsgnWork(null);
                 setSessionSummary({ entry, skillChanges, duration, courseName: active.name });
               } else {
                 await saveSessionToJournal(); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
