@@ -2211,7 +2211,7 @@ function StudyInner({ setErrorCtx }) {
                 setCourses(allCourses); setActive(updatedCourse);
 
                 // Re-extract with identity matching
-                var matToReextract = matsToReindex.find(m => (m.chunks || []).length > 0);
+                var matToReextract = matsToReindex.find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
                 if (matToReextract) {
                   var result = await runExtractionV2(active.id, matToReextract.id, {
                     onStatus: setStatus,
@@ -3290,7 +3290,7 @@ function StudyInner({ setErrorCtx }) {
                       setStatus("Extracting skills...");
                       extractionCancelledRef.current = false;
                       try {
-                        var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0);
+                        var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
                         if (!matToExtract) {
                           addNotif("error", "No materials with sections to extract.");
                         } else {
@@ -3405,8 +3405,8 @@ function StudyInner({ setErrorCtx }) {
                           setStatus(isRetry ? "Retrying failed chunks..." : "Extracting skills...");
                           extractionCancelledRef.current = false;
                           try {
-                            // Find a material to extract
-                            var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0);
+                            // Find a material to extract (skip assignments — they get decomposed, not extracted)
+                            var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
                             if (!matToExtract) {
                               addNotif("error", "No materials with sections to extract.");
                             } else {
