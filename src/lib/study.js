@@ -106,8 +106,9 @@ export const applySkillUpdates = async (courseId, updates) => {
 
     // Look up Bloom's level for this skill
     var bloomsMult = 1.0;
+    var skillRow = null;
     try {
-      var skillRow = await SubSkills.getById(u.skillId);
+      skillRow = await SubSkills.getById(u.skillId);
       if (skillRow && skillRow.blooms_level) {
         bloomsMult = BLOOMS_MULTIPLIERS[skillRow.blooms_level] || 1.0;
       }
@@ -502,7 +503,7 @@ export const generateSessionEntry = (messages, startIdx, skillUpdatesLog) => {
     messageCount: sessionMsgs.length,
     userMessages: userMsgs.length,
     topicsDiscussed: topWords,
-    skillsUpdated: skillUpdatesLog.map(u => u.skillId + ": +" + u.points + " (" + u.reason + ")"),
+    skillsUpdated: skillUpdatesLog.map(u => u.skillId + ": " + u.rating + (u.context && u.context !== 'guided' ? " (" + u.context + ")" : "") + (u.reason ? " - " + u.reason : "")),
     struggles: struggles.slice(0, 3),
     wins: wins.slice(0, 3),
     lastStudentMessage: lastUserMsg.substring(0, 200),

@@ -714,7 +714,7 @@ function StudyInner({ setErrorCtx }) {
       if (updates.length) {
         await applySkillUpdates(active.id, updates);
         sessionSkillLog.current.push(...updates);
-        for (var u of updates) addNotif("skill", u.skill + ": " + (u.delta > 0 ? "+" : "") + u.delta + " pts (" + u.rating + ")");
+        for (var u of updates) addNotif("skill", u.skillId + ": " + u.rating + (u.context !== 'guided' ? " (" + u.context + ")" : ""));
         // Refresh cached context after skill updates (mastery + profile changed)
         if (cachedSessionCtx.current) {
           var updatedSkills = await loadSkillsV2(active.id);
