@@ -586,8 +586,10 @@ function StudyInner({ setErrorCtx }) {
           const reqSkills = new Set();
           if (a.questions) a.questions.forEach(q => q.requiredSkills?.forEach(s => reqSkills.add(s)));
           const skillList = [...reqSkills].map(sid => {
-            const sk = Array.isArray(skills) ? skills.find(s => s.id === sid || s.conceptKey === sid) : null;
-            return { id: sid, name: sk?.name || sid, points: sk?.mastery?.totalMasteryPoints || 0, strength: effectiveStrength(sk) };
+            var sk = Array.isArray(skills) ? skills.find(s => s.id === sid || s.conceptKey === sid) : null;
+            // Fallback: match by name if ID doesn't match (LLM may have used descriptive names)
+            if (!sk && Array.isArray(skills)) sk = skills.find(s => s.name.toLowerCase() === sid.toLowerCase());
+            return { id: sk?.id || sid, name: sk?.name || sid, points: sk?.mastery?.totalMasteryPoints || 0, strength: effectiveStrength(sk) };
           });
           const weakSkills = skillList.filter(sk => sk.strength < 0.4);
           const avgStrength = skillList.length > 0 ? skillList.reduce((s, sk) => s + sk.strength, 0) / skillList.length : 0;
