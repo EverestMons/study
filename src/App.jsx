@@ -550,7 +550,35 @@ function StudyInner({ setErrorCtx }) {
       if (mode === "assignment") {
         const asgn = await DB.getAsgn(active.id);
         if (!Array.isArray(asgn) || asgn.length === 0) {
-          setPickerData({ mode, empty: true, message: "No assignments found. Upload an assignment in the material manager and extract skills from your course materials first." });
+          // Check if assignment materials exist but haven't been decomposed
+          var hasAsgnMats = (active.materials || []).some(m => m.classification === "assignment");
+          var hasSkills = skills && Array.isArray(skills) && skills.length > 0;
+          if (hasAsgnMats && hasSkills) {
+            // Assignment material exists and skills are extracted — auto-decompose
+            setPickerData({ mode, empty: true, message: "Decomposing assignment..." });
+            try {
+              await decomposeAssignments(active.id, active.materials, skills, () => {});
+              // Retry loading
+              var freshAsgn = await DB.getAsgn(active.id);
+              if (Array.isArray(freshAsgn) && freshAsgn.length > 0) {
+                var enriched2 = freshAsgn.map(a => {
+                  var reqSkills2 = new Set();
+                  if (a.questions) a.questions.forEach(q => q.requiredSkills?.forEach(s => reqSkills2.add(s)));
+                  var skillList2 = [...reqSkills2].map(sid => {
+                    var sk2 = Array.isArray(skills) ? skills.find(s => s.id === sid || s.conceptKey === sid) : null;
+                    return { id: sid, name: sk2?.name || sid, points: sk2?.mastery?.totalMasteryPoints || 0, strength: effectiveStrength(sk2) };
+                  });
+                  return { ...a, skillList: skillList2, avgStrength: skillList2.length > 0 ? skillList2.reduce((s, sk) => s + sk.strength, 0) / skillList2.length : 0, weakSkills: skillList2.filter(sk => sk.strength < 0.4), questionCount: a.questions?.length || 0 };
+                });
+                setPickerData({ mode, items: enriched2, _skills: skills });
+                addNotif("success", "Assignments decomposed.");
+                return;
+              }
+            } catch (e) {
+              addNotif("error", "Assignment decomposition failed: " + e.message);
+            }
+          }
+          setPickerData({ mode, empty: true, message: hasAsgnMats ? "Assignment decomposition failed. Check your API key and try again." : "No assignments found. Upload an assignment in the material manager and extract skills from your course materials first." });
           return;
         }
         // Enrich assignments with readiness info
