@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, Component, createConte
 // --- Module Imports ---
 import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings } from "./lib/db.js";
+import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -12,7 +12,7 @@ import {
 } from "./lib/skills.js";
 import { migrateV1ToV2 } from "./lib/migrate.js";
 import {
-  effectiveStrength, nextReviewDate, applySkillUpdates,
+  effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
   parseSkillUpdates, TIERS, strengthToTier,
@@ -22,6 +22,25 @@ import {
 
 // --- Error Context (for capturing app state in crash reports) ---
 const ErrorContext = createContext({ screen: "unknown", courseId: null, sessionMode: null });
+
+// --- CIP Domain Lookup ---
+const CIP_DOMAINS = {
+  "01": "Agriculture & Natural Resources", "03": "Natural Resources & Conservation",
+  "04": "Architecture", "05": "Area, Ethnic & Gender Studies",
+  "09": "Communication & Journalism", "10": "Communications Technologies",
+  "11": "Computer & Information Sciences", "12": "Culinary & Personal Services",
+  "13": "Education", "14": "Engineering", "15": "Engineering Technologies",
+  "16": "Foreign Languages & Linguistics", "19": "Family & Consumer Sciences",
+  "22": "Legal Studies", "23": "English Language & Literature",
+  "24": "Liberal Arts & General Studies", "25": "Library Science",
+  "26": "Biological & Biomedical Sciences", "27": "Mathematics & Statistics",
+  "30": "Interdisciplinary Studies", "31": "Parks, Recreation & Fitness",
+  "38": "Philosophy & Religious Studies", "40": "Physical Sciences",
+  "42": "Psychology", "43": "Criminal Justice",
+  "44": "Public Administration", "45": "Social Sciences",
+  "50": "Visual & Performing Arts", "51": "Health Professions",
+  "52": "Business & Marketing", "54": "History",
+};
 
 // --- Error Boundary ---
 class StudyErrorBoundary extends Component {
@@ -196,6 +215,7 @@ function StudyInner({ setErrorCtx }) {
   const [practiceMode, setPracticeMode] = useState(null); // { set: PracticeSet, skill: {}, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null }
   const [profileData, setProfileData] = useState(null);
   const [expandedProfile, setExpandedProfile] = useState({}); // { parentSkillId: true/false }
+  const [expandedSubSkill, setExpandedSubSkill] = useState(null); // sub-skill id or null
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -382,6 +402,7 @@ function StudyInner({ setErrorCtx }) {
     try {
       const allParents = await ParentSkills.getAll();
       const results = [];
+      const now = new Date();
       for (const parent of allParents) {
         const subs = await SubSkills.getByParent(parent.id);
         if (subs.length === 0) continue;
@@ -390,29 +411,93 @@ function StudyInner({ setErrorCtx }) {
         const masteryMap = {};
         for (const m of masteryRows) masteryMap[m.sub_skill_id] = m;
 
+        // Load prerequisites for all subs in one pass
+        const prereqMap = {};
+        for (const sub of subs) {
+          const prereqs = await SkillPrerequisites.getForSkill(sub.id);
+          prereqMap[sub.id] = prereqs;
+        }
+
         let totalPoints = 0;
         let readinessSum = 0;
         let readinessCount = 0;
         let reviewedCount = 0;
+        let dueForReview = 0;
 
-        for (const sub of subs) {
+        // Enrich each sub-skill with parsed fields and mastery data
+        const enrichedSubs = subs.map(sub => {
           const m = masteryMap[sub.id];
+          const fitness = typeof sub.fitness === 'string' ? JSON.parse(sub.fitness || '{}') : (sub.fitness || {});
+          const evidence = typeof sub.evidence === 'string' ? JSON.parse(sub.evidence || '{}') : (sub.evidence || {});
+          const rawCriteria = typeof sub.mastery_criteria === 'string' ? JSON.parse(sub.mastery_criteria || '[]') : (sub.mastery_criteria || []);
+          // Normalize criteria to object format
+          const masteryCriteria = rawCriteria.map(c => typeof c === 'string' ? { text: c, verified: false } : c);
+          const prereqs = prereqMap[sub.id] || [];
+
+          let retrievability = 0;
+          let stability = 0;
+          let nextReview = null;
+          let isDue = false;
+
           if (m) {
             totalPoints += m.total_mastery_points || 0;
             reviewedCount++;
-            const r = currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at });
-            if (r > 0) { readinessSum += r; readinessCount++; }
+            retrievability = currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at });
+            stability = m.stability || 0;
+            if (retrievability > 0) { readinessSum += retrievability; readinessCount++; }
+            if (m.next_review_at) {
+              var nrMs = m.next_review_at < 1e11 ? m.next_review_at * 1000 : m.next_review_at;
+              nextReview = new Date(nrMs);
+              isDue = nextReview <= now;
+              if (isDue) dueForReview++;
+            }
           }
-        }
+
+          return {
+            id: sub.id,
+            name: sub.name,
+            description: sub.description,
+            conceptKey: sub.concept_key,
+            category: sub.category,
+            skillType: sub.skill_type,
+            bloomsLevel: sub.blooms_level,
+            sourceCourseId: sub.source_course_id,
+            masteryCriteria,
+            evidence,
+            fitness,
+            confidence: masteryConfidence(fitness),
+            prerequisites: prereqs.map(p => ({ id: p.prerequisite_id, name: p.name, conceptKey: p.concept_key })),
+            mastery: m ? {
+              retrievability,
+              stability,
+              difficulty: m.difficulty,
+              reps: m.reps,
+              lapses: m.lapses,
+              totalMasteryPoints: m.total_mastery_points || 0,
+              nextReview,
+              isDue,
+            } : null,
+          };
+        });
+
+        const level = Math.floor(Math.sqrt(totalPoints));
+        const nextLevelThreshold = (level + 1) * (level + 1);
+        const progressToNext = totalPoints - (level * level);
+        const progressNeeded = nextLevelThreshold - (level * level);
 
         results.push({
           parent,
-          subSkills: subs,
+          cipDomain: parent.cip_code ? parent.cip_code.substring(0, 2) : null,
+          subSkills: enrichedSubs,
           masteryMap,
-          level: Math.floor(Math.sqrt(totalPoints)),
+          level,
+          progressToNext,
+          progressNeeded,
           readiness: readinessCount > 0 ? readinessSum / readinessCount : 0,
           subCount: subs.length,
           reviewedCount,
+          dueForReview,
+          totalPoints,
         });
       }
       results.sort((a, b) => b.level - a.level);
@@ -998,95 +1083,229 @@ function StudyInner({ setErrorCtx }) {
     const totalParents = profileData?.length || 0;
     const totalSubs = profileData?.reduce((s, p) => s + p.subCount, 0) || 0;
     const overallLevel = profileData?.reduce((s, p) => s + p.level, 0) || 0;
+    const totalDue = profileData?.reduce((s, p) => s + p.dueForReview, 0) || 0;
+
+    // Group parents by CIP domain
+    const byDomain = {};
+    for (const p of (profileData || [])) {
+      const domKey = p.cipDomain || "00";
+      if (!byDomain[domKey]) byDomain[domKey] = { name: CIP_DOMAINS[domKey] || "General", items: [], totalLevel: 0, totalSubs: 0 };
+      byDomain[domKey].items.push(p);
+      byDomain[domKey].totalLevel += p.level;
+      byDomain[domKey].totalSubs += p.subCount;
+    }
+
+    const bloomsColors = { remember: "#6B7280", understand: "#8B5CF6", apply: T.ac, analyze: "#F59E0B", evaluate: "#F97316", create: T.gn };
+    const confidenceLabels = { verified: "Verified", "partially-verified": "Limited evidence", unverified: "Practice recommended", untested: "New" };
+    const confidenceColors = { verified: T.gn, "partially-verified": "#F59E0B", unverified: T.txD, untested: T.txM };
+    const difficultyLabel = (d) => !d ? "—" : d < 3 ? "Easy" : d < 5 ? "Moderate" : d < 7 ? "Hard" : "Very Hard";
+    const courseNames = {};
+    for (const c of courses) courseNames[c.id] = c.name;
 
     return (
       <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
         <style>{CSS}</style>
-        {/* Top bar */}
         <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-          <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
-          <button onClick={() => setShowSettings(true)}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>
-            Settings
-          </button>
+          <button onClick={() => { setScreen("home"); setExpandedSubSkill(null); }} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
+          <button onClick={() => setShowSettings(true)} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13 }}>Settings</button>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
-        <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <div style={{ maxWidth: 680, margin: "0 auto" }}>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Skill Profile</h1>
           <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>Your knowledge across all courses</p>
 
           {/* Summary stats */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+          <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
             {[
               { label: "Skill Areas", value: totalParents },
               { label: "Sub-skills", value: totalSubs },
               { label: "Total Level", value: overallLevel },
+              { label: "Due for Review", value: totalDue, color: totalDue > 0 ? "#F59E0B" : T.txD },
             ].map((stat, i) => (
-              <div key={i} style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "16px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: T.ac }}>{stat.value}</div>
-                <div style={{ fontSize: 12, color: T.txD, marginTop: 4 }}>{stat.label}</div>
+              <div key={i} style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: stat.color || T.ac }}>{stat.value}</div>
+                <div style={{ fontSize: 11, color: T.txD, marginTop: 3 }}>{stat.label}</div>
               </div>
             ))}
           </div>
 
-          {/* Parent skill cards */}
+          {/* Domain cards (Level 0) */}
+          {Object.keys(byDomain).length > 1 && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
+              {Object.entries(byDomain).map(([domKey, dom]) => (
+                <div key={domKey} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: T.txD }}>
+                  <span style={{ color: T.tx, fontWeight: 600 }}>{dom.name}</span>
+                  <span style={{ marginLeft: 8 }}>Lv {dom.totalLevel}</span>
+                  <span style={{ marginLeft: 6 }}>\u00B7 {dom.totalSubs} skills</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Parent skill cards (Level 1) */}
           {!profileData || profileData.length === 0 ? (
             <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
               No skills yet. Study a course to start building your profile.
             </div>
-          ) : profileData.map(({ parent, subSkills, masteryMap, level, readiness, subCount, reviewedCount }) => {
+          ) : profileData.map(({ parent, subSkills, level, progressToNext, progressNeeded, readiness, subCount, reviewedCount, dueForReview }) => {
             const readinessColor = readiness > 0.8 ? T.gn : readiness > 0.5 ? "#F59E0B" : T.rd;
             const isExpanded = expandedProfile[parent.id];
-            // Group sub-skills by course
-            const byCourse = {};
+            const progressPct = progressNeeded > 0 ? Math.min(100, Math.round((progressToNext / progressNeeded) * 100)) : 0;
+
+            // Group sub-skills by category
+            const byCategory = {};
             for (const sub of subSkills) {
-              const cid = sub.source_course_id || "uncategorized";
-              if (!byCourse[cid]) byCourse[cid] = [];
-              byCourse[cid].push(sub);
+              const cat = sub.category || "General";
+              if (!byCategory[cat]) byCategory[cat] = [];
+              byCategory[cat].push(sub);
             }
-            const courseNames = {};
-            for (const c of courses) courseNames[c.id] = c.name;
 
             return (
               <div key={parent.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, marginBottom: 12 }}>
-                <div onClick={() => setExpandedProfile(p => ({ ...p, [parent.id]: !p[parent.id] }))}
-                  style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
-                  {/* Level badge */}
-                  <div style={{ width: 48, height: 48, borderRadius: 12, background: T.acS, border: "1px solid " + T.acB, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <span style={{ fontSize: 20, fontWeight: 700, color: T.ac }}>{level}</span>
+                <div onClick={() => setExpandedProfile(p => ({ ...p, [parent.id]: !p[parent.id] }))} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                  {/* Level badge with progress ring */}
+                  <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
+                    <svg width="52" height="52" viewBox="0 0 52 52">
+                      <circle cx="26" cy="26" r="23" fill="none" stroke={T.bd} strokeWidth="3" />
+                      <circle cx="26" cy="26" r="23" fill="none" stroke={T.ac} strokeWidth="3"
+                        strokeDasharray={2 * Math.PI * 23} strokeDashoffset={2 * Math.PI * 23 * (1 - progressPct / 100)}
+                        transform="rotate(-90 26 26)" style={{ transition: "stroke-dashoffset 0.3s" }} />
+                    </svg>
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: T.ac }}>{level}</span>
+                    </div>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 4 }}>{parent.name}</div>
-                    <div style={{ fontSize: 12, color: T.txD, marginBottom: 6 }}>{subCount} sub-skill{subCount !== 1 ? "s" : ""} \u00B7 {reviewedCount} reviewed</div>
-                    {/* Readiness bar */}
-                    <div style={{ height: 6, background: T.bd, borderRadius: 3, overflow: "hidden" }}>
-                      <div style={{ width: Math.round(readiness * 100) + "%", height: "100%", background: readinessColor, borderRadius: 3, transition: "width 0.3s" }} />
+                    <div style={{ fontSize: 16, fontWeight: 600, color: T.tx }}>{parent.name}</div>
+                    {parent.cip_code && <div style={{ fontSize: 11, color: T.txM, marginTop: 1 }}>CIP {parent.cip_code}</div>}
+                    <div style={{ fontSize: 12, color: T.txD, marginTop: 4 }}>
+                      {subCount} skill{subCount !== 1 ? "s" : ""} \u00B7 {reviewedCount} reviewed
+                      {dueForReview > 0 && <span style={{ color: "#F59E0B", marginLeft: 6 }}>\u00B7 {dueForReview} due</span>}
                     </div>
-                    <div style={{ fontSize: 11, color: readinessColor, marginTop: 3 }}>{Math.round(readiness * 100)}% readiness</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                      <div style={{ flex: 1, height: 5, background: T.bd, borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ width: Math.round(readiness * 100) + "%", height: "100%", background: readinessColor, borderRadius: 3, transition: "width 0.3s" }} />
+                      </div>
+                      <span style={{ fontSize: 11, color: readinessColor, flexShrink: 0 }}>{Math.round(readiness * 100)}%</span>
+                    </div>
                   </div>
-                  <span style={{ color: T.txD, fontSize: 12, flexShrink: 0 }}>{isExpanded ? "\u25B2" : "\u25BC"}</span>
+                  <span style={{ color: T.txD, fontSize: 11, flexShrink: 0 }}>{isExpanded ? "\u25B2" : "\u25BC"}</span>
                 </div>
 
-                {/* Expanded sub-skills */}
+                {/* Expanded: sub-skills grouped by category (Level 2) */}
                 {isExpanded && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
-                    {Object.entries(byCourse).map(([cid, subs]) => (
-                      <div key={cid} style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          {courseNames[cid] || "General"}
-                        </div>
+                    {Object.entries(byCategory).map(([cat, subs]) => (
+                      <div key={cat} style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>{cat}</div>
                         {subs.map(sub => {
-                          const m = masteryMap[sub.id];
-                          const subR = m ? currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at }) : 0;
-                          const subColor = subR > 0.8 ? T.gn : subR > 0.5 ? "#F59E0B" : T.rd;
+                          const r = sub.mastery?.retrievability || 0;
+                          const subColor = !sub.mastery ? T.txM : r > 0.8 ? T.gn : r > 0.5 ? "#F59E0B" : T.rd;
+                          const isSubExpanded = expandedSubSkill === sub.id;
                           return (
-                            <div key={sub.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
-                              <div style={{ width: 8, height: 8, borderRadius: "50%", background: m ? subColor : T.bd, flexShrink: 0 }} />
-                              <div style={{ flex: 1, fontSize: 13, color: T.tx }}>{sub.name}</div>
-                              {m ? (
-                                <div style={{ fontSize: 11, color: subColor, flexShrink: 0 }}>{Math.round(subR * 100)}%</div>
-                              ) : (
-                                <div style={{ fontSize: 11, color: T.txM, flexShrink: 0 }}>new</div>
+                            <div key={sub.id} style={{ marginBottom: 2 }}>
+                              {/* Sub-skill row */}
+                              <div onClick={() => setExpandedSubSkill(isSubExpanded ? null : sub.id)}
+                                style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 8, cursor: "pointer", background: isSubExpanded ? T.bg : "transparent", border: isSubExpanded ? "1px solid " + T.bd : "1px solid transparent" }}>
+                                <div style={{ width: 7, height: 7, borderRadius: "50%", background: sub.mastery ? subColor : T.bd, flexShrink: 0 }} />
+                                <div style={{ flex: 1, fontSize: 13, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub.name}</div>
+                                {sub.bloomsLevel && <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 4, background: (bloomsColors[sub.bloomsLevel] || T.txD) + "18", color: bloomsColors[sub.bloomsLevel] || T.txD }}>{sub.bloomsLevel}</span>}
+                                {sub.mastery ? (
+                                  <span style={{ fontSize: 11, color: subColor, flexShrink: 0, fontWeight: 500 }}>{Math.round(r * 100)}%</span>
+                                ) : (
+                                  <span style={{ fontSize: 11, color: T.txM, flexShrink: 0 }}>{confidenceLabels[sub.confidence] || "New"}</span>
+                                )}
+                              </div>
+
+                              {/* Sub-skill detail panel */}
+                              {isSubExpanded && (
+                                <div style={{ background: T.bg, border: "1px solid " + T.bd, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16, marginBottom: 4 }}>
+                                  {/* Identity */}
+                                  {sub.description && <div style={{ fontSize: 13, color: T.tx, marginBottom: 12, lineHeight: 1.5 }}>{sub.description}</div>}
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                                    {sub.skillType && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: T.acS, color: T.ac }}>{sub.skillType}</span>}
+                                    {sub.bloomsLevel && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: (bloomsColors[sub.bloomsLevel] || T.txD) + "18", color: bloomsColors[sub.bloomsLevel] || T.txD }}>{sub.bloomsLevel}</span>}
+                                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: (confidenceColors[sub.confidence] || T.txM) + "18", color: confidenceColors[sub.confidence] || T.txM }}>{confidenceLabels[sub.confidence] || "New"}</span>
+                                  </div>
+
+                                  {/* Mastery Criteria */}
+                                  {sub.masteryCriteria?.length > 0 && (
+                                    <div style={{ marginBottom: 14 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>MASTERY CRITERIA</div>
+                                      {sub.masteryCriteria.map((c, ci) => (
+                                        <div key={ci} style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "3px 0", fontSize: 12 }}>
+                                          <span style={{ color: c.verified ? T.gn : T.txM, flexShrink: 0, marginTop: 1 }}>{c.verified ? "\u2713" : "\u25CB"}</span>
+                                          <span style={{ color: c.verified ? T.tx : T.txD }}>{c.text}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {/* Readiness & Memory */}
+                                  {sub.mastery && (
+                                    <div style={{ marginBottom: 14 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>READINESS & MEMORY</div>
+                                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px", fontSize: 12 }}>
+                                        <div><span style={{ color: T.txD }}>Recall: </span><span style={{ color: subColor, fontWeight: 500 }}>{Math.round(r * 100)}%</span></div>
+                                        <div><span style={{ color: T.txD }}>Stability: </span><span style={{ color: T.tx }}>{sub.mastery.stability >= 1 ? Math.round(sub.mastery.stability) + "d" : "<1d"}</span></div>
+                                        <div><span style={{ color: T.txD }}>Difficulty: </span><span style={{ color: T.tx }}>{difficultyLabel(sub.mastery.difficulty)}</span></div>
+                                        <div><span style={{ color: T.txD }}>Reviews: </span><span style={{ color: T.tx }}>{sub.mastery.reps || 0}</span></div>
+                                        <div><span style={{ color: T.txD }}>Lapses: </span><span style={{ color: (sub.mastery.lapses || 0) > 2 ? "#F59E0B" : T.tx }}>{sub.mastery.lapses || 0}</span></div>
+                                        <div><span style={{ color: T.txD }}>Next review: </span><span style={{ color: sub.mastery.isDue ? "#F59E0B" : T.tx }}>{sub.mastery.isDue ? "Due now" : sub.mastery.nextReview ? sub.mastery.nextReview.toLocaleDateString() : "\u2014"}</span></div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Prerequisites */}
+                                  {sub.prerequisites?.length > 0 && (
+                                    <div style={{ marginBottom: 14 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>PREREQUISITES</div>
+                                      {sub.prerequisites.map((p, pi) => {
+                                        const prereqSub = subSkills.find(s => s.id === p.id);
+                                        const pr = prereqSub?.mastery?.retrievability || 0;
+                                        const pColor = pr > 0.8 ? T.gn : pr > 0.5 ? "#F59E0B" : pr > 0 ? T.rd : T.txM;
+                                        return (
+                                          <div key={pi} onClick={(e) => { e.stopPropagation(); setExpandedSubSkill(p.id); }}
+                                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: 12, cursor: "pointer" }}>
+                                            <div style={{ width: 6, height: 6, borderRadius: "50%", background: pColor, flexShrink: 0 }} />
+                                            <span style={{ color: T.ac }}>{p.name || p.conceptKey}</span>
+                                            {prereqSub?.mastery && <span style={{ color: pColor, fontSize: 11 }}>{Math.round(pr * 100)}%</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  {/* Evidence & Sources */}
+                                  {(sub.evidence?.anchorTerms?.length > 0 || sub.evidence?.definitions?.length > 0) && (
+                                    <div style={{ marginBottom: 14 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>KEY TERMS</div>
+                                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                        {(sub.evidence.anchorTerms || []).map((term, ti) => (
+                                          <span key={ti} style={{ fontSize: 11, padding: "2px 7px", borderRadius: 4, background: T.bd, color: T.txD }}>{term}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Fitness */}
+                                  {(sub.fitness?.practiceAttempts > 0 || sub.fitness?.tutoringReferences > 0 || sub.fitness?.diagnosticCount > 0) && (
+                                    <div style={{ marginBottom: 8 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>EVIDENCE</div>
+                                      <div style={{ fontSize: 11, color: T.txD, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                        {sub.fitness.diagnosticCount > 0 && <span>Diagnosed: {sub.fitness.diagnosticCount}</span>}
+                                        {(sub.fitness.practiceAttempts || sub.fitness.practiceSuccesses) > 0 && <span>Practiced: {sub.fitness.practiceAttempts || sub.fitness.practiceSuccesses}</span>}
+                                        {sub.fitness.tutoringReferences > 0 && <span>Tutored: {sub.fitness.tutoringReferences}</span>}
+                                        {sub.fitness.decayEvents > 0 && <span style={{ color: "#F59E0B" }}>Decayed: {sub.fitness.decayEvents}</span>}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Source course */}
+                                  {sub.sourceCourseId && courseNames[sub.sourceCourseId] && (
+                                    <div style={{ fontSize: 11, color: T.txM, marginTop: 8 }}>From: {courseNames[sub.sourceCourseId]}</div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           );
