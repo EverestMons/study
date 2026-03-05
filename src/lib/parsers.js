@@ -11,12 +11,14 @@
 
 import { parseEpub } from './epubParser.js';
 import { parseDocx } from './docxParser.js';
-import { loadJSZip } from './jszip-loader.js';
+import { safeLoadZip } from './jszip-loader.js';
+
+// --- Safety limits ---
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 // --- PPTX Parser ---
 const parsePptx = async (buf, filename) => {
-  const Z = await loadJSZip();
-  const zip = await Z.loadAsync(buf);
+  const zip = await safeLoadZip(buf);
   const slides = [];
 
   const slideFiles = Object.keys(zip.files)
@@ -67,13 +69,43 @@ const parsePptx = async (buf, filename) => {
   if (!content.trim()) {
     return { type: 'text', name: filename, content: '[PPTX had no extractable text]', parseOk: false };
   }
-  return { type: 'text', name: filename, content };
+
+  // Build structured output for v2 chunking pipeline
+  const sections = slides.map((slideText, i) => ({
+    heading: 'Slide ' + (i + 1),
+    heading_level: 2,
+    section_path: String(i + 1),
+    content: slideText,
+    char_count: slideText.length,
+    structural_metadata: null,
+    source_pages: null,
+  }));
+  if (notes.length > 0) {
+    const notesContent = notes.join('\n\n');
+    sections.push({
+      heading: 'Speaker Notes',
+      heading_level: 1,
+      section_path: String(sections.length + 1),
+      content: notesContent,
+      char_count: notesContent.length,
+      structural_metadata: null,
+      source_pages: null,
+    });
+  }
+
+  return {
+    type: 'text', name: filename, content,
+    _structured: {
+      type: 'structured', name: filename, source_format: 'pptx',
+      markdown: content, sections, images: [],
+      metadata: { title: null, author: null, toc_entries: [], total_chars: content.length, section_count: sections.length, image_count: 0 },
+    },
+  };
 };
 
 // --- XLSX Parser ---
 const parseXlsx = async (buf, filename) => {
-  const Z = await loadJSZip();
-  const zip = await Z.loadAsync(buf);
+  const zip = await safeLoadZip(buf);
   let text = '';
 
   // Excel date converter
@@ -142,10 +174,12 @@ const parseXlsx = async (buf, filename) => {
     .filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f))
     .sort();
 
+  const sheetSections = [];
+
   for (let si = 0; si < sheetFiles.length; si++) {
     const sheetXml = await zip.file(sheetFiles[si]).async('text');
     const sheetName = sheetNames[si] || 'Sheet' + (si + 1);
-    text += '--- Sheet: ' + sheetName + ' ---\n';
+    let sheetText = '--- Sheet: ' + sheetName + ' ---\n';
 
     const rows = sheetXml.match(/<row[^>]*>[\s\S]*?<\/row>/g) || [];
     for (const row of rows) {
@@ -185,12 +219,30 @@ const parseXlsx = async (buf, filename) => {
         parts.push(rowVals[c] || '');
       }
       const line = parts.join('\t').replace(/\t+$/, '');
-      if (line.trim()) text += line + '\n';
+      if (line.trim()) sheetText += line + '\n';
     }
-    text += '\n';
+
+    text += sheetText + '\n';
+    sheetSections.push({
+      heading: sheetName,
+      heading_level: 2,
+      section_path: String(si + 1),
+      content: sheetText.trim(),
+      char_count: sheetText.trim().length,
+      structural_metadata: null,
+      source_pages: null,
+    });
   }
 
-  return { type: 'text', name: filename, content: text.trim() || '[Empty spreadsheet]' };
+  const finalContent = text.trim() || '[Empty spreadsheet]';
+  return {
+    type: 'text', name: filename, content: finalContent,
+    _structured: {
+      type: 'structured', name: filename, source_format: 'xlsx',
+      markdown: finalContent, sections: sheetSections, images: [],
+      metadata: { title: null, author: null, toc_entries: [], total_chars: finalContent.length, section_count: sheetSections.length, image_count: 0 },
+    },
+  };
 };
 
 // ============================================================
@@ -198,6 +250,12 @@ const parseXlsx = async (buf, filename) => {
 // ============================================================
 
 export const readFile = async (file) => {
+  if (file.size > MAX_FILE_SIZE) {
+    return {
+      type: 'text', name: file.name,
+      content: '[File too large: ' + Math.round(file.size / 1024 / 1024) + ' MB. Maximum: 100 MB.]'
+    };
+  }
   const ext = file.name.split('.').pop().toLowerCase();
 
   // --- EPUB: v2 structured parser ---

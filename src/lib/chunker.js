@@ -201,9 +201,16 @@ function splitAtSubHeadings(content) {
 
 /**
  * Split content at paragraph boundaries, targeting a max size.
+ * Falls back to sentence boundaries, then character boundaries if needed.
  */
 function splitAtParagraphs(content, targetMax) {
   const paragraphs = content.split(/\n\n+/);
+
+  // If no paragraph boundaries found and content exceeds target, fall back
+  if (paragraphs.length <= 1 && content.length > targetMax) {
+    return splitAtSentences(content, targetMax);
+  }
+
   const parts = [];
   let current = '';
 
@@ -217,7 +224,88 @@ function splitAtParagraphs(content, targetMax) {
   }
 
   if (current) parts.push(current);
-  return parts;
+
+  // If any part still exceeds target, split it further at sentences
+  const final = [];
+  for (const part of parts) {
+    if (part.length > targetMax) {
+      final.push(...splitAtSentences(part, targetMax));
+    } else {
+      final.push(part);
+    }
+  }
+
+  return final;
+}
+
+/**
+ * Split at sentence boundaries (. ! ? followed by space/newline).
+ * Falls back to character-level splitting if sentences are too long.
+ */
+function splitAtSentences(content, targetMax) {
+  // Split at sentence-ending punctuation followed by whitespace
+  const sentences = content.split(/(?<=[.!?])\s+/);
+
+  if (sentences.length <= 1 && content.length > targetMax) {
+    return splitAtCharBoundary(content, targetMax);
+  }
+
+  const parts = [];
+  let current = '';
+
+  for (const sent of sentences) {
+    if (current.length + sent.length + 1 > targetMax && current.length > 0) {
+      parts.push(current);
+      current = sent;
+    } else {
+      current += (current ? ' ' : '') + sent;
+    }
+  }
+
+  if (current) parts.push(current);
+
+  // Final fallback for oversized parts
+  const final = [];
+  for (const part of parts) {
+    if (part.length > targetMax) {
+      final.push(...splitAtCharBoundary(part, targetMax));
+    } else {
+      final.push(part);
+    }
+  }
+
+  return final;
+}
+
+/**
+ * Last-resort split at word boundaries near target size.
+ */
+function splitAtCharBoundary(content, targetMax) {
+  const parts = [];
+  let pos = 0;
+
+  while (pos < content.length) {
+    if (pos + targetMax >= content.length) {
+      parts.push(content.substring(pos));
+      break;
+    }
+
+    // Find last word boundary before targetMax
+    let splitPos = pos + targetMax;
+    const searchStart = Math.max(pos, splitPos - 200);
+    const lastSpace = content.lastIndexOf(' ', splitPos);
+
+    if (lastSpace > searchStart) {
+      splitPos = lastSpace;
+    }
+
+    parts.push(content.substring(pos, splitPos).trim());
+    pos = splitPos;
+    // Skip whitespace at split point
+    while (pos < content.length && content[pos] === ' ') pos++;
+  }
+
+  return parts.filter(p => p.length > 0);
 }
 
 /**

@@ -1,18 +1,30 @@
-// Shared JSZip loader — ensures the CDN script is only appended once
-let JSZ = null;
-let loading = null;
+// Shared JSZip loader — bundled via npm (no CDN dependency)
+import JSZip from 'jszip';
+
+// --- Safety limits ---
+const MAX_DECOMPRESSED_SIZE = 500 * 1024 * 1024; // 500 MB
+const MAX_ZIP_ENTRIES = 10000;
 
 export function loadJSZip() {
-  if (JSZ) return Promise.resolve(JSZ);
-  if (window.JSZip) { JSZ = window.JSZip; return Promise.resolve(JSZ); }
-  if (loading) return loading;
-
-  loading = new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-    s.onload = () => { JSZ = window.JSZip; res(JSZ); };
-    s.onerror = () => { loading = null; rej(new Error('JSZip load failed')); };
-    document.head.appendChild(s);
-  });
-  return loading;
+  return Promise.resolve(JSZip);
 }
+
+/** Load zip with decompression safety limits */
+export const safeLoadZip = async (buf) => {
+  const zip = await JSZip.loadAsync(buf);
+  const entries = Object.keys(zip.files);
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    throw new Error('Archive contains too many entries (' + entries.length + '). Max: ' + MAX_ZIP_ENTRIES);
+  }
+  let totalSize = 0;
+  for (const name of entries) {
+    const file = zip.files[name];
+    if (!file.dir && file._data && file._data.uncompressedSize) {
+      totalSize += file._data.uncompressedSize;
+    }
+  }
+  if (totalSize > MAX_DECOMPRESSED_SIZE) {
+    throw new Error('Decompressed size exceeds limit (' + Math.round(totalSize / 1024 / 1024) + ' MB). Max: 500 MB');
+  }
+  return zip;
+};

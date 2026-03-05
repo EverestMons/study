@@ -9,7 +9,7 @@
 // ============================================================
 
 import { splitMarkdownSections, inferSectionPath, computeSectionMetadata } from './htmlToMarkdown.js';
-import { loadJSZip } from './jszip-loader.js';
+import { safeLoadZip } from './jszip-loader.js';
 
 // --- XML entity decoder ---
 function decodeXmlEntities(str) {
@@ -26,8 +26,7 @@ function decodeXmlEntities(str) {
  * @returns {Promise<object>} Structured output matching shared contract
  */
 export async function parseDocx(buf, filename) {
-  const Z = await loadJSZip();
-  const zip = await Z.loadAsync(buf);
+  const zip = await safeLoadZip(buf);
 
   // --- 1. Parse styles → heading level map ---
   const styleMap = await parseStyles(zip);
@@ -175,6 +174,95 @@ async function parseRelationships(zip) {
 
 
 // ============================================================
+// Stack-based XML element extractor — handles nested elements
+// ============================================================
+
+const MAX_XML_DEPTH = 100;
+const MAX_XML_ELEMENTS = 50000;
+
+/**
+ * Extract top-level child elements of a given tag name from XML.
+ * Uses depth-tracking to correctly handle nested elements of the same type.
+ */
+function extractElements(xml, tagName) {
+  const results = [];
+  const openPrefix = '<' + tagName;
+  const closeTag = '</' + tagName + '>';
+  let pos = 0;
+
+  while (pos < xml.length && results.length < MAX_XML_ELEMENTS) {
+    const openIdx = xml.indexOf(openPrefix, pos);
+    if (openIdx === -1) break;
+
+    // Verify it's actually this tag (not a prefix like <w:pPr>)
+    const afterTag = openIdx + openPrefix.length;
+    const ch = xml[afterTag];
+    if (ch !== ' ' && ch !== '>' && ch !== '/') {
+      pos = afterTag;
+      continue;
+    }
+
+    // Find end of opening tag
+    const gt = xml.indexOf('>', openIdx);
+    if (gt === -1) break;
+
+    // Self-closing?
+    if (xml[gt - 1] === '/') {
+      pos = gt + 1;
+      continue;
+    }
+
+    const attrs = xml.substring(afterTag, gt).trim();
+
+    // Find matching close tag with depth tracking
+    let depth = 1;
+    let searchPos = gt + 1;
+    let closeIdx = -1;
+    let depthLimit = MAX_XML_DEPTH;
+
+    while (searchPos < xml.length && depth > 0 && depthLimit > 0) {
+      const nextLt = xml.indexOf('<', searchPos);
+      if (nextLt === -1) break;
+
+      if (xml.startsWith(closeTag, nextLt)) {
+        depth--;
+        if (depth === 0) {
+          closeIdx = nextLt;
+          break;
+        }
+        searchPos = nextLt + closeTag.length;
+      } else if (xml.startsWith(openPrefix, nextLt)) {
+        const c = xml[nextLt + openPrefix.length];
+        if (c === ' ' || c === '>' || c === '/') {
+          const innerGt = xml.indexOf('>', nextLt);
+          if (innerGt !== -1 && xml[innerGt - 1] !== '/') {
+            depth++;
+            depthLimit--;
+          }
+          searchPos = (innerGt !== -1 ? innerGt : nextLt) + 1;
+        } else {
+          searchPos = nextLt + 1;
+        }
+      } else {
+        searchPos = nextLt + 1;
+      }
+    }
+
+    if (closeIdx !== -1) {
+      const inner = xml.substring(gt + 1, closeIdx);
+      results.push({ attrs, inner });
+      pos = closeIdx + closeTag.length;
+    } else {
+      // Unclosed tag — skip past opening tag
+      pos = gt + 1;
+    }
+  }
+
+  return results;
+}
+
+
+// ============================================================
 // Body parsing — the core conversion
 // ============================================================
 
@@ -184,8 +272,8 @@ function parseBody(docXml, styleMap) {
     example_count: 0, code_block_count: 0, table_count: 0, image_count: 0,
     images: [], list_count: 0, equation_indicators: 0,
   };
-  const boldTermSet = new Set(); // O(1) dedup during accumulation
-  const imageRefs = []; // Collected r:embed IDs
+  const boldTermSet = new Set();
+  const imageRefs = [];
   const mdParts = [];
   let paraIndex = 0;
 
@@ -194,22 +282,87 @@ function parseBody(docXml, styleMap) {
   if (!bodyMatch) return { markdown: '', metadata, imageRefs };
   const bodyXml = bodyMatch[1];
 
-  // We need to walk top-level elements in order: <w:p>, <w:tbl>, <w:sdt>
-  // Using a sequential scan since nested tables/paragraphs exist
-  const topLevelRegex = /<w:(p|tbl|sdt)\b([^>]*)>([\s\S]*?)<\/w:\1>/g;
-  let elem;
+  // Walk top-level elements in document order using sequential scan
+  // We need to find <w:p>, <w:tbl>, <w:sdt> in order of appearance
+  const tagNames = ['w:p', 'w:tbl', 'w:sdt'];
+  const allElements = [];
 
-  while ((elem = topLevelRegex.exec(bodyXml))) {
-    const type = elem[1];
-    const inner = elem[3];
+  for (const tag of tagNames) {
+    const openPrefix = '<' + tag;
+    const closeTag = '</' + tag + '>';
+    let pos = 0;
 
-    if (type === 'p') {
-      const result = parseParagraph(inner, styleMap, paraIndex);
+    while (pos < bodyXml.length && allElements.length < MAX_XML_ELEMENTS) {
+      const openIdx = bodyXml.indexOf(openPrefix, pos);
+      if (openIdx === -1) break;
+
+      const afterTag = openIdx + openPrefix.length;
+      const ch = bodyXml[afterTag];
+      if (ch !== ' ' && ch !== '>' && ch !== '/') {
+        pos = afterTag;
+        continue;
+      }
+
+      const gt = bodyXml.indexOf('>', openIdx);
+      if (gt === -1) break;
+
+      if (bodyXml[gt - 1] === '/') {
+        pos = gt + 1;
+        continue;
+      }
+
+      // Find matching close with depth tracking
+      let depth = 1;
+      let searchPos = gt + 1;
+      let closeIdx = -1;
+      let depthLimit = MAX_XML_DEPTH;
+
+      while (searchPos < bodyXml.length && depth > 0 && depthLimit > 0) {
+        const nextLt = bodyXml.indexOf('<', searchPos);
+        if (nextLt === -1) break;
+
+        if (bodyXml.startsWith(closeTag, nextLt)) {
+          depth--;
+          if (depth === 0) { closeIdx = nextLt; break; }
+          searchPos = nextLt + closeTag.length;
+        } else if (bodyXml.startsWith(openPrefix, nextLt)) {
+          const c = bodyXml[nextLt + openPrefix.length];
+          if (c === ' ' || c === '>' || c === '/') {
+            const innerGt = bodyXml.indexOf('>', nextLt);
+            if (innerGt !== -1 && bodyXml[innerGt - 1] !== '/') {
+              depth++;
+              depthLimit--;
+            }
+            searchPos = (innerGt !== -1 ? innerGt : nextLt) + 1;
+          } else {
+            searchPos = nextLt + 1;
+          }
+        } else {
+          searchPos = nextLt + 1;
+        }
+      }
+
+      if (closeIdx !== -1) {
+        const inner = bodyXml.substring(gt + 1, closeIdx);
+        const type = tag.split(':')[1]; // 'p', 'tbl', 'sdt'
+        allElements.push({ type, inner, startPos: openIdx });
+        pos = closeIdx + closeTag.length;
+      } else {
+        pos = gt + 1;
+      }
+    }
+  }
+
+  // Sort by document order (position in the XML)
+  allElements.sort((a, b) => a.startPos - b.startPos);
+
+  for (const elem of allElements) {
+    if (elem.type === 'p') {
+      const result = parseParagraph(elem.inner, styleMap, paraIndex);
       if (result.text || result.imageRef) {
         mdParts.push(result.markdown);
         paraIndex++;
 
-        // Accumulate metadata
         for (const term of result.boldTerms) {
           boldTermSet.add(term);
         }
@@ -220,26 +373,23 @@ function parseBody(docXml, styleMap) {
         if (result.isCode) metadata.code_block_count++;
         if (result.hasEquation) metadata.equation_indicators++;
       }
-    } else if (type === 'tbl') {
-      const tableMd = parseTable(inner, styleMap);
+    } else if (elem.type === 'tbl') {
+      const tableMd = parseTable(elem.inner, styleMap);
       if (tableMd) {
         mdParts.push(tableMd);
         metadata.table_count++;
       }
     }
-    // <w:sdt> (structured document tags) — recurse into content
-    // These often wrap TOC entries; skip for now
+    // <w:sdt> — skip for now (TOC wrappers)
   }
 
   metadata.bold_terms = [...boldTermSet];
   metadata.bold_term_count = metadata.bold_terms.length;
 
-  // Detect lists from consecutive list-prefixed paragraphs
   const markdown = mdParts.join('');
   const listBlocks = markdown.match(/(?:^(?:- |\d+\. ).+\n)+/gm) || [];
   metadata.list_count = listBlocks.length;
 
-  // Detect definitions: **term**: definition
   const defMatches = markdown.match(/\*\*[^*]+\*\*\s*[:—–-]\s*[A-Z]/g) || [];
   metadata.definition_count = defMatches.length;
   for (const d of defMatches) {
@@ -247,7 +397,6 @@ function parseBody(docXml, styleMap) {
     if (term) metadata.definitions.push(term);
   }
 
-  // Detect examples
   metadata.example_count = (markdown.match(/^(?:example|worked example)\s+\d/gim) || []).length;
 
   return { markdown, metadata, imageRefs };
@@ -371,21 +520,17 @@ function parseParagraph(xml, styleMap) {
 
 function parseTable(tableXml, styleMap) {
   const rows = [];
-  const trRegex = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
-  let tr;
+  const trElements = extractElements(tableXml, 'w:tr');
 
-  while ((tr = trRegex.exec(tableXml))) {
+  for (const tr of trElements) {
     const cells = [];
-    const tcRegex = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
-    let tc;
+    const tcElements = extractElements(tr.inner, 'w:tc');
 
-    while ((tc = tcRegex.exec(tr[1]))) {
-      // Extract text from all paragraphs in this cell
+    for (const tc of tcElements) {
       const cellText = [];
-      const pRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
-      let p;
-      while ((p = pRegex.exec(tc[1]))) {
-        const result = parseParagraph(p[1], styleMap, 0);
+      const pElements = extractElements(tc.inner, 'w:p');
+      for (const p of pElements) {
+        const result = parseParagraph(p.inner, styleMap, 0);
         if (result.text) cellText.push(result.text);
       }
       cells.push(cellText.join(' '));

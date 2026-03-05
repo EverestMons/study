@@ -506,6 +506,31 @@ export const Chunks = {
     const db = await getDb();
     return db.select('SELECT * FROM chunks WHERE content_hash = ?', [contentHash]);
   },
+
+  /** Get chunk metadata without content column (lightweight for listings) */
+  async getMetadataByMaterial(materialId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT id, material_id, course_id, label, content_hash, char_count,
+              source_format, heading_level, section_path, structural_metadata,
+              fidelity, page_start, page_end, ordering, status, error_info, fail_count,
+              created_at, updated_at
+       FROM chunks WHERE material_id = ? ORDER BY ordering`,
+      [materialId]
+    );
+  },
+
+  /** Batch-load content for specific chunk IDs (max 500 per call) */
+  async getContentBatch(chunkIds) {
+    if (!Array.isArray(chunkIds) || chunkIds.length === 0) return [];
+    const limited = chunkIds.slice(0, 500);
+    const db = await getDb();
+    const placeholders = limited.map(() => '?').join(',');
+    return db.select(
+      `SELECT id, content FROM chunks WHERE id IN (${placeholders})`,
+      limited
+    );
+  },
 };
 
 // ============================================================

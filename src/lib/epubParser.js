@@ -9,7 +9,7 @@
 // ============================================================
 
 import { htmlToMarkdown, splitMarkdownSections, inferSectionPath, computeSectionMetadata } from './htmlToMarkdown.js';
-import { loadJSZip } from './jszip-loader.js';
+import { safeLoadZip } from './jszip-loader.js';
 
 // --- MIME type mapping for images ---
 const IMAGE_TYPES = {
@@ -29,8 +29,7 @@ const BACK_MATTER = /^(index|glossary|bibliography|references|further\s*reading|
  * @returns {Promise<object>} Structured output matching shared contract
  */
 export async function parseEpub(buf, filename) {
-  const Z = await loadJSZip();
-  const zip = await Z.loadAsync(buf);
+  const zip = await safeLoadZip(buf);
 
   // --- 1. Read container.xml to find OPF path ---
   const containerXml = await zip.file('META-INF/container.xml')?.async('text');
