@@ -3316,20 +3316,26 @@ function StudyInner({ setErrorCtx }) {
                       setStatus("Extracting skills...");
                       extractionCancelledRef.current = false;
                       try {
-                        var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
-                        if (!matToExtract) {
+                        var extractableMats = (active.materials || []).filter(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
+                        if (!extractableMats.length) {
                           addNotif("error", "No materials with sections to extract.");
                         } else {
-                          var result = await runExtractionV2(active.id, matToExtract.id, {
-                            onStatus: setStatus,
-                            onNotif: addNotif,
-                            onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                          });
+                          var totalSkills = 0;
+                          for (var mi = 0; mi < extractableMats.length; mi++) {
+                            if (extractionCancelledRef.current) break;
+                            setStatus("Extracting " + (mi + 1) + " of " + extractableMats.length + ": " + extractableMats[mi].name + "...");
+                            var result = await runExtractionV2(active.id, extractableMats[mi].id, {
+                              onStatus: setStatus,
+                              onNotif: addNotif,
+                              onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
+                            });
+                            if (result.success) totalSkills += result.totalSkills || 0;
+                          }
                           var refreshed = await DB.getCourses();
                           var updatedCourse = refreshed.find(c => c.id === active.id);
                           if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
-                          if (result.success) {
-                            addNotif("success", "Extracted " + result.totalSkills + " skills.");
+                          if (totalSkills > 0) {
+                            addNotif("success", "Extracted " + totalSkills + " skills from " + extractableMats.length + " material" + (extractableMats.length !== 1 ? "s" : "") + ".");
                             // Decompose assignments if any exist
                             var mats = updatedCourse?.materials || active.materials || [];
                             if (mats.some(m => m.classification === "assignment")) {
@@ -3431,22 +3437,26 @@ function StudyInner({ setErrorCtx }) {
                           setStatus(isRetry ? "Retrying failed chunks..." : "Extracting skills...");
                           extractionCancelledRef.current = false;
                           try {
-                            // Find a material to extract (skip assignments — they get decomposed, not extracted)
-                            var matToExtract = (active.materials || []).find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
-                            if (!matToExtract) {
+                            var extractableMats = (active.materials || []).filter(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
+                            if (!extractableMats.length) {
                               addNotif("error", "No materials with sections to extract.");
                             } else {
-                              var result = await runExtractionV2(active.id, matToExtract.id, {
-                                onStatus: setStatus,
-                                onNotif: addNotif,
-                                onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                              });
+                              var totalSkills = 0;
+                              for (var mi = 0; mi < extractableMats.length; mi++) {
+                                if (extractionCancelledRef.current) break;
+                                setStatus("Extracting " + (mi + 1) + " of " + extractableMats.length + ": " + extractableMats[mi].name + "...");
+                                var result = await runExtractionV2(active.id, extractableMats[mi].id, {
+                                  onStatus: setStatus,
+                                  onNotif: addNotif,
+                                  onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
+                                });
+                                if (result.success) totalSkills += result.totalSkills || 0;
+                              }
                               var refreshed = await DB.getCourses();
                               var updatedCourse = refreshed.find(c => c.id === active.id);
                               if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
-                              if (result.success) {
-                                addNotif("success", "Extracted " + result.totalSkills + " skills.");
-                                // Decompose assignments if any exist
+                              if (totalSkills > 0) {
+                                addNotif("success", "Extracted " + totalSkills + " skills from " + extractableMats.length + " material" + (extractableMats.length !== 1 ? "s" : "") + ".");
                                 var mats = updatedCourse?.materials || active.materials || [];
                                 if (mats.some(m => m.classification === "assignment")) {
                                   setStatus("Decomposing assignments...");
@@ -3455,7 +3465,7 @@ function StudyInner({ setErrorCtx }) {
                                   addNotif("success", "Assignments decomposed.");
                                 }
                               } else {
-                                addNotif("error", "Extraction completed with issues. Check skill view.");
+                                addNotif("error", "Extraction completed with issues.");
                               }
                             }
                           } catch (e) {
