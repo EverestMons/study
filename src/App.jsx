@@ -423,11 +423,16 @@ function StudyInner({ setErrorCtx }) {
         let readinessCount = 0;
         let reviewedCount = 0;
         let dueForReview = 0;
+        let lastActivityDate = null;
 
         // Enrich each sub-skill with parsed fields and mastery data
         const enrichedSubs = subs.map(sub => {
           const m = masteryMap[sub.id];
           const fitness = typeof sub.fitness === 'string' ? JSON.parse(sub.fitness || '{}') : (sub.fitness || {});
+          if (fitness.lastUsed) {
+            var luDate = new Date(fitness.lastUsed);
+            if (!lastActivityDate || luDate > lastActivityDate) lastActivityDate = luDate;
+          }
           const evidence = typeof sub.evidence === 'string' ? JSON.parse(sub.evidence || '{}') : (sub.evidence || {});
           const rawCriteria = typeof sub.mastery_criteria === 'string' ? JSON.parse(sub.mastery_criteria || '[]') : (sub.mastery_criteria || []);
           // Normalize criteria to object format
@@ -498,6 +503,7 @@ function StudyInner({ setErrorCtx }) {
           reviewedCount,
           dueForReview,
           totalPoints,
+          lastActivityDate,
         });
       }
       results.sort((a, b) => b.level - a.level);
@@ -1089,10 +1095,11 @@ function StudyInner({ setErrorCtx }) {
     const byDomain = {};
     for (const p of (profileData || [])) {
       const domKey = p.cipDomain || "00";
-      if (!byDomain[domKey]) byDomain[domKey] = { name: CIP_DOMAINS[domKey] || "General", items: [], totalLevel: 0, totalSubs: 0 };
+      if (!byDomain[domKey]) byDomain[domKey] = { name: CIP_DOMAINS[domKey] || "General", items: [], totalLevel: 0, totalSubs: 0, readinessSum: 0, readinessCount: 0 };
       byDomain[domKey].items.push(p);
       byDomain[domKey].totalLevel += p.level;
       byDomain[domKey].totalSubs += p.subCount;
+      if (p.readiness > 0) { byDomain[domKey].readinessSum += p.readiness * p.subCount; byDomain[domKey].readinessCount += p.subCount; }
     }
 
     const bloomsColors = { remember: "#6B7280", understand: "#8B5CF6", apply: T.ac, analyze: "#F59E0B", evaluate: "#F97316", create: T.gn };
@@ -1132,13 +1139,18 @@ function StudyInner({ setErrorCtx }) {
           {/* Domain cards (Level 0) */}
           {Object.keys(byDomain).length > 1 && (
             <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
-              {Object.entries(byDomain).map(([domKey, dom]) => (
+              {Object.entries(byDomain).map(([domKey, dom]) => {
+                const domReadiness = dom.readinessCount > 0 ? dom.readinessSum / dom.readinessCount : 0;
+                const domRColor = domReadiness > 0.8 ? T.gn : domReadiness > 0.5 ? "#F59E0B" : T.txD;
+                return (
                 <div key={domKey} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", fontSize: 12, color: T.txD }}>
                   <span style={{ color: T.tx, fontWeight: 600 }}>{dom.name}</span>
                   <span style={{ marginLeft: 8 }}>Lv {dom.totalLevel}</span>
                   <span style={{ marginLeft: 6 }}>\u00B7 {dom.totalSubs} skills</span>
+                  {domReadiness > 0 && <span style={{ marginLeft: 6, color: domRColor }}>\u00B7 {Math.round(domReadiness * 100)}%</span>}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -1147,10 +1159,12 @@ function StudyInner({ setErrorCtx }) {
             <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
               No skills yet. Study a course to start building your profile.
             </div>
-          ) : profileData.map(({ parent, subSkills, level, progressToNext, progressNeeded, readiness, subCount, reviewedCount, dueForReview }) => {
+          ) : profileData.map(({ parent, subSkills, level, progressToNext, progressNeeded, readiness, subCount, reviewedCount, dueForReview, lastActivityDate: lastAct }) => {
             const readinessColor = readiness > 0.8 ? T.gn : readiness > 0.5 ? "#F59E0B" : T.rd;
             const isExpanded = expandedProfile[parent.id];
             const progressPct = progressNeeded > 0 ? Math.min(100, Math.round((progressToNext / progressNeeded) * 100)) : 0;
+            const daysSinceActivity = lastAct ? Math.floor((new Date() - lastAct) / 86400000) : null;
+            const isActive = daysSinceActivity !== null && daysSinceActivity <= 7;
 
             // Group sub-skills by category
             const byCategory = {};
@@ -1181,6 +1195,11 @@ function StudyInner({ setErrorCtx }) {
                     <div style={{ fontSize: 12, color: T.txD, marginTop: 4 }}>
                       {subCount} skill{subCount !== 1 ? "s" : ""} \u00B7 {reviewedCount} reviewed
                       {dueForReview > 0 && <span style={{ color: "#F59E0B", marginLeft: 6 }}>\u00B7 {dueForReview} due</span>}
+                      {daysSinceActivity !== null && (
+                        <span style={{ color: isActive ? T.gn : T.txM, marginLeft: 6 }}>
+                          \u00B7 {isActive ? "active" : daysSinceActivity + "d ago"}
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                       <div style={{ flex: 1, height: 5, background: T.bd, borderRadius: 3, overflow: "hidden" }}>
@@ -1195,6 +1214,36 @@ function StudyInner({ setErrorCtx }) {
                 {/* Expanded: sub-skills grouped by category (Level 2) */}
                 {isExpanded && (
                   <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
+                    {/* Review due skills button */}
+                    {dueForReview > 0 && (() => {
+                      var dueSubs = subSkills.filter(s => s.mastery?.isDue);
+                      var firstDue = dueSubs[0];
+                      var course = firstDue?.sourceCourseId ? courses.find(c => c.id === firstDue.sourceCourseId) : null;
+                      return course ? (
+                        <button onClick={async () => {
+                          await enterStudy(course);
+                          var skillObj = { id: firstDue.id, name: firstDue.name, description: firstDue.description, conceptKey: firstDue.conceptKey, category: firstDue.category, sources: firstDue.evidence?.anchorTerms || [] };
+                          var str = firstDue.mastery?.retrievability || 0;
+                          var startTier = strengthToTier(str);
+                          var pset = await createPracticeSet(firstDue.id, startTier);
+                          setSessionMode("practice");
+                          try {
+                            var matCtx = await loadPracticeMaterialCtx(course.id, course.materials, skillObj);
+                            pset = await generateProblems(pset, skillObj, course.name, matCtx);
+                            await DB.savePractice(course.id, firstDue.id, pset);
+                            var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
+                            var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
+                            setPracticeMode({ set: pset, skill: skillObj, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                          } catch (err) {
+                            addNotif("error", "Failed to start review: " + err.message);
+                            setPracticeMode(null); setSessionMode(null);
+                          }
+                        }}
+                          style={{ width: "100%", padding: "8px 16px", borderRadius: 8, border: "1px solid #F59E0B", background: "rgba(251,191,36,0.08)", color: "#F59E0B", fontSize: 12, fontWeight: 600, cursor: "pointer", marginBottom: 14 }}>
+                          Review {dueForReview} Due Skill{dueForReview !== 1 ? "s" : ""}
+                        </button>
+                      ) : null;
+                    })()}
                     {Object.entries(byCategory).map(([cat, subs]) => (
                       <div key={cat} style={{ marginBottom: 14 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>{cat}</div>
@@ -1221,7 +1270,8 @@ function StudyInner({ setErrorCtx }) {
                               {isSubExpanded && (
                                 <div style={{ background: T.bg, border: "1px solid " + T.bd, borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16, marginBottom: 4 }}>
                                   {/* Identity */}
-                                  {sub.description && <div style={{ fontSize: 13, color: T.tx, marginBottom: 12, lineHeight: 1.5 }}>{sub.description}</div>}
+                                  {sub.description && <div style={{ fontSize: 13, color: T.tx, marginBottom: 8, lineHeight: 1.5 }}>{sub.description}</div>}
+                                  {sub.conceptKey && <div style={{ fontSize: 11, color: T.txM, marginBottom: 10, fontFamily: "monospace" }}>{sub.conceptKey}</div>}
                                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
                                     {sub.skillType && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: T.acS, color: T.ac }}>{sub.skillType}</span>}
                                     {sub.bloomsLevel && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: (bloomsColors[sub.bloomsLevel] || T.txD) + "18", color: bloomsColors[sub.bloomsLevel] || T.txD }}>{sub.bloomsLevel}</span>}
@@ -1252,6 +1302,7 @@ function StudyInner({ setErrorCtx }) {
                                         <div><span style={{ color: T.txD }}>Reviews: </span><span style={{ color: T.tx }}>{sub.mastery.reps || 0}</span></div>
                                         <div><span style={{ color: T.txD }}>Lapses: </span><span style={{ color: (sub.mastery.lapses || 0) > 2 ? "#F59E0B" : T.tx }}>{sub.mastery.lapses || 0}</span></div>
                                         <div><span style={{ color: T.txD }}>Next review: </span><span style={{ color: sub.mastery.isDue ? "#F59E0B" : T.tx }}>{sub.mastery.isDue ? "Due now" : sub.mastery.nextReview ? sub.mastery.nextReview.toLocaleDateString() : "\u2014"}</span></div>
+                                        <div><span style={{ color: T.txD }}>Points: </span><span style={{ color: T.ac }}>{sub.mastery.totalMasteryPoints || 0}</span></div>
                                       </div>
                                     </div>
                                   )}
@@ -1304,6 +1355,36 @@ function StudyInner({ setErrorCtx }) {
                                   {/* Source course */}
                                   {sub.sourceCourseId && courseNames[sub.sourceCourseId] && (
                                     <div style={{ fontSize: 11, color: T.txM, marginTop: 8 }}>From: {courseNames[sub.sourceCourseId]}</div>
+                                  )}
+
+                                  {/* Action: Practice this skill */}
+                                  {sub.sourceCourseId && (
+                                    <button onClick={async (e) => {
+                                      e.stopPropagation();
+                                      var course = courses.find(c => c.id === sub.sourceCourseId);
+                                      if (!course) { addNotif("error", "Course not found"); return; }
+                                      await enterStudy(course);
+                                      // Build skill object for practice mode
+                                      var skillObj = { id: sub.id, name: sub.name, description: sub.description, conceptKey: sub.conceptKey, category: sub.category, sources: sub.evidence?.anchorTerms || [] };
+                                      var str = sub.mastery?.retrievability || 0;
+                                      var startTier = strengthToTier(str);
+                                      var pset = await createPracticeSet(sub.id, startTier);
+                                      setSessionMode("practice");
+                                      try {
+                                        var matCtx = await loadPracticeMaterialCtx(course.id, course.materials, skillObj);
+                                        pset = await generateProblems(pset, skillObj, course.name, matCtx);
+                                        await DB.savePractice(course.id, sub.id, pset);
+                                        var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
+                                        var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
+                                        setPracticeMode({ set: pset, skill: skillObj, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                                      } catch (err) {
+                                        addNotif("error", "Failed to start practice: " + err.message);
+                                        setPracticeMode(null); setSessionMode(null);
+                                      }
+                                    }}
+                                      style={{ marginTop: 12, width: "100%", padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.ac, background: T.acS, color: T.ac, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                                      Practice This Skill
+                                    </button>
                                   )}
                                 </div>
                               )}
