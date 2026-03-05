@@ -15,7 +15,7 @@ import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
-  parseSkillUpdates, extractKeywords, TIERS, strengthToTier,
+  parseSkillUpdates, extractKeywords, detectLanguage, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
   completeTierAttempt, loadPracticeMaterialCtx
 } from "./lib/study.js";
@@ -188,6 +188,7 @@ function StudyInner({ setErrorCtx }) {
 
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
+  const [codeMode, setCodeMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [booting, setBooting] = useState(false);
   const [status, setStatus] = useState("");
@@ -279,7 +280,7 @@ function StudyInner({ setErrorCtx }) {
   })(); }, []);
   useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
-  useEffect(() => { if (taRef.current) { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } }, [input]);
+  useEffect(() => { if (taRef.current) { if (codeMode) { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, codeMode]);
 
   const saveSessionToJournal = useCallback(async () => {
     if (!active || msgs.length <= sessionStartIdx.current + 1) return;
@@ -529,7 +530,7 @@ function StudyInner({ setErrorCtx }) {
 
   const enterStudy = async (course) => {
     setActive(course); setScreen("study");
-    setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
+    setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
     cachedSessionCtx.current = null;
     sessionStartIdx.current = 0;
@@ -641,6 +642,14 @@ function StudyInner({ setErrorCtx }) {
   const bootWithFocus = async (focus) => {
     if (!active) return;
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
+    // Auto-detect code mode for programming courses
+    if (focus.type === "assignment") {
+      var lang = detectLanguage(active.name, focus.assignment?.title || "", "");
+      if (lang) setCodeMode(true);
+    } else if (focus.type === "skill") {
+      var lang2 = detectLanguage(active.name, focus.skill?.name || "", focus.skill?.description || "");
+      if (lang2) setCodeMode(true);
+    }
     try {
       const skills = await loadSkillsV2(active.id);
       const profile = await DB.getProfile(active.id);
@@ -728,9 +737,12 @@ function StudyInner({ setErrorCtx }) {
   // --- Send Message ---
   const sendMessage = async () => {
     if (!input.trim() || busy || !active) return;
-    const userMsg = input.trim(); setInput("");
+    const raw = codeMode ? input.trimEnd() : input.trim();
+    const userMsg = codeMode ? "```\n" + raw + "\n```" : raw;
+    const isCode = codeMode;
+    setInput(""); setCodeMode(false);
     const userTs = Date.now();
-    const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs }];
+    const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs, codeMode: isCode }];
     setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
 
     try {
@@ -2485,7 +2497,7 @@ function StudyInner({ setErrorCtx }) {
         <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <button onClick={async () => {
               if (sessionMode || pickerData || chunkPicker || practiceMode) {
-                setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null);
+                setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false);
               } else if (msgs.length > 1 && sessionStartTime.current) {
                 // Show session summary before leaving
                 const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
@@ -2499,7 +2511,7 @@ function StudyInner({ setErrorCtx }) {
                 setAsgnWork(null);
                 setSessionSummary({ entry, skillChanges, duration, courseName: active.name });
               } else {
-                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
+                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
               }
             }}
             style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
@@ -3920,9 +3932,81 @@ function StudyInner({ setErrorCtx }) {
             )}
             <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
               <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                placeholder="Type your answer or ask a question..." rows={1}
-                style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "12px 16px", color: T.tx, fontSize: 14, resize: "none", lineHeight: 1.5, maxHeight: 150 }} />
+                onKeyDown={e => {
+                  // Ctrl/Cmd+Shift+C toggles code mode
+                  if (e.key === "C" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    var savedPos = e.target.selectionStart;
+                    setCodeMode(c => !c);
+                    setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = savedPos; taRef.current.focus(); } }, 0);
+                    return;
+                  }
+                  // Escape exits code mode
+                  if (e.key === "Escape" && codeMode) { setCodeMode(false); return; }
+                  // Cmd/Ctrl+Enter always sends
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); return; }
+                  // Enter in prose mode sends; in code mode inserts newline (default)
+                  if (e.key === "Enter" && !e.shiftKey && !codeMode) { e.preventDefault(); sendMessage(); return; }
+                  // Tab inserts 2 spaces (code mode only)
+                  if (e.key === "Tab" && codeMode && !e.shiftKey) {
+                    e.preventDefault();
+                    var ta = e.target, start = ta.selectionStart, end = ta.selectionEnd;
+                    var newVal = input.substring(0, start) + "  " + input.substring(end);
+                    setInput(newVal);
+                    setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = start + 2; } }, 0);
+                    return;
+                  }
+                  // Shift+Tab dedents current line (code mode only)
+                  if (e.key === "Tab" && codeMode && e.shiftKey) {
+                    e.preventDefault();
+                    var ta2 = e.target, pos = ta2.selectionStart;
+                    var lineStart = input.lastIndexOf("\n", pos - 1) + 1;
+                    var lineText = input.substring(lineStart);
+                    var spaces = 0;
+                    if (lineText.startsWith("  ")) spaces = 2;
+                    else if (lineText.startsWith(" ")) spaces = 1;
+                    if (spaces > 0) {
+                      var dedented = input.substring(0, lineStart) + input.substring(lineStart + spaces);
+                      setInput(dedented);
+                      var newPos = Math.max(lineStart, pos - spaces);
+                      setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = newPos; } }, 0);
+                    }
+                    return;
+                  }
+                }}
+                placeholder={codeMode ? "Enter code..." : "Type your answer or ask a question..."}
+                rows={codeMode ? 3 : 1}
+                style={{
+                  flex: 1, borderRadius: 12, padding: "12px 16px", color: T.tx,
+                  transition: "all 0.2s",
+                  ...(codeMode ? {
+                    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
+                    fontSize: 13, lineHeight: 1.6, background: "#1A1D24",
+                    border: "1px solid " + T.acB, minHeight: 80, maxHeight: 200,
+                    resize: "vertical", tabSize: 2
+                  } : {
+                    fontSize: 14, lineHeight: 1.5, background: T.sf,
+                    border: "1px solid " + T.bd, maxHeight: 150, resize: "none"
+                  })
+                }} />
+              <button onClick={() => {
+                  var savedPos = taRef.current?.selectionStart || 0;
+                  setCodeMode(c => !c);
+                  setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = savedPos; taRef.current.focus(); } }, 0);
+                }}
+                aria-label="Toggle code input mode"
+                aria-pressed={codeMode}
+                style={{
+                  width: 32, height: 44, borderRadius: 8, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 13, fontWeight: 600, fontFamily: "monospace", cursor: "pointer",
+                  transition: "all 0.2s",
+                  color: codeMode ? T.ac : T.txD,
+                  background: codeMode ? T.acS : "transparent",
+                  border: codeMode ? "1px solid " + T.acB : "none"
+                }}
+                title="Code mode (Ctrl+Shift+C)"
+              >&lt;/&gt;</button>
               <button onClick={sendMessage} disabled={!input.trim() || busy}
                 style={{
                   background: input.trim() && !busy ? T.ac : T.sf,
@@ -3937,6 +4021,7 @@ function StudyInner({ setErrorCtx }) {
                 </svg>
               </button>
             </div>
+            {codeMode && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>&#x23CE; new line &middot; {navigator.platform?.includes("Mac") ? "&#x2318;" : "Ctrl+"}&#x23CE; send</div>}
           </div>
         </div>
         )}
@@ -3998,7 +4083,7 @@ function StudyInner({ setErrorCtx }) {
               )}
 
               <button onClick={() => {
-                setSessionSummary(null); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set();
+                setSessionSummary(null); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set();
               }}
                 style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
                 Done
