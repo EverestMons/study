@@ -15,7 +15,7 @@ import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
-  parseSkillUpdates, TIERS, strengthToTier,
+  parseSkillUpdates, extractKeywords, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
   completeTierAttempt, loadPracticeMaterialCtx
 } from "./lib/study.js";
@@ -224,10 +224,23 @@ function StudyInner({ setErrorCtx }) {
   const sessionSkillLog = useRef([]);
   const cachedSessionCtx = useRef(null); // { ctx, skills, profile, journal, focus }
   const extractionCancelledRef = useRef(false); // For cancelling extraction mid-process
+  const [sessionSummary, setSessionSummary] = useState(null); // { entry, skillChanges, duration, courseName }
+  const sessionStartTime = useRef(null); // Date.now() set in bootWithFocus
+  const discussedChunks = useRef(new Set()); // Track chunks already loaded in this session
 
   // Notification helper: type = "info" | "warn" | "error" | "skill" | "success"
   const addNotif = (type, msg) => {
     setNotifs(p => [{ id: Date.now() + Math.random(), type, msg, time: new Date() }, ...p].slice(0, 50));
+  };
+
+  // timeAgo helper for message timestamps
+  const timeAgo = (ts) => {
+    if (!ts) return null;
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 60) return "now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    return Math.floor(diff / 86400) + "d ago";
   };
 
   // --- Effects ---
@@ -520,6 +533,9 @@ function StudyInner({ setErrorCtx }) {
     sessionSkillLog.current = [];
     cachedSessionCtx.current = null;
     sessionStartIdx.current = 0;
+    sessionStartTime.current = null;
+    discussedChunks.current = new Set();
+    setSessionSummary(null);
     // Save previous session to journal before clearing
     try {
       const savedMsgs = await DB.getChat(course.id);
@@ -692,13 +708,16 @@ function StudyInner({ setErrorCtx }) {
       }
 
       const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + studentContext + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
-      setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: "" }]);
+      sessionStartTime.current = Date.now();
+      const userTs = Date.now();
+      setMsgs([{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: "", ts: userTs }]);
       const response = await callClaudeStream(bootSystem, [{ role: "user", content: userMsg }], function(partial) {
-        setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: partial }]);
+        setMsgs([{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: partial, ts: userTs }]);
       });
-      setMsgs([{ role: "user", content: userMsg }, { role: "assistant", content: response }]);
+      const asstTs = Date.now();
+      setMsgs([{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: response, ts: asstTs }]);
       sessionStartIdx.current = 0;
-      await DB.saveChat(active.id, [{ role: "user", content: userMsg }, { role: "assistant", content: response }]);
+      await DB.saveChat(active.id, [{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: response, ts: asstTs }]);
     } catch (err) {
       console.error("Boot failed:", err);
       addNotif("error", "Failed to start session: " + err.message);
@@ -710,8 +729,9 @@ function StudyInner({ setErrorCtx }) {
   const sendMessage = async () => {
     if (!input.trim() || busy || !active) return;
     const userMsg = input.trim(); setInput("");
-    const newMsgs = [...msgs, { role: "user", content: userMsg }];
-    setMsgs([...newMsgs, { role: "assistant", content: "" }]); setBusy(true);
+    const userTs = Date.now();
+    const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs }];
+    setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
 
     try {
       // Use cached context if available, otherwise rebuild
@@ -729,7 +749,7 @@ function StudyInner({ setErrorCtx }) {
           ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
         } else {
           const asgn = await DB.getAsgn(active.id) || [];
-          ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs);
+          ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs, discussedChunks.current);
         }
       }
 
@@ -737,9 +757,10 @@ function StudyInner({ setErrorCtx }) {
       const chatMsgs = newMsgs.slice(-40).map(m => ({ role: m.role, content: m.content }));
 
       const response = await callClaudeStream(sysPrompt, chatMsgs, function(partial) {
-        setMsgs([...newMsgs, { role: "assistant", content: partial }]);
+        setMsgs([...newMsgs, { role: "assistant", content: partial, ts: userTs }]);
       });
 
+      const asstTs = Date.now();
       const updates = parseSkillUpdates(response);
       if (updates.length) {
         await applySkillUpdates(active.id, updates);
@@ -750,6 +771,14 @@ function StudyInner({ setErrorCtx }) {
           var updatedSkills = await loadSkillsV2(active.id);
           var updatedProfile = await DB.getProfile(active.id);
           var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, updatedSkills, updatedProfile);
+          // Append conversation summary to refreshed context
+          var recentKw = extractKeywords(newMsgs.slice(-12), 10);
+          var skillsSoFar = sessionSkillLog.current.map(s => s.skillId + ":" + s.rating).join(", ");
+          if (recentKw.length || skillsSoFar) {
+            updatedCtx += "\n\nSESSION CONTEXT SO FAR:";
+            if (recentKw.length) updatedCtx += "\nTopics discussed: " + recentKw.join(", ");
+            if (skillsSoFar) updatedCtx += "\nSkills assessed: " + skillsSoFar;
+          }
           cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, profile: updatedProfile, ctx: updatedCtx };
         }
       }
@@ -769,12 +798,12 @@ function StudyInner({ setErrorCtx }) {
         });
       }
 
-      const finalMsgs = [...newMsgs, { role: "assistant", content: response }];
+      const finalMsgs = [...newMsgs, { role: "assistant", content: response, ts: asstTs }];
       setMsgs(finalMsgs); setBusy(false);
       await DB.saveChat(active.id, finalMsgs.slice(-100));
     } catch (e) {
       console.error("sendMessage error:", e);
-      const errorMsgs = [...newMsgs, { role: "assistant", content: "Sorry, something went wrong: " + e.message }];
+      const errorMsgs = [...newMsgs, { role: "assistant", content: "Sorry, something went wrong: " + e.message, ts: Date.now() }];
       setMsgs(errorMsgs); setBusy(false);
       addNotif("error", "Message failed: " + e.message);
     }
@@ -2457,8 +2486,19 @@ function StudyInner({ setErrorCtx }) {
           <button onClick={async () => {
               if (sessionMode || pickerData || chunkPicker || practiceMode) {
                 setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null);
+              } else if (msgs.length > 1 && sessionStartTime.current) {
+                // Show session summary before leaving
+                const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
+                const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
+                const allSkills = cachedSessionCtx.current?.skills || [];
+                const skillChanges = sessionSkillLog.current.map(u => {
+                  const sk = allSkills.find(s => s.id === u.skillId || s.conceptKey === u.skillId);
+                  return { ...u, name: sk?.name || u.skillId, strength: sk ? effectiveStrength(sk) : 0 };
+                });
+                await saveSessionToJournal();
+                setSessionSummary({ entry, skillChanges, duration, courseName: active.name });
               } else {
-                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null;
+                await saveSessionToJournal(); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null);
               }
             }}
             style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: 0 }}>&lt; Back</button>
@@ -3686,21 +3726,61 @@ function StudyInner({ setErrorCtx }) {
                 )}
               </div>
             )}
-            {msgs.map((m, i) => (
-              <div key={i} style={{ marginBottom: 20, animation: "fadeIn 0.25s", display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start" }}>
-                {m.role === "assistant" && <div style={{ fontSize: 11, color: T.ac, marginBottom: 6, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>Study</div>}
+            {msgs.map((m, i) => {
+              const isUser = m.role === "user";
+              const isAsst = m.role === "assistant";
+              const ts = m.ts ? timeAgo(m.ts) : null;
+              // Parse skill update pills from assistant messages
+              const skillPills = isAsst && m.content ? parseSkillUpdates(m.content) : [];
+              const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
+              const ratingBg = { easy: T.gnS, good: T.gnS, hard: T.amS, struggled: T.amS };
+              return (
+              <div key={i} style={{ marginBottom: 20, animation: "fadeIn 0.25s", display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start" }}>
+                {/* Thin separator before user messages (after the first) */}
+                {isUser && i > 0 && <div style={{ width: "100%", height: 1, background: T.bd, opacity: 0.3, marginBottom: 16 }} />}
+                {isAsst && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, color: T.ac, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>Study</div>
+                    {ts && <div style={{ fontSize: 10, color: T.txM }}>{ts}</div>}
+                  </div>
+                )}
                 <div style={{
-                  maxWidth: m.role === "user" ? "80%" : "100%",
-                  background: m.role === "user" ? T.acS : "transparent",
-                  border: m.role === "user" ? "1px solid " + T.acB : "none",
-                  borderRadius: m.role === "user" ? "16px 16px 4px 16px" : "0",
-                  padding: m.role === "user" ? "12px 16px" : "4px 0",
+                  maxWidth: isUser ? "80%" : "100%",
+                  background: isUser ? T.acS : "transparent",
+                  border: isUser ? "1px solid " + T.acB : "none",
+                  borderLeft: isAsst ? "2px solid rgba(108,156,252,0.25)" : "none",
+                  borderRadius: isUser ? "16px 16px 4px 16px" : "0",
+                  padding: isUser ? "12px 16px" : "4px 0 4px 12px",
                   color: T.tx, lineHeight: 1.7, fontSize: 14
                 }}>
-                  {m.role === "assistant" ? (m.content ? renderMd(m.content) : <span style={{ display: "inline-block", width: 8, height: 16, background: T.ac, animation: "blink 1s step-end infinite", verticalAlign: "middle" }} />) : m.content}
+                  {isAsst ? (m.content ? renderMd(m.content) : (
+                    <span style={{ display: "inline-flex", gap: 4, alignItems: "center", height: 16, verticalAlign: "middle" }}>
+                      {[0, 1, 2].map(d => <span key={d} style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: T.ac, animation: "dotPulse 1.2s ease-in-out infinite", animationDelay: (d * 0.2) + "s" }} />)}
+                    </span>
+                  )) : (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+                      <div>{m.content}</div>
+                      {ts && <div style={{ fontSize: 10, color: T.txM, marginTop: 4 }}>{ts}</div>}
+                    </div>
+                  )}
                 </div>
+                {/* Skill update pills */}
+                {skillPills.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, paddingLeft: 12 }}>
+                    {skillPills.map((sp, si) => {
+                      const allSk = cachedSessionCtx.current?.skills || [];
+                      const sk = allSk.find(s => s.id === sp.skillId || s.conceptKey === sp.skillId);
+                      return (
+                        <span key={si} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: ratingBg[sp.rating] || T.acS, color: ratingColor[sp.rating] || T.ac, fontWeight: 500 }}>
+                          {sk?.name || sp.skillId}: {sp.rating}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            ))}
+              );
+            })}
             {((booting && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant" && msgs[msgs.length - 1].content)) || (busy && !(msgs.length > 0 && msgs[msgs.length - 1].role === "assistant"))) && !processingMatId && (
               <div style={{ padding: "16px 0", animation: "fadeIn 0.2s" }}>
                 <div style={{ fontSize: 11, color: T.ac, marginBottom: 10, letterSpacing: "0.04em", textTransform: "uppercase", fontWeight: 600 }}>{booting ? status || "Reading materials..." : "Study"}</div>
@@ -3822,22 +3902,109 @@ function StudyInner({ setErrorCtx }) {
 
         {/* Input Bar - only show after session has started, hidden during practice */}
         {msgs.length > 0 && !practiceMode && (
-        <div style={{ borderTop: "1px solid " + T.bd, padding: 16, flexShrink: 0 }}>
-          <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", gap: 10, alignItems: "flex-end" }}>
-            <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-              placeholder="Type your answer or ask a question..." rows={1}
-              style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "12px 16px", color: T.tx, fontSize: 14, resize: "none", lineHeight: 1.5, maxHeight: 150 }} />
-            <button onClick={sendMessage} disabled={!input.trim() || busy}
-              style={{
-                background: input.trim() && !busy ? T.ac : T.sf,
-                color: input.trim() && !busy ? "#0F1115" : T.txM,
-                border: "none", borderRadius: 12, width: 44, height: 44,
-                fontSize: 16, cursor: input.trim() && !busy ? "pointer" : "default",
-                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700
-              }}>-&gt;</button>
+        <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", flexShrink: 0 }}>
+          <div style={{ maxWidth: 700, margin: "0 auto" }}>
+            {/* Mode context bar */}
+            {(focusContext || sessionMode) && (
+              <div style={{ fontSize: 11, color: T.txM, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ background: T.acS, color: T.ac, padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
+                  {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "recap" ? "RC" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
+                </span>
+                <span>
+                  {focusContext?.type === "assignment" ? "Assignment: " + (focusContext.assignment?.title || "")
+                    : focusContext?.type === "skill" ? "Skill: " + (focusContext.skill?.name || "")
+                    : focusContext?.type === "recap" ? "Session Recap"
+                    : sessionMode || ""}
+                </span>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+              <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                placeholder="Type your answer or ask a question..." rows={1}
+                style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "12px 16px", color: T.tx, fontSize: 14, resize: "none", lineHeight: 1.5, maxHeight: 150 }} />
+              <button onClick={sendMessage} disabled={!input.trim() || busy}
+                style={{
+                  background: input.trim() && !busy ? T.ac : T.sf,
+                  color: input.trim() && !busy ? "#0F1115" : T.txM,
+                  border: "none", borderRadius: 12, width: 44, height: 44,
+                  cursor: input.trim() && !busy ? "pointer" : "default",
+                  flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all 0.2s"
+                }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
+        )}
+
+        {/* Session Summary Overlay */}
+        {sessionSummary && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 100, background: T.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, overflow: "auto" }}>
+            <div style={{ maxWidth: 500, width: "100%" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: T.tx, marginBottom: 24, textAlign: "center" }}>Session Complete</div>
+
+              {/* Duration + Messages */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+                <div style={{ flex: 1, background: T.sf, borderRadius: 12, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: T.ac }}>{sessionSummary.duration || 0}</div>
+                  <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>minutes</div>
+                </div>
+                <div style={{ flex: 1, background: T.sf, borderRadius: 12, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: T.ac }}>{sessionSummary.entry?.messageCount || msgs.length}</div>
+                  <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>messages</div>
+                </div>
+              </div>
+
+              {/* Skills practiced */}
+              {sessionSummary.skillChanges?.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.tx, marginBottom: 10 }}>Skills Practiced</div>
+                  {sessionSummary.skillChanges.map((sc, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: T.sf, borderRadius: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 13, color: T.tx }}>{sc.name}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 11, color: sc.rating === "easy" || sc.rating === "good" ? T.gn : T.am, fontWeight: 500 }}>{sc.rating}</span>
+                        <span style={{ fontSize: 10, color: T.txD }}>{Math.round(sc.strength * 100)}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Topics covered */}
+              {sessionSummary.entry?.topicsDiscussed?.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.tx, marginBottom: 10 }}>Topics Covered</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {sessionSummary.entry.topicsDiscussed.slice(0, 12).map((t, i) => (
+                      <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: T.acS, color: T.ac }}>{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Breakthroughs */}
+              {sessionSummary.entry?.wins?.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.gn, marginBottom: 10 }}>Breakthroughs</div>
+                  {sessionSummary.entry.wins.map((w, i) => (
+                    <div key={i} style={{ fontSize: 12, color: T.txD, padding: "6px 10px", background: T.gnS, borderRadius: 8, marginBottom: 4, fontStyle: "italic" }}>"{w}"</div>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={() => {
+                setSessionSummary(null); setScreen("home"); setMsgs([]); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set();
+              }}
+                style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
+                Done
+              </button>
+            </div>
+          </div>
         )}
 
       </div>

@@ -217,8 +217,31 @@ export const applySkillUpdates = async (courseId, updates) => {
   return profile;
 };
 
+// --- Keyword Extraction ---
+const STOP_WORDS = new Set([
+  "that","this","with","from","have","been","were","they","their","them","what","when","where","which",
+  "about","would","could","should","there","these","those","other","some","many","more","most","very",
+  "also","just","than","then","into","only","over","such","after","before","between","each","every",
+  "both","through","during","still","while","because","since","until","against","under","above","below",
+  "does","doing","done","will","being","here","your","like","make","know","take","come","want","look",
+  "give","think","help","tell","find","need","mean","keep","start","might","going","really","thing",
+  "much","well","even","back","good","time","work","right","first","made","didn","don't","can't","it's",
+  "i'm","i've","i'll","we're","you're","they're","wasn","isn't","aren","doesn","won't","let's",
+]);
+
+export const extractKeywords = (messages, count = 20) => {
+  const text = messages.map(m => m.content).join(" ").toLowerCase();
+  const words = text.match(/[a-z]{4,}/g) || [];
+  const freq = {};
+  for (const w of words) {
+    if (STOP_WORDS.has(w)) continue;
+    freq[w] = (freq[w] || 0) + 1;
+  }
+  return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, count).map(([w]) => w);
+};
+
 // --- Smart Context Builder ---
-export const buildContext = async (courseId, materials, skills, assignments, profile, recentMsgs) => {
+export const buildContext = async (courseId, materials, skills, assignments, profile, recentMsgs, excludeChunkIds) => {
   let ctx = "";
 
   // 1. Skill tree
@@ -280,7 +303,7 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
 
   // 4. Selectively load relevant source documents
   const recentText = recentMsgs.slice(-6).map(m => m.content).join(" ").toLowerCase();
-  const keywords = recentText.split(/\s+/).filter(w => w.length > 3);
+  const keywords = extractKeywords(recentMsgs.slice(-6));
 
   let relevantSkillIds = [];
   if (Array.isArray(skills)) {
@@ -322,6 +345,7 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
       for (const ch of activeChunks) ctx += "  " + ch.id + ": \"" + ch.label + "\"\n";
 
       const relChs = activeChunks.filter(ch => {
+        if (excludeChunkIds && excludeChunkIds.has(ch.id)) return false;
         const tl = ch.label.toLowerCase();
         const preview = ch.content.substring(0, 800).toLowerCase();
         return keywords.some(kw => kw.length > 3 && (tl.includes(kw) || preview.includes(kw))) ||
