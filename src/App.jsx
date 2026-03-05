@@ -3568,10 +3568,32 @@ function StudyInner({ setErrorCtx }) {
                                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                                               <span style={{ fontSize: 11, color: skColor, fontWeight: 600 }}>{Math.round(sk.strength * 100)}%</span>
                                               {isWeak && (
-                                                <button onClick={(e) => {
+                                                <button onClick={async (e) => {
                                                   e.stopPropagation();
                                                   var fullSkill = Array.isArray(pickerData._skills) ? pickerData._skills.find(s => s.id === sk.id) : null;
-                                                  if (fullSkill) bootWithFocus({ type: "skill", skill: { ...fullSkill, strength: sk.strength, points: sk.points } });
+                                                  if (!fullSkill) { addNotif("error", "Skill not found"); return; }
+                                                  var existing = await DB.getPractice(active.id, fullSkill.id);
+                                                  var str = sk.strength || 0;
+                                                  var startTier = strengthToTier(str);
+                                                  var pset = existing || createPracticeSet(active.id, fullSkill, active.name);
+                                                  var tier = pset.currentTier;
+                                                  setPracticeMode({ generating: true, set: pset, skill: fullSkill });
+                                                  setPickerData(null); setSessionMode("practice");
+                                                  try {
+                                                    var tierData = pset.tiers[tier];
+                                                    var lastAttempt = tierData?.attempts?.[tierData.attempts.length - 1];
+                                                    if (!lastAttempt || lastAttempt.completed) {
+                                                      var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, fullSkill);
+                                                      pset = await generateProblems(pset, fullSkill, active.name, matCtx);
+                                                    }
+                                                    await DB.savePractice(active.id, fullSkill.id, pset);
+                                                    var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
+                                                    var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
+                                                    setPracticeMode({ set: pset, skill: fullSkill, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
+                                                  } catch (err) {
+                                                    addNotif("error", "Failed to start practice: " + err.message);
+                                                    setPracticeMode(null); setSessionMode(null);
+                                                  }
                                                 }}
                                                   style={{ background: "none", border: "1px solid " + T.acB, borderRadius: 6, padding: "2px 8px", fontSize: 10, color: T.ac, cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>Practice</button>
                                               )}
