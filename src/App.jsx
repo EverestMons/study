@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback, Component, createConte
 // --- Module Imports ---
 import { T, CSS, renderMd } from "./lib/theme.jsx";
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites } from "./lib/db.js";
+import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -1034,9 +1034,7 @@ function StudyInner({ setErrorCtx }) {
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
           <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Data Management</div>
           <button onClick={async () => {
-            if (!confirm("Reset all skill data? This removes all extracted skills, mastery progress, and parent skills. Courses and materials are kept.")) return;
             try {
-              const { getDb } = await import("./lib/db.js");
               const rawDb = await getDb();
               await rawDb.execute("DELETE FROM skill_prerequisites");
               await rawDb.execute("DELETE FROM chunk_skill_bindings");
