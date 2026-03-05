@@ -3304,6 +3304,14 @@ function StudyInner({ setErrorCtx }) {
                           if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                           if (result.success) {
                             addNotif("success", "Extracted " + result.totalSkills + " skills.");
+                            // Decompose assignments if any exist
+                            var mats = updatedCourse?.materials || active.materials || [];
+                            if (mats.some(m => m.classification === "assignment")) {
+                              setStatus("Decomposing assignments...");
+                              var sk = await loadSkillsV2(active.id);
+                              await decomposeAssignments(active.id, mats, sk, setStatus);
+                              addNotif("success", "Assignments decomposed.");
+                            }
                           } else {
                             addNotif("error", "Extraction completed with issues.");
                           }
@@ -3412,6 +3420,14 @@ function StudyInner({ setErrorCtx }) {
                               if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                               if (result.success) {
                                 addNotif("success", "Extracted " + result.totalSkills + " skills.");
+                                // Decompose assignments if any exist
+                                var mats = updatedCourse?.materials || active.materials || [];
+                                if (mats.some(m => m.classification === "assignment")) {
+                                  setStatus("Decomposing assignments...");
+                                  var sk = await loadSkillsV2(active.id);
+                                  await decomposeAssignments(active.id, mats, sk, setStatus);
+                                  addNotif("success", "Assignments decomposed.");
+                                }
                               } else {
                                 addNotif("error", "Extraction completed with issues. Check skill view.");
                               }
