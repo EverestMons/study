@@ -11,6 +11,7 @@
 
 import { parseEpub } from './epubParser.js';
 import { parseDocx } from './docxParser.js';
+import { parsePdf } from './pdfParser.js';
 import { safeLoadZip } from './jszip-loader.js';
 
 // --- Safety limits ---
@@ -345,12 +346,32 @@ export const readFile = async (file) => {
     }
   }
 
-  // --- PDF (not yet supported — sidecar pending) ---
+  // --- PDF: v2 structured parser ---
   if (ext === 'pdf') {
-    return {
-      type: 'text', name: file.name,
-      content: '[PDF not supported: ' + file.name + ' -- Open in Preview or Acrobat, Select All (Cmd+A), Copy, paste into a .txt file, then upload that.]'
-    };
+    try {
+      const structured = await parsePdf(await file.arrayBuffer(), file.name);
+
+      if (structured._errorMessage) {
+        return { type: 'text', name: file.name, content: '[' + structured._errorMessage + ']' };
+      }
+
+      if (!structured.markdown.trim()) {
+        return {
+          type: 'text', name: file.name,
+          content: '[Could not extract text from ' + file.name + '. Try copying text manually from a PDF reader.]'
+        };
+      }
+
+      return {
+        type: 'text',
+        name: file.name,
+        content: structured.markdown,
+        _structured: structured,
+      };
+    } catch (e) {
+      console.error('PDF parse failed:', e);
+      return { type: 'text', name: file.name, content: '[PDF parse failed: ' + e.message + ']' };
+    }
   }
 
   // --- Subtitles (SRT/VTT) ---
