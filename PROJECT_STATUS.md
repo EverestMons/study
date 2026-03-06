@@ -8,7 +8,7 @@
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **partially implemented** (exam prep + explore modes working; full 3-question flow not yet complete). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. Next priorities: complete session intent system, parent skill layer, and PDF support via Python sidecar.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. Next priorities: complete session intent system, parent skill layer, and PDF support via Python sidecar.
 
 ---
 
@@ -39,7 +39,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Assignment decomposition | ✅ Live | Auto-decomposes; skill ID resolution fixed 2026-03-04 |
 | Practice mode | ✅ Live | FSRS-based, criteria tracking, confidence labels, retrievability |
 | Chat / tutoring UI | ✅ Live | Timestamps, session summaries, smarter context, code input mode, break reminders, SVG send button |
-| Session intent (partial) | ✅ Partial | Exam prep + explore modes working; full 3-question flow not complete |
+| Session intent system | ✅ Live | 5 modes: assignment, recap, skills, exam prep, explore. Each with picker UI + focused context + weighted mastery. |
 | Profile view | ✅ Live | Domain readiness, activity indicator, concept key, inline progress bars |
 | SQLite-only storage | ✅ Live | localStorage fully removed; WAL mode; transaction serialization |
 | DOCX export | ✅ Live | Assignment submission export |
@@ -53,7 +53,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Feature | Spec Location | Priority | Notes |
 |---|---|---|---|
-| Full session intent system (3-question flow) | `docs/skill-architecture-redesign.md` §4 | 🔴 High | Partial: exam prep + explore exist. Full course→intent→scope flow not complete. CEO decision pending on UX introduction. |
+| ~~Full session intent system~~ | ~~`docs/skill-architecture-redesign.md` §4~~ | ~~Done~~ | ✅ Implemented — 5 modes with picker UIs. Moved to "What Is Working." |
 | Parent skill / CIP taxonomy layer | `docs/skill-architecture-redesign.md` §1, Q1 | 🔴 High | Schema tables exist (parent_skills, parent_skill_aliases) but not populated or used |
 | PDF support | `docs/study-tauri-architecture.md` | 🔴 High | Blocked by Python sidecar |
 | Python sidecar (Unstructured) | `docs/study-tauri-architecture.md` | 🔴 High | CEO decided: separate install. Implementation not started. |
@@ -140,7 +140,7 @@ None currently active. Knowledge base flags folder is empty.
 
 ## CEO Decisions Pending
 
-- **Session intent UX introduction** — How to introduce the full 3-question flow without disrupting existing users
+- ~~Session intent UX introduction~~ — **RESOLVED: 5-mode picker implemented** (assignment, recap, skills, exam, explore)
 - ~~Python sidecar bundling strategy~~ — **RESOLVED: separate install** to maintain stability and quality
 - **Parent skill level + readiness visualization approach** — Not yet designed
 
