@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-03-06
-**Updated By:** Development Team
+**Updated By:** Product Analyst (post Phase 4 decomposition)
 **Overall Status:** 🟢 Active
 
 ---
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. Next priorities: parent skill layer, cross-skill concept links.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. Next priorities: parent skill layer, cross-skill concept links.
 
 ---
 
@@ -17,10 +17,10 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
 | Research | Idle | — | No knowledge deposited |
-| Systems Architecture | Idle | — | No knowledge deposited; session intent + parent skill design needed |
-| Development | Active | 2026-03-06 | 68 commits. Latest: material card redesign + auto-extraction + chunking hardening. Very active. |
-| Security & Testing | Active | 2026-03-05 | Security review of chunking pipeline (JSZip bundling, zip bomb defense, XML parsing). |
-| Design & Experience | Active | 2026-03-05 | Material upload transparency UX spec delivered and implemented. |
+| Systems Architecture | Active | 2026-03-06 | Architecture blueprint for App.jsx decomposition delivered (`knowledge/architecture/`) |
+| Development | Active | 2026-03-06 | 65 commits. Latest: Phase 4 study screen decomposition (refactor, no feature changes). |
+| Security & Testing | Active | 2026-03-06 | Phase 4 security & testing report (`knowledge/qa/`). 1 pre-existing bug found and fixed (S1: `setSessionElapsed`). |
+| Design & Experience | Active | 2026-03-06 | Phase 4 UX validation report (`knowledge/design/validation/`). All flows verified identical. |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
 | Documentation | Idle | — | README is blank; 26 design docs exist in docs/ folder but no user-facing documentation |
 | Engineering & Physical Design | N/A | — | No physical components |
@@ -44,7 +44,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | SQLite-only storage | ✅ Live | localStorage fully removed; WAL mode; transaction serialization |
 | DOCX export | ✅ Live | Assignment submission export |
 | Reset Skill Data (dev tool) | ✅ Live | Settings panel |
-| Error safety net | ✅ Live | Unhandled error/rejection listeners in main.jsx + 3s mount-failure fallback in index.html |
+| Error safety net | ✅ Live | ErrorBoundary in App.jsx + async error listeners in StudyContext + 3s mount-failure fallback in index.html |
 | PDF support | ✅ Live | pdfjs-dist (lazy-loaded), heading detection via font size analysis, page-based fallback, metadata/outline extraction |
 | File drag-and-drop | ✅ Live | Tauri native drop disabled so WebView receives drag events |
 | DB Migrations 001 + 002 | ✅ Applied | v2 schema + skill extraction v2 (concept_key, category, blooms_level, evidence, soft-delete) |
@@ -104,6 +104,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Date | Work |
 |---|---|
+| 2026-03-06 | **Codebase decomposition (Phases 1–4):** Split 4,416-line App.jsx into 42 files. Phase 1: StudyContext extraction. Phase 2/2b: 8 screen components + 3 shared components. Phase 4: Study screen into 10 sub-components + layout shell, ScreenRouter reduced from 1,860 to 62 lines. Pure refactor, no feature changes. Bug S1 (`setSessionElapsed` missing from context) found and fixed. 6 latent import bugs from Phase 1 proactively fixed. UX validation + security/testing reports written. |
 | 2026-03-06 | PDF support via pdfjs-dist, lazy-loading safety, mount-failure detection, file drop fix, material card redesign |
 | 2026-03-05 | Chunking pipeline hardening (bundled JSZip, zip bomb defense, stack-based XML), UX polish |
 | 2026-03-04 | Assignment decomposition skill ID resolution fix |
@@ -120,11 +121,23 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Desktop | Tauri 2.10.0 |
 | Database | SQLite via @tauri-apps/plugin-sql |
 | AI | Claude API via @tauri-apps/plugin-http |
-| Source files | ~20 JS/JSX files |
-| Primary code | App.jsx (4,416 LOC), db.js (1,485), extraction.js (1,346), study.js (940) |
+| Source files | 42 JS/JSX files |
+| Total LOC | ~12,960 |
 | Design docs | 26 MD files in docs/ |
-| Git commits | 70 |
+| Knowledge base | 8 MD files in knowledge/ (architecture, development, design, QA) |
+| Git commits | 65 |
 | Most recent commit | 2026-03-06 |
+
+### Source File Breakdown (post-decomposition)
+
+| Layer | Files | LOC | Key Files |
+|---|---|---|---|
+| Entry | 2 | 170 | App.jsx (147), main.jsx (23) |
+| State & Routing | 2 | 991 | StudyContext.jsx (929), ScreenRouter.jsx (62) |
+| Screens | 8 | 1,563 | MaterialsScreen (555), ProfileScreen (339), UploadScreen (169), SkillsScreen (153), StudyScreen (116), HomeScreen (94), NotifsScreen (73), ManageScreen (64) |
+| Shared Components | 3 | 212 | SettingsModal (93), ErrorDisplay (73), GlobalLockOverlay (46) |
+| Study Sub-Components | 10 | 2,094 | ModePicker (411), PracticeMode (394), SkillsPanel (205), MaterialsPanel (186), ChunkPicker (149), InputBar (131), AssignmentPanel (120), StudyScreen layout (116), SessionSummary (104), MessageList (95), NotifPanel (83) |
+| Libraries | 17 | 7,930 | db.js (1,485), extraction.js (1,346), study.js (940), docxParser (633), htmlToMarkdown (502), epubParser (477), pdfParser (448), chunker (427), parsers (416), skills (411), migrate (291), api (228), fsrs (206), export (143), theme (100), classify (~40), pptxParser (~40) |
 
 ---
 
@@ -148,6 +161,28 @@ None currently active. Knowledge base flags folder is empty.
 
 ---
 
-## Knowledge Base Status
+## Decomposition Status
 
-All knowledge folders exist with correct structure. **All folders are empty.** No department has deposited any knowledge despite 64 commits of active development. All design decisions and implementation notes exist in git commit messages and the 26 documents in `docs/`. Agent files (10 specialists) are configured but the knowledge base system has not been adopted yet.
+The original monolithic `App.jsx` (4,416 lines) has been fully decomposed across 4 phases:
+
+| Phase | Scope | Result | Validation |
+|---|---|---|---|
+| Phase 1 | Context extraction | `StudyContext.jsx` (929 lines) — all state, effects, handlers | Build pass |
+| Phase 2 | Screen extraction (non-study) | 7 screen files + 3 shared components | Build pass + UX validation |
+| Phase 2b | Study screen routing | `ScreenRouter.jsx` reduced to 1,860 lines | Build pass |
+| Phase 4 | Study screen decomposition | 10 sub-components + `StudyScreen.jsx` layout shell; `ScreenRouter.jsx` reduced to 62 lines | Build pass + UX validation + Security/Testing report |
+
+**Net result:** 1 file (4,416 LOC) -> 25 files (~5,030 LOC). Total LOC increased ~14% due to import statements, component declarations, and context destructuring in each file. No feature changes. All behavior verified identical.
+
+**Bugs found during decomposition:**
+- S1 (`setSessionElapsed` not in context value) — pre-existing from Phase 2b, **fixed**
+- 6 latent import bugs from Phase 1 (functions used but never imported in ScreenRouter) — **fixed** by explicit imports in sub-components
+
+**Knowledge artifacts:**
+- `knowledge/architecture/app-jsx-decomposition-2026-03-06.md` — architecture blueprint
+- `knowledge/architecture/decomposition-validation-2026-03-06.md` — Phase 2 validation
+- `knowledge/development/phase1-context-extraction-2026-03-06.md` — Phase 1 dev log
+- `knowledge/development/phase2-screen-extraction-2026-03-06.md` — Phase 2 dev log
+- `knowledge/development/phase2b-screen-extraction-2026-03-06.md` — Phase 2b dev log
+- `knowledge/design/validation/phase4-study-screen-decomposition-2026-03-06.md` — Phase 4 UX validation
+- `knowledge/qa/phase4-security-testing-2026-03-06.md` — Phase 4 security & testing report
