@@ -359,7 +359,7 @@ function StudyInner({ setErrorCtx }) {
     setReady(true);
   })(); }, []);
   useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
+  useEffect(() => { if (msgs.length) endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { if (codeMode) { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, codeMode]);
 
   // Session elapsed timer — updates every minute when a session is active
@@ -1038,6 +1038,9 @@ function StudyInner({ setErrorCtx }) {
       const totalSections = newMeta.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
       addNotif("success", "Added " + newMeta.length + " file(s) with " + totalSections + " section(s).");
     }
+    } catch (err) {
+      console.error("Adding materials failed:", err);
+      addNotif("error", "Failed to add materials: " + err.message);
     } finally {
       setGlobalLock(null);
       setStatus("");
@@ -1925,7 +1928,7 @@ function StudyInner({ setErrorCtx }) {
           <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
             style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 12, padding: "20px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent" }}>
             <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.pptx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
-            <div style={{ fontSize: 14, color: T.txD }}>+ Drop or click to add materials</div>
+            <div style={{ fontSize: 14, color: T.txD }}>{parsing ? "Parsing files..." : drag ? "Drop here" : "+ Drop or click to add materials"}</div>
           </div>
           {files.length > 0 && (
             <div style={{ marginTop: 12 }}>
