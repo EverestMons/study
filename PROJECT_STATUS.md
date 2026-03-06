@@ -8,7 +8,7 @@
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. Next priorities: complete session intent system, parent skill layer, and PDF support via Python sidecar.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. Next priorities: parent skill layer, cross-skill concept links.
 
 ---
 
@@ -31,7 +31,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Feature | Status | Notes |
 |---|---|---|
-| Material upload + auto-extraction | ✅ Live | DOCX, EPUB, PPTX, TXT; auto-classification; auto-extract on upload; state-aware cards |
+| Material upload + auto-extraction | ✅ Live | PDF, DOCX, EPUB, PPTX, TXT; auto-classification; auto-extract on upload; state-aware cards |
 | Material processing transparency | ✅ Live | 5-state cards (reading/analyzing/extracting/ready/error), trust signals, retry/remove for stuck states |
 | v2 skill extraction pipeline | ✅ Live | Weighted mastery, context tags, source tracking, concept keys, Bloom's taxonomy |
 | Chunking pipeline hardening | ✅ Live | Bundled JSZip (no CDN), zip bomb defense, stack-based XML, sentence/char split fallbacks |
@@ -44,7 +44,9 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | SQLite-only storage | ✅ Live | localStorage fully removed; WAL mode; transaction serialization |
 | DOCX export | ✅ Live | Assignment submission export |
 | Reset Skill Data (dev tool) | ✅ Live | Settings panel |
-| Error safety net | ✅ Live | Unhandled error/rejection listeners in main.jsx — prevents silent white screens |
+| Error safety net | ✅ Live | Unhandled error/rejection listeners in main.jsx + 3s mount-failure fallback in index.html |
+| PDF support | ✅ Live | pdfjs-dist (lazy-loaded), heading detection via font size analysis, page-based fallback, metadata/outline extraction |
+| File drag-and-drop | ✅ Live | Tauri native drop disabled so WebView receives drag events |
 | DB Migrations 001 + 002 | ✅ Applied | v2 schema + skill extraction v2 (concept_key, category, blooms_level, evidence, soft-delete) |
 
 ---
@@ -55,8 +57,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 |---|---|---|---|
 | ~~Full session intent system~~ | ~~`docs/skill-architecture-redesign.md` §4~~ | ~~Done~~ | ✅ Implemented — 5 modes with picker UIs. Moved to "What Is Working." |
 | Parent skill / CIP taxonomy layer | `docs/skill-architecture-redesign.md` §1, Q1 | 🔴 High | Schema tables exist (parent_skills, parent_skill_aliases) but not populated or used |
-| PDF support | `docs/study-tauri-architecture.md` | 🔴 High | Blocked by Python sidecar |
-| Python sidecar (Unstructured) | `docs/study-tauri-architecture.md` | 🔴 High | CEO decided: separate install. Implementation not started. |
+| ~~PDF support~~ | ~~`docs/study-tauri-architecture.md`~~ | ~~Done~~ | ✅ Implemented via pdfjs-dist — no sidecar needed. Moved to "What Is Working." |
+| Python sidecar (Unstructured) | `docs/study-tauri-architecture.md` | 🟡 Medium | CEO decided: separate install. Deprioritized — PDF now handled client-side. |
 | Migration 003 — Data migration (v1→v2) | `docs/skill-architecture-redesign.md` | 🟡 Medium | Migrate data from old tables to new v2 tables |
 | Migration 004 — Cleanup | `docs/skill-architecture-redesign.md` | 🟡 Medium | Drop old tables after confirmed migration |
 | Concept links (cross-skill similarity) | `docs/skill-architecture-redesign.md` Q5 | 🟡 Medium | |
@@ -79,7 +81,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | All screens render correctly | ✅ Complete |
 | Bundle Unstructured Python sidecar | 🔲 Not started (CEO decided: separate install) |
 | Replace browser parsers with native parsing | 🟡 Partial (mammoth for DOCX; rest browser-based) |
-| PDF support | 🔲 Not started (blocked by sidecar) |
+| PDF support | ✅ Complete (pdfjs-dist, client-side) |
 | OCR support for scanned documents | 🔲 Not started |
 | File system watcher for auto-import | 🔲 Not started |
 | Local Whisper transcription | 🔲 Not started |
@@ -102,7 +104,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Date | Work |
 |---|---|
-| 2026-03-06 | Material card redesign with auto-extraction, stuck-state actions, error safety net |
+| 2026-03-06 | PDF support via pdfjs-dist, lazy-loading safety, mount-failure detection, file drop fix, material card redesign |
 | 2026-03-05 | Chunking pipeline hardening (bundled JSZip, zip bomb defense, stack-based XML), UX polish |
 | 2026-03-04 | Assignment decomposition skill ID resolution fix |
 | 2026-03-03 | Session intent system (exam prep, explore modes) |
@@ -121,7 +123,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Source files | ~20 JS/JSX files |
 | Primary code | App.jsx (4,416 LOC), db.js (1,485), extraction.js (1,346), study.js (940) |
 | Design docs | 26 MD files in docs/ |
-| Git commits | 68 |
+| Git commits | 70 |
 | Most recent commit | 2026-03-06 |
 
 ---
