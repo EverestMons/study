@@ -58,7 +58,17 @@ export async function parsePdf(buf, filename) {
 
   for (let i = 1; i <= numPages; i++) {
     const page = await doc.getPage(i);
-    const content = await page.getTextContent();
+    // Use streamTextContent + reader instead of getTextContent() because
+    // pdfjs v5's getTextContent uses `for await...of ReadableStream` internally,
+    // which WebKit (Tauri's WebView) doesn't support.
+    const content = { items: [], styles: Object.create(null) };
+    const reader = page.streamTextContent().getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      Object.assign(content.styles, value.styles);
+      content.items.push(...value.items);
+    }
 
     const items = [];
     for (const item of content.items) {

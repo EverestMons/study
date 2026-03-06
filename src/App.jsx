@@ -359,6 +359,13 @@ function StudyInner({ setErrorCtx }) {
     setReady(true);
   })(); }, []);
   useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
+  // Prevent browser default of opening dropped files — blocks document takeover
+  useEffect(() => {
+    const prevent = (e) => { e.preventDefault(); e.stopPropagation(); };
+    document.addEventListener("dragover", prevent);
+    document.addEventListener("drop", prevent);
+    return () => { document.removeEventListener("dragover", prevent); document.removeEventListener("drop", prevent); };
+  }, []);
   useEffect(() => { if (msgs.length) endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   useEffect(() => { if (taRef.current) { if (codeMode) { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, codeMode]);
 
