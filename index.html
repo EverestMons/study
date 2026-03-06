@@ -11,6 +11,19 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Catch module-level import failures that prevent React from mounting.
+         ES module errors are silent — no window.onerror — so this is the
+         only way to surface a white-screen crash to the developer. -->
+    <script>
+      setTimeout(function() {
+        if (!document.getElementById('root').hasChildNodes()) {
+          var el = document.createElement('pre');
+          el.style.cssText = 'color:#f90;padding:24px;font-size:13px;white-space:pre-wrap;font-family:monospace;background:#111;margin:20px;border-radius:8px';
+          el.textContent = 'App failed to mount — likely a module import error.\nOpen DevTools (Cmd+Option+I) → Console for details.';
+          document.getElementById('root').appendChild(el);
+        }
+      }, 3000);
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

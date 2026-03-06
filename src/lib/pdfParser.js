@@ -8,11 +8,22 @@
 // Depends on: pdfjs-dist, htmlToMarkdown.js
 // ============================================================
 
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { inferSectionPath, computeSectionMetadata } from './htmlToMarkdown.js';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+// Lazy-load pdfjs-dist — only when first PDF is uploaded.
+// Avoids crashing the app at startup if the WebView environment
+// has issues with the library's eager initialization.
+let pdfjsLib = null;
+async function loadPdfjs() {
+  if (pdfjsLib) return pdfjsLib;
+  const [lib, workerModule] = await Promise.all([
+    import('pdfjs-dist'),
+    import('pdfjs-dist/build/pdf.worker.mjs?url'),
+  ]);
+  pdfjsLib = lib;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerModule.default;
+  return pdfjsLib;
+}
 
 const MAX_PAGES = 5000;
 const PAGES_PER_FALLBACK_SECTION = 5;
@@ -26,9 +37,11 @@ const MAX_HEADING_CHARS = 200;
  * @returns {Promise<object>} Structured output matching shared contract
  */
 export async function parsePdf(buf, filename) {
+  const pdfjs = await loadPdfjs();
+
   let doc;
   try {
-    doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+    doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
   } catch (e) {
     if (e.name === 'PasswordException' || /password/i.test(e.message)) {
       return makeError(filename, 'This PDF is password-protected. Please remove the password and re-upload.');

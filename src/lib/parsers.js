@@ -11,7 +11,6 @@
 
 import { parseEpub } from './epubParser.js';
 import { parseDocx } from './docxParser.js';
-import { parsePdf } from './pdfParser.js';
 import { safeLoadZip } from './jszip-loader.js';
 
 // --- Safety limits ---
@@ -346,9 +345,10 @@ export const readFile = async (file) => {
     }
   }
 
-  // --- PDF: v2 structured parser ---
+  // --- PDF: v2 structured parser (lazy-loaded) ---
   if (ext === 'pdf') {
     try {
+      const { parsePdf } = await import('./pdfParser.js');
       const structured = await parsePdf(await file.arrayBuffer(), file.name);
 
       if (structured._errorMessage) {
