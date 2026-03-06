@@ -219,6 +219,8 @@ function StudyInner({ setErrorCtx }) {
   const [profileData, setProfileData] = useState(null);
   const [expandedProfile, setExpandedProfile] = useState({}); // { parentSkillId: true/false }
   const [expandedSubSkill, setExpandedSubSkill] = useState(null); // sub-skill id or null
+  const [materialSkillCounts, setMaterialSkillCounts] = useState({}); // { [materialId]: { count, categories } }
+  const [expandedMaterial, setExpandedMaterial] = useState(null); // material id or null
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -239,6 +241,74 @@ function StudyInner({ setErrorCtx }) {
     setNotifs(p => [{ id: Date.now() + Math.random(), type, msg, time: new Date() }, ...p].slice(0, 50));
   };
 
+  // --- Material Processing State ---
+  const getMaterialState = (mat) => {
+    const chunks = mat.chunks || [];
+    if (chunks.length === 0) return "reading";
+    const pending = chunks.filter(c => c.status === "pending").length;
+    const failed = chunks.filter(c => c.status === "failed").length;
+    const extracted = chunks.filter(c => c.status === "extracted").length;
+    const sc = materialSkillCounts[mat.id];
+    if (pending > 0) return (sc && sc.count > 0) ? "extracting" : "analyzing";
+    if (failed > 0) {
+      const permanent = chunks.filter(c => c.status === "failed" && (c.failCount || 0) >= 2).length;
+      if (permanent === chunks.length) return "critical_error";
+      if (failed > chunks.length * 0.25) return "error";
+    }
+    if (extracted > 0 && sc && sc.count > 0) return "ready";
+    if (extracted > 0 && (!sc || sc.count === 0)) return "extracting";
+    return "analyzing";
+  };
+
+  const computeTrustSignals = (mat) => {
+    const chunks = mat.chunks || [];
+    const totalChars = chunks.reduce((s, c) => s + (c.charCount || 0), 0);
+    const wordCount = Math.round(totalChars / 5);
+    const wordLabel = wordCount >= 1000 ? (wordCount / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(wordCount);
+    const clsLabel = CLS.find(c => c.v === mat.classification)?.l || mat.classification || "Document";
+    const sc = materialSkillCounts[mat.id] || { count: 0, categories: [] };
+    const topCats = sc.categories.slice(0, 3);
+    const overflow = Math.max(0, sc.categories.length - 3);
+    return { sectionCount: chunks.length, wordLabel, clsLabel, skillCount: sc.count, categoryCount: sc.categories.length, topCats, overflow };
+  };
+
+  // Load skill counts per material when course changes
+  const refreshMaterialSkillCounts = useCallback(async (courseId) => {
+    try {
+      const skills = await loadSkillsV2(courseId);
+      const counts = {};
+      for (const s of skills) {
+        const bindings = await ChunkSkillBindings.getBySkill(s.id);
+        for (const b of bindings) {
+          // Find which material owns this chunk
+          if (!counts[b.chunk_id]) counts[b.chunk_id] = new Set();
+          counts[b.chunk_id].add({ skillId: s.id, category: s.category });
+        }
+      }
+      // Map chunk_id -> material_id
+      const matCounts = {};
+      if (active?.materials) {
+        for (const mat of active.materials) {
+          const skillSet = new Set();
+          const catSet = new Set();
+          for (const ch of (mat.chunks || [])) {
+            const chunkSkills = counts[ch.id];
+            if (chunkSkills) {
+              for (const entry of chunkSkills) {
+                skillSet.add(entry.skillId);
+                if (entry.category) catSet.add(entry.category);
+              }
+            }
+          }
+          matCounts[mat.id] = { count: skillSet.size, categories: [...catSet].sort() };
+        }
+      }
+      setMaterialSkillCounts(matCounts);
+    } catch (e) {
+      console.error("Failed to load material skill counts:", e);
+    }
+  }, [active?.materials]);
+
   // timeAgo helper for message timestamps
   const timeAgo = (ts) => {
     if (!ts) return null;
@@ -257,6 +327,11 @@ function StudyInner({ setErrorCtx }) {
     const iv = setInterval(() => setLockElapsed(s => s + 1), 1000);
     return () => clearInterval(iv);
   }, [globalLock]);
+
+  // Refresh material skill counts when active course changes
+  useEffect(() => {
+    if (active?.id && screen === "materials") refreshMaterialSkillCounts(active.id);
+  }, [active?.id, active?.materials?.length, screen]);
 
   // Update error context for crash reports
   useEffect(() => {
@@ -402,8 +477,35 @@ function StudyInner({ setErrorCtx }) {
       }
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
       setScreen("materials");
-      var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-      addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s). Activate sections from your materials, then go to Skills to extract.");
+
+      // Auto-extract skills from non-assignment materials
+      var extractable = mats.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
+      if (extractable.length > 0) {
+        addNotif("success", "Course created. Processing " + extractable.length + " material(s)...");
+        for (var ei = 0; ei < extractable.length; ei++) {
+          setStatus("Extracting skills: " + extractable[ei].name + "...");
+          setProcessingMatId(extractable[ei].id);
+          try {
+            await runExtractionV2(courseId, extractable[ei].id, {
+              onStatus: setStatus,
+              onNotif: addNotif,
+              onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
+            });
+          } catch (e) {
+            console.error("Auto-extraction failed for", extractable[ei].name, e);
+            addNotif("warn", "Could not extract skills from " + extractable[ei].name + ". You can retry from the material card.");
+          }
+        }
+        setProcessingMatId(null);
+        var refreshed2 = await DB.getCourses();
+        var rc2 = refreshed2.find(c => c.id === courseId);
+        if (rc2) { setCourses(refreshed2); setActive(rc2); }
+        await refreshMaterialSkillCounts(courseId);
+        addNotif("success", "Done! " + extractable.length + " material(s) processed.");
+      } else {
+        var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+        addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s).");
+      }
     } catch (err) {
       console.error("Course creation failed:", err);
       addNotif("error", "Course creation failed: " + err.message);
@@ -908,9 +1010,34 @@ function StudyInner({ setErrorCtx }) {
     setActive(updatedCourse);
     setFiles([]);
 
-    // Count total sections added
-    const totalSections = newMeta.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-    addNotif("success", "Added " + newMeta.length + " file(s) with " + totalSections + " section(s). Activate sections to add them to your curriculum.");
+    // Auto-extract skills from non-assignment materials
+    const extractable = newMeta.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
+    if (extractable.length > 0) {
+      addNotif("success", "Processing " + extractable.length + " material(s)...");
+      for (const mat of extractable) {
+        setStatus("Extracting skills: " + mat.name + "...");
+        setProcessingMatId(mat.id);
+        try {
+          await runExtractionV2(active.id, mat.id, {
+            onStatus: setStatus,
+            onNotif: addNotif,
+            onChapterComplete: (ch, cnt) => setStatus(mat.name + " — " + ch + ": " + cnt + " skills"),
+          });
+        } catch (e) {
+          console.error("Auto-extraction failed for", mat.name, e);
+          addNotif("warn", "Could not extract skills from " + mat.name + ". You can retry from the material card.");
+        }
+      }
+      setProcessingMatId(null);
+      const refreshed = await DB.getCourses();
+      const rc = refreshed.find(c => c.id === active.id);
+      if (rc) { setCourses(refreshed); setActive(rc); }
+      await refreshMaterialSkillCounts(active.id);
+      addNotif("success", "Done processing " + extractable.length + " material(s).");
+    } else {
+      const totalSections = newMeta.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+      addNotif("success", "Added " + newMeta.length + " file(s) with " + totalSections + " section(s).");
+    }
     } finally {
       setGlobalLock(null);
       setStatus("");
@@ -1696,7 +1823,7 @@ function StudyInner({ setErrorCtx }) {
               </div>
               <button onClick={createCourse} disabled={!rdy}
                 style={{ width: "100%", padding: "16px 24px", borderRadius: 12, border: "none", background: rdy ? T.ac : T.sf, color: rdy ? "#0F1115" : T.txM, fontSize: 15, fontWeight: 600, cursor: rdy ? "pointer" : "default" }}>
-                {!cName.trim() ? "Name your course to continue" : "Create Course & Extract Skills"}
+                {!cName.trim() ? "Name your course to continue" : "Create Course"}
               </button>
             </div>
           )}
@@ -1824,208 +1951,236 @@ function StudyInner({ setErrorCtx }) {
         {/* Materials List */}
         <div style={{ fontSize: 12, color: T.txD, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Course Materials ({active.materials.length})</div>
         {active.materials.map(mat => {
-          const clsLabel = CLS.find(c => c.v === mat.classification)?.l || mat.classification;
+          const matState = getMaterialState(mat);
+          const trust = computeTrustSignals(mat);
           const chunks = mat.chunks || [];
-          const extracted = chunks.filter(c => c.status === "extracted").length;
-          const failed = chunks.filter(c => c.status === "failed").length;
-          const skipped = chunks.filter(c => c.status === "skipped").length;
-          const pending = chunks.filter(c => c.status === "pending").length;
-          const hasNoChunks = chunks.length === 0;
-          const allExtracted = chunks.length > 0 && extracted === chunks.length;
-          const allSkipped = chunks.length > 0 && skipped === chunks.length;
-          
+          const failed = chunks.filter(c => c.status === "failed");
+          const retriable = failed.filter(c => (c.failCount || 0) < 2);
+          const permanentlyFailed = failed.filter(c => (c.failCount || 0) >= 2);
+          const isProcessing = matState === "reading" || matState === "analyzing" || matState === "extracting";
+          const isReady = matState === "ready";
+          const isError = matState === "error" || matState === "critical_error";
+          const progress = chunks.length > 0 ? Math.round(chunks.filter(c => c.status === "extracted").length / chunks.length * 100) : 0;
+          const sectionsExpanded = expandedMaterial === mat.id;
+
+          // Status badge config
+          const badges = {
+            reading: { bg: T.acS, color: T.ac, label: "Reading file...", dot: true },
+            analyzing: { bg: T.acS, color: T.ac, label: "Analyzing content...", dot: true },
+            extracting: { bg: T.acS, color: T.ac, label: "Finding skills...", dot: true },
+            ready: { bg: T.gnS, color: T.gn, label: "Ready to study", icon: "\u2713" },
+            error: { bg: T.amS, color: T.am, label: "Needs attention", icon: "\u26A0" },
+            critical_error: { bg: "rgba(248,113,113,0.1)", color: T.rd, label: "Processing failed", icon: "\u26A0" },
+          };
+          const badge = badges[matState] || badges.analyzing;
+
           return (
-            <div key={mat.id} style={{ background: T.sf, borderRadius: 12, marginBottom: 10, overflow: "hidden", border: "1px solid " + T.bd }}>
-              <div style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div key={mat.id} style={{ background: T.sf, borderRadius: 14, marginBottom: 12, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : T.bd), transition: "border-color 0.2s ease" }}>
+              {/* Card Header */}
+              <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 14 }}>
+                {/* Type icon */}
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: T.acS, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: T.ac, letterSpacing: "0.02em" }}>
+                    {({ textbook: "Tb", assignment: "As", notes: "Nt", lecture_transcript: "Tr", slides: "Sl", syllabus: "Sy" })[mat.classification] || "Dc"}
+                  </span>
+                </div>
+                {/* Name + metadata */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{mat.name}</div>
-                  <div style={{ fontSize: 12, color: T.txD, marginTop: 4 }}>{clsLabel}</div>
-                  <div style={{ fontSize: 11, color: T.txD, marginTop: 4, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                    {hasNoChunks && <span style={{ color: T.txM }}>Not yet processed</span>}
-                    {chunks.length > 0 && <span>{chunks.length} section{chunks.length !== 1 ? "s" : ""}</span>}
-                    {extracted > 0 && <span style={{ color: T.gn }}>{extracted} active</span>}
-                    {failed > 0 && <span style={{ color: "#F59E0B" }}>{failed} failed</span>}
-                    {skipped > 0 && <span style={{ color: T.txM }}>{skipped} inactive</span>}
-                    {pending > 0 && <span style={{ color: T.ac }}>{pending} pending</span>}
+                  <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.3 }}>{mat.name}</div>
+                  <div style={{ fontSize: 12, color: T.txD, marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span>{trust.clsLabel}</span>
+                    {trust.sectionCount > 0 && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.sectionCount} section{trust.sectionCount !== 1 ? "s" : ""}</span></>}
+                    {isReady && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.wordLabel} words</span></>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                  {/* Activate button for materials with no chunks (never processed or chunks lost) */}
-                  {hasNoChunks && (
-                    <button onClick={async () => {
-                      if (globalLock) return;
-                      setGlobalLock({ message: "Activating " + mat.name + "..." });
-                      try {
-                        // Material has no chunks — try to load content and create a synthetic chunk
-                        var doc = await DB.getDoc(active.id, mat.id);
-                        if (!doc || !doc.content) doc = await DB.getDoc(active.id, mat.id + "-c0");
-                        if (!doc || !doc.content) {
-                          addNotif("error", "No content found for " + mat.name + ". Try removing and re-uploading.");
-                          return;
-                        }
-                        // Create chunk metadata with status "extracted" (active) — no skill extraction here
-                        var chunkId = mat.id + "-c0";
-                        var matWithChunks = { ...mat, chunks: [{ id: chunkId, label: mat.name, charCount: doc.content.length, status: "extracted" }] };
-                        var updatedMats = active.materials.map(m => m.id !== mat.id ? m : matWithChunks);
-                        var updatedCourse = { ...active, materials: updatedMats };
-                        var allCourses = await DB.getCourses();
-                        allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                        await DB.saveCourses(allCourses);
-                        await DB.saveDoc(active.id, chunkId, doc);
-                        setCourses(allCourses); setActive(updatedCourse);
-                        addNotif("success", "Activated " + mat.name + ". Go to Skills to extract.");
-                      } catch (e) { addNotif("error", "Activation failed: " + e.message); }
-                      finally { setGlobalLock(null); }
-                    }}
-                      style={{ background: T.acS, border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Activate</button>
-                  )}
-                  
-                  {/* Deactivate button for single-section materials where active */}
-                  {allExtracted && chunks.length === 1 && (
-                    <button onClick={async () => {
-                      if (globalLock) return;
-                      setGlobalLock({ message: "Deactivating " + mat.name + "..." });
-                      try {
-                      // Mark all chunks as skipped (inactive)
-                      var updatedMats = active.materials.map(m => m.id !== mat.id ? m : {
-                        ...m,
-                        chunks: m.chunks.map(c => ({ ...c, status: "skipped" }))
-                      });
-                      var updatedCourse = { ...active, materials: updatedMats };
-                      var allCourses = await DB.getCourses();
-                      allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                      await DB.saveCourses(allCourses);
-                      setCourses(allCourses); setActive(updatedCourse);
+                {/* Status badge */}
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap", background: badge.bg, color: badge.color }}>
+                  {badge.dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: badge.color, animation: "pulse 1.5s ease-in-out infinite" }} />}
+                  {badge.icon && <span>{badge.icon}</span>}
+                  {badge.label}
+                </div>
+              </div>
 
-                      // Skills remain in DB (v2) — deactivation only changes chunk status
-                      addNotif("success", "Deactivated " + mat.name + ".");
-                      } catch (e) {
-                        console.error("Deactivation failed:", e);
-                        addNotif("error", "Failed to deactivate " + mat.name + ": " + e.message);
-                      } finally { setGlobalLock(null); }
-                    }}
-                      style={{ background: "transparent", border: "1px solid " + T.txM, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.txM, cursor: "pointer" }}>Deactivate</button>
+              {/* Card Body — Processing states */}
+              {isProcessing && (
+                <div style={{ padding: "14px 18px 16px", borderTop: "1px solid " + T.bd }}>
+                  {/* Progress bar */}
+                  <div style={{ width: "100%", height: 4, borderRadius: 2, background: T.bg, overflow: "hidden", marginBottom: 14 }}>
+                    {matState === "reading" ? (
+                      <div style={{ width: "40%", height: "100%", borderRadius: 2, background: "linear-gradient(90deg, transparent, " + T.ac + ", transparent)", animation: "shimmer 1.5s ease-in-out infinite" }} />
+                    ) : (
+                      <div style={{ height: "100%", borderRadius: 2, background: T.ac, transition: "width 0.4s ease", width: progress + "%" }} />
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: T.txD, lineHeight: 1.5 }}>
+                    {matState === "reading" && "Reading and parsing document..."}
+                    {matState === "analyzing" && "Analyzing " + chunks.length + " section" + (chunks.length !== 1 ? "s" : "") + "..."}
+                    {matState === "extracting" && <span>Extracting skills... <span style={{ color: T.ac, fontWeight: 600 }}>{trust.skillCount} found</span></span>}
+                  </div>
+                  {/* Emerging stats */}
+                  {chunks.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, background: T.bg, fontSize: 11, color: T.txD, animation: "fadeIn 0.3s" }}>{trust.sectionCount} sections</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, background: T.bg, fontSize: 11, color: T.txD, animation: "fadeIn 0.3s 0.15s both" }}>{trust.wordLabel} words</span>
+                    </div>
                   )}
-                  
-                  {/* Edit Sections for multi-section materials where all active - opens in deactivate mode */}
-                  {allExtracted && chunks.length > 1 && (
+                  {/* Actions — retry/remove if stuck (not actively extracting right now) */}
+                  {!processingMatId && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+                      <button onClick={async () => {
+                        if (globalLock) return;
+                        setGlobalLock({ message: "Extracting skills..." });
+                        setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
+                        try {
+                          var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " — " + ch + ": " + cnt + " skills") });
+                          var refreshed = await DB.getCourses(); var uc = refreshed.find(c => c.id === active.id);
+                          if (uc) { setCourses(refreshed); setActive(uc); }
+                          refreshMaterialSkillCounts(active.id);
+                          addNotif(result.success ? "success" : "warn", "Extraction complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
+                        } catch (e) { addNotif("error", "Extraction failed: " + e.message); }
+                        finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
+                      }}
+                        disabled={!!globalLock}
+                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + T.ac, background: T.acS, color: T.ac, fontSize: 11, fontWeight: 600, cursor: globalLock ? "not-allowed" : "pointer", opacity: globalLock ? 0.5 : 1 }}>
+                        Retry Extraction
+                      </button>
+                      <button onClick={() => {
+                          if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
+                          else setPendingConfirm({ type: "removeMat", id: mat.id });
+                        }}
+                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txM, fontSize: 11, fontWeight: 500, cursor: "pointer" }}>
+                        {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Card Body — Ready state: trust signals + actions */}
+              {isReady && (
+                <div style={{ padding: "14px 18px", borderTop: "1px solid " + T.bd }}>
+                  {/* Stat row */}
+                  <div style={{ display: "flex", gap: 20, marginBottom: 14, flexWrap: "wrap" }}>
+                    <div><div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{trust.sectionCount}</div><div style={{ fontSize: 11, color: T.txM, textTransform: "uppercase", letterSpacing: "0.04em" }}>sections</div></div>
+                    <div><div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{trust.wordLabel}</div><div style={{ fontSize: 11, color: T.txM, textTransform: "uppercase", letterSpacing: "0.04em" }}>words</div></div>
+                    <div><div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{trust.clsLabel}</div><div style={{ fontSize: 11, color: T.txM, textTransform: "uppercase", letterSpacing: "0.04em" }}>type</div></div>
+                  </div>
+                  {/* Skill summary */}
+                  {trust.skillCount > 0 && (
+                    <>
+                      <div style={{ fontSize: 13, color: T.txD, marginBottom: 8, lineHeight: 1.5 }}>
+                        <span style={{ color: T.tx, fontWeight: 600 }}>{trust.skillCount} skills</span>{" extracted across "}
+                        <span style={{ color: T.tx, fontWeight: 600 }}>{trust.categoryCount} topic area{trust.categoryCount !== 1 ? "s" : ""}</span>
+                      </div>
+                      {trust.topCats.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+                          {trust.topCats.map(cat => <span key={cat} style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: T.ac, fontWeight: 500 }}>{cat}</span>)}
+                          {trust.overflow > 0 && <span style={{ background: "transparent", border: "1px solid " + T.bd, borderRadius: 6, padding: "3px 8px", fontSize: 11, color: T.txM }}>+{trust.overflow} more</span>}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {/* Actions */}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button onClick={() => { setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
+                      style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "opacity 0.15s ease" }}
+                      onMouseEnter={e => e.currentTarget.style.opacity = "0.85"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>Start Studying</button>
+                    {trust.skillCount > 0 && (
+                      <button onClick={async () => {
+                        const sk = await loadSkillsV2(active.id);
+                        setSkillViewData({ skills: sk, isV2: true });
+                        setShowSkills(true);
+                      }}
+                        style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "all 0.15s ease" }}
+                        onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = T.bd; }}>Review Skills</button>
+                    )}
                     <button onClick={() => {
-                      var activeIds = new Set(chunks.map(c => c.id));
-                      setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: activeIds, mode: "deactivate" });
-                    }}
-                      style={{ background: "transparent", border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Edit Sections</button>
-                  )}
-                  
-                  {/* Activate button for single-section materials where inactive */}
-                  {allSkipped && chunks.length === 1 && (
-                    <button onClick={async () => {
-                      if (globalLock) return;
-                      setGlobalLock({ message: "Activating " + mat.name + "..." });
-                      try {
-                      var updatedMats = active.materials.map(m => m.id !== mat.id ? m : {
-                        ...m,
-                        chunks: m.chunks.map(c => ({ ...c, status: "extracted" }))
-                      });
-                      var updatedCourse = { ...active, materials: updatedMats };
-                      var allCourses = await DB.getCourses();
-                      allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                      await DB.saveCourses(allCourses);
-                      setCourses(allCourses); setActive(updatedCourse);
-                      addNotif("success", "Activated " + mat.name);
-                      } finally { setGlobalLock(null); }
-                    }}
-                      style={{ background: T.acS, border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Activate</button>
-                  )}
-                  
-                  {/* Select Sections for multi-section materials where all inactive */}
-                  {allSkipped && chunks.length > 1 && (
-                    <button onClick={() => {
-                      var allChunkIds = new Set(chunks.map(c => c.id));
-                      setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: allChunkIds, mode: "activate" });
-                    }}
-                      style={{ background: T.acS, border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Select Sections</button>
-                  )}
-                  
-                  {/* Edit Sections for multi-section materials with mixed states */}
-                  {!allSkipped && !allExtracted && chunks.length > 1 && (
-                    <button onClick={() => {
-                      var inactiveChunkIds = new Set(chunks.filter(c => c.status === "skipped" || c.status === "failed").map(c => c.id));
-                      setChunkPicker({ courseId: active.id, materials: [mat], selectedChunks: inactiveChunkIds, mode: "activate" });
-                    }}
-                      style={{ background: "transparent", border: "1px solid " + T.ac, borderRadius: 6, padding: "6px 12px", fontSize: 11, color: T.ac, cursor: "pointer" }}>Edit Sections</button>
-                  )}
-                  {(() => {
-                    // Check if any failed chunks have been retried too many times
-                    const failedChunks = chunks.filter(c => c.status === "failed");
-                    const retriableChunks = failedChunks.filter(c => (c.failCount || 0) < 2);
-                    const permanentlyFailed = failedChunks.filter(c => (c.failCount || 0) >= 2);
-                    
-                    return (
-                      <>
-                        {retriableChunks.length > 0 && (
-                          <button onClick={async () => {
-                            if (globalLock) return;
-                            setGlobalLock({ message: "Retrying failed extractions..." });
-                            setProcessingMatId(mat.id);
-                            setBusy(true);
-                            setStatus("Starting retry...");
-                            extractionCancelledRef.current = false;
-                            try {
-                              var result = await runExtractionV2(active.id, mat.id, {
-                                onStatus: setStatus,
-                                onNotif: addNotif,
-                                onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                              });
-                              var refreshed = await DB.getCourses();
-                              var updatedCourse = refreshed.find(c => c.id === active.id);
-                              if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
-                              addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
-                            } catch (e) { addNotif("error", "Retry failed: " + e.message); }
-                            finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
-                          }}
-                            style={{ background: "transparent", border: "1px solid #F59E0B", borderRadius: 6, padding: "6px 12px", fontSize: 11, color: "#F59E0B", cursor: "pointer" }}>
-                            Retry ({retriableChunks.length})
-                          </button>
-                        )}
-                        {permanentlyFailed.length > 0 && (
-                          <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
-                            style={{ background: "transparent", border: "1px solid " + T.rd, borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer", transition: "all 0.15s ease" }}
-                            onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
-                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                            Log Error ({permanentlyFailed.length})
-                          </button>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <button onClick={() => {
-                      if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
-                      else setPendingConfirm({ type: "removeMat", id: mat.id });
-                    }}
-                      style={{ background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 6, padding: "8px 16px", fontSize: 11, color: T.rd, cursor: "pointer", transition: "all 0.15s ease" }}
+                        if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
+                        else setPendingConfirm({ type: "removeMat", id: mat.id });
+                      }}
+                      style={{ marginLeft: "auto", background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 8, padding: "8px 14px", fontSize: 11, color: T.rd, cursor: "pointer", transition: "all 0.15s ease" }}
                       onMouseEnter={e => e.currentTarget.style.background = "rgba(248,113,113,0.06)"}
                       onMouseLeave={e => e.currentTarget.style.background = "none"}>
                       {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
                     </button>
+                  </div>
+                  {/* Silent error note */}
+                  {failed.length > 0 && failed.length <= chunks.length * 0.25 && (
+                    <div style={{ fontSize: 11, color: T.txM, marginTop: 8, padding: "6px 10px", background: T.bg, borderRadius: 6 }}>
+                      {failed.length} section{failed.length !== 1 ? "s" : ""} skipped (content too short or extraction issue)
+                    </div>
+                  )}
                 </div>
-              </div>
-              {/* Chunk list - for multi-section materials, just show status */}
-              {chunks.length > 1 && (
-                <div style={{ borderTop: "1px solid " + T.bd, maxHeight: 250, overflowY: "auto" }}>
-                  {chunks.map((ch, ci) => {
-                    var statusColor = ch.status === "extracted" ? T.gn : ch.status === "failed" ? "#F59E0B" : ch.status === "skipped" ? T.txM : T.ac;
-                    var statusIcon = ch.status === "extracted" ? "\u2713" : ch.status === "failed" ? "\u2717" : ch.status === "skipped" ? "\u2013" : "\u25CB";
-                    var statusLabel = ch.status === "extracted" ? "active" : ch.status === "failed" ? "failed" : ch.status === "skipped" ? "inactive" : "activating";
-                    return (
-                      <div key={ci} style={{ padding: "8px 14px 8px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: ci < chunks.length - 1 ? "1px solid " + T.bg : "none", fontSize: 12 }}>
-                        <span style={{ color: statusColor, fontWeight: 600, width: 16, textAlign: "center" }}>{statusIcon}</span>
-                        <span style={{ color: ch.status === "skipped" ? T.txM : T.tx, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.label}</span>
-                        <span style={{ color: T.txD, fontSize: 11, marginRight: 8 }}>{(ch.charCount || 0).toLocaleString()}</span>
-                        <span style={{ fontSize: 10, color: statusColor }}>{statusLabel}</span>
-                      </div>
-                    );
-                  })}
+              )}
+
+              {/* Card Body — Error states */}
+              {isError && (
+                <div style={{ padding: "14px 18px", borderTop: "1px solid " + T.bd }}>
+                  <div style={{ fontSize: 13, color: matState === "critical_error" ? T.txD : T.am, marginBottom: 4, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <span>{matState === "critical_error" ? "\u26A0" : "\u26A0"}</span>
+                    <span>{matState === "critical_error"
+                      ? "This file couldn't be fully processed. Some content may not be compatible."
+                      : failed.length + " section" + (failed.length !== 1 ? "s" : "") + " couldn't be processed."
+                    }</span>
+                  </div>
+                  {matState === "error" && <div style={{ fontSize: 12, color: T.txD, marginBottom: 14, paddingLeft: 22 }}>This usually resolves on retry.</div>}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {retriable.length > 0 && (
+                      <button onClick={async () => {
+                        if (globalLock) return;
+                        setGlobalLock({ message: "Retrying..." });
+                        setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
+                        try {
+                          var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills") });
+                          var refreshed = await DB.getCourses(); var uc = refreshed.find(c => c.id === active.id);
+                          if (uc) { setCourses(refreshed); setActive(uc); }
+                          refreshMaterialSkillCounts(active.id);
+                          addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
+                        } catch (e) { addNotif("error", "Retry failed: " + e.message); }
+                        finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
+                      }}
+                        style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.am, background: T.amS, color: T.am, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                        Retry ({retriable.length})
+                      </button>
+                    )}
+                    {permanentlyFailed.length > 0 && (
+                      <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
+                        style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
+                        View Details
+                      </button>
+                    )}
+                    <button onClick={() => {
+                        if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
+                        else setPendingConfirm({ type: "removeMat", id: mat.id });
+                      }}
+                      style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.rd, background: "transparent", color: T.rd, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
+                      {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
+                    </button>
+                  </div>
                 </div>
+              )}
+
+              {/* Expandable section list */}
+              {chunks.length > 1 && isReady && (
+                <>
+                  <div onClick={() => setExpandedMaterial(sectionsExpanded ? null : mat.id)}
+                    style={{ padding: "8px 18px", borderTop: "1px solid " + T.bd, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", transition: "background 0.15s ease" }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.sfH} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <span style={{ fontSize: 12, color: T.txM }}>{trust.sectionCount} sections</span>
+                    <span style={{ fontSize: 10, color: T.txM }}>{sectionsExpanded ? "\u25B4" : "\u25BE"}</span>
+                  </div>
+                  {sectionsExpanded && (
+                    <div style={{ maxHeight: 250, overflowY: "auto" }}>
+                      {chunks.map((ch, ci) => (
+                        <div key={ci} style={{ padding: "6px 18px 6px 32px", display: "flex", alignItems: "center", gap: 8, fontSize: 12, borderBottom: ci < chunks.length - 1 ? "1px solid " + T.bg : "none" }}>
+                          <span style={{ color: T.tx, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ch.label}</span>
+                          <span style={{ color: T.txM, fontSize: 11, flexShrink: 0 }}>{(ch.charCount || 0).toLocaleString()} chars</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );
@@ -2328,84 +2483,6 @@ function StudyInner({ setErrorCtx }) {
           </div>
         )}
 
-        {/* Extract Skills button */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center" }}>
-          <button disabled={!!globalLock} onClick={async () => {
-            if (globalLock) return;
-            setGlobalLock({ message: "Extracting skills from activated materials..." });
-            setBusy(true); setStatus("Scanning chunks for missing skills...");
-            extractionCancelledRef.current = false;
-            try {
-              // Smart check: find activated chunks that have no saved skills in DB
-              var matsToReindex = [];
-              var resetCount = 0;
-              for (var mat of (active.materials || [])) {
-                var chunks = mat.chunks || [];
-                var updatedChunks = [];
-                for (var ch of chunks) {
-                  if (ch.status === "skipped") { updatedChunks.push(ch); continue; }
-                  // Check if this chunk has v2 skill bindings in DB
-                  var bindings = await ChunkSkillBindings.getByChunk(ch.id);
-                  if (!bindings || bindings.length === 0) {
-                    // No skills for this chunk — reset to pending so extraction picks it up
-                    updatedChunks.push({ ...ch, status: "pending" });
-                    resetCount++;
-                  } else {
-                    updatedChunks.push(ch);
-                  }
-                }
-                matsToReindex.push({ ...mat, chunks: updatedChunks });
-              }
-
-              if (resetCount === 0) {
-                // All activated chunks already have skills — just load from DB
-                setStatus("All sections extracted. Loading skill tree...");
-                var sk = await loadSkillsV2(active.id);
-                if (sk.length > 0) {
-                  // V2: skills already in DB, just display
-                  setSkillViewData({ skills: sk, isV2: true });
-                  addNotif("success", "Skill tree loaded. " + sk.length + " skills.");
-                }
-              } else {
-                // Save reset statuses and run extraction
-                setStatus("Extracting " + resetCount + " section(s)...");
-                var updatedCourse = { ...active, materials: matsToReindex };
-                var allCourses = await DB.getCourses();
-                allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                await DB.saveCourses(allCourses);
-                setCourses(allCourses); setActive(updatedCourse);
-
-                // Re-extract with identity matching
-                var matToReextract = matsToReindex.find(m => (m.chunks || []).length > 0 && m.classification !== "assignment");
-                if (matToReextract) {
-                  var result = await runExtractionV2(active.id, matToReextract.id, {
-                    onStatus: setStatus,
-                    onNotif: addNotif,
-                    onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                  });
-                  var refreshed = await DB.getCourses();
-                  var rc = refreshed.find(c => c.id === active.id);
-                  if (rc) { setCourses(refreshed); setActive(rc); }
-                  sk = await loadSkillsV2(active.id);
-                  setSkillViewData({ skills: sk, isV2: true });
-                  addNotif(result.success ? "success" : "warn",
-                    "Extraction complete. " + (result.totalSkills || 0) + " skills.");
-                } else {
-                  addNotif("error", "No materials with sections to extract from.");
-                }
-              }
-            } catch (e) {
-              console.error("Extraction failed:", e);
-              addNotif("error", "Extraction failed: " + e.message);
-            } finally {
-              setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
-            }
-          }}
-            style={{ padding: "8px 16px", background: T.acS, border: "1px solid " + T.ac, borderRadius: 8, color: T.ac, cursor: globalLock ? "default" : "pointer", fontSize: 13, fontWeight: 600, opacity: globalLock ? 0.5 : 1 }}>
-            Extract Skills
-          </button>
-        </div>
-
         {/* Reference Taxonomy */}
         {skillViewData?.refTax && (
           <div style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: 14, marginBottom: 20 }}>
@@ -2417,7 +2494,7 @@ function StudyInner({ setErrorCtx }) {
         {/* Skills by Category */}
         {(() => {
           var skills = skillViewData?.skills || [];
-          if (!skills.length) return <div style={{ color: T.txD, textAlign: "center", padding: 40 }}>No skills yet. Activate sections from your materials, then click Extract Skills.</div>;
+          if (!skills.length) return <div style={{ color: T.txD, textAlign: "center", padding: 40 }}>No skills yet. Upload materials to get started.</div>;
           
           var cats = {};
           for (var s of skills) {

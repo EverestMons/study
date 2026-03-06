@@ -66,7 +66,7 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
         id: chunkIds[i],
         label: ch.label,
         charCount: ch.charCount,
-        status: 'skipped', // Not yet activated for extraction
+        status: 'pending', // Auto-queued for extraction
       })),
     };
     mat.totalChars = mat.chunks.reduce((s, c) => s + c.charCount, 0);
@@ -93,7 +93,7 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
         id: chunkId,
         label: ch.title || "Chapter " + (i + 1),
         charCount: content.length,
-        status: "skipped"
+        status: "pending"
       });
     }
     mat.totalChars = file.totalChars || mat.chunks.reduce((s, c) => s + c.charCount, 0);
@@ -104,7 +104,7 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
       id: chunkId,
       label: file.name,
       charCount: file.content.length,
-      status: "skipped"
+      status: "pending"
     });
     mat.charCount = file.content.length;
   }

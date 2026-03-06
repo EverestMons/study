@@ -37,6 +37,7 @@ export const CSS = [
   "@keyframes bookSlide4{0%,100%{transform:translateX(0)}25%{transform:translateY(-7px)}50%{transform:translateX(-6px) translateY(-7px)}70%{transform:translateX(-6px)}85%{transform:translateX(0)}}",
   "@keyframes shelfPulse{0%,100%{opacity:.5}50%{opacity:.8}}",
   "@keyframes dotPulse{0%,100%{opacity:.2;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}",
+  "@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}",
 ].join("\n");
 
 // --- Markdown Renderer ---
