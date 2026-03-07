@@ -43,6 +43,7 @@ knowledge/
 |---|---|---|---|
 | `app-jsx-decomposition-2026-03-06.md` | 2026-03-06 | Planner / Study Systems Analyst | Architecture blueprint for App.jsx decomposition — context design, file structure, state-to-screen dependency map, chat sub-component boundaries |
 | `decomposition-validation-2026-03-06.md` | 2026-03-06 | Study Systems Analyst | Validation of blueprint — approved with amendments (hook count corrections, ManageScreen underestimate, rendering order concern, missing state vars) |
+| `stability-hardening-2026-03-06.md` | 2026-03-06 | Study Systems Analyst | Stability hardening blueprint — 5 issues (S1–S5) cataloged with fix specs. Targets white-screen crashes, data-loss race conditions, duplicate error handlers. |
 
 ## Development
 
@@ -51,12 +52,16 @@ knowledge/
 | `phase1-context-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 1: StudyContext.jsx (929 lines) + App.jsx thin shell (147 lines) + ScreenRouter.jsx (3,375 lines) |
 | `phase2-screen-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 2a: Extracted HomeScreen, UploadScreen, ManageScreen, NotifsScreen + ErrorDisplay, GlobalLockOverlay, SettingsModal |
 | `phase2b-screen-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 2b: Extracted ProfileScreen, MaterialsScreen, SkillsScreen. ScreenRouter reduced from 2,854 to 1,860 lines |
+| `phase4-study-decomposition-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 4: Study screen decomposed into 10 sub-components + layout shell. ScreenRouter reduced from 1,860 to 62 lines. |
+| `stability-hardening-2026-03-06.md` | 2026-03-06 | Study Developer | Stability hardening dev log — S1–S5 fixes applied to StudyContext.jsx and main.jsx. No features, no schema changes. |
+| `stability-hardening-build-verification-2026-03-06.md` | 2026-03-06 | Release Build Agent | Release build verification — `npx tauri build` passes, Study.app + .dmg produced, binary boots without white screen. |
 
 ## QA
 
 | File | Date | Author | Summary |
 |---|---|---|---|
 | `phase4-security-testing-2026-03-06.md` | 2026-03-06 | Study Security & Testing Analyst | Phase 4 regression testing — PASS. Session state persistence, global lock, error boundaries, stale state audit, FSRS unchanged. Confirmed pre-existing bug S1. |
+| `stability-hardening-testing-2026-03-06.md` | 2026-03-06 | Study Security & Testing Analyst | Stability hardening QA — all 5 fixes (S1–S5) verified via static analysis. PASS across the board. Includes manual runtime test recommendations. |
 
 ## Design
 

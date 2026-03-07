@@ -83,6 +83,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const sessionSkillLog = useRef([]);
   const cachedSessionCtx = useRef(null);
   const extractionCancelledRef = useRef(false);
+  const coursesLoaded = useRef(false);
   const [sessionSummary, setSessionSummary] = useState(null);
   const sessionStartTime = useRef(null);
   const discussedChunks = useRef(new Set());
@@ -196,21 +197,31 @@ export function StudyProvider({ children, setErrorCtx }) {
     return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onRej); };
   }, []);
 
-  useEffect(() => { (async () => {
-    try {
-      setCourses(await DB.getCourses());
-      const key = await getApiKey();
-      setApiKeyInput(key);
-      if (!key) setShowSettings(true);
-      setApiKeyLoaded(true);
-    } catch (e) {
-      console.error("Init failed:", e);
-      setAsyncError({ message: "Failed to initialize database: " + e.message, stack: e.stack || "" });
-    }
-    setReady(true);
-  })(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const loaded = await DB.getCourses();
+        if (cancelled) return;
+        setCourses(loaded);
+        coursesLoaded.current = true;
+        const key = await getApiKey();
+        if (cancelled) return;
+        setApiKeyInput(key);
+        if (!key) setShowSettings(true);
+        setApiKeyLoaded(true);
+        setReady(true);
+      } catch (e) {
+        console.error("Init failed:", e);
+        if (cancelled) return;
+        setAsyncError({ message: "Failed to initialize database: " + e.message, stack: e.stack || "" });
+        setReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  useEffect(() => { if (ready && !globalLock) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock]);
+  useEffect(() => { if (ready && !globalLock && !asyncError && coursesLoaded.current) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock, asyncError]);
 
   // Prevent browser default of opening dropped files
   useEffect(() => {
@@ -499,8 +510,8 @@ export function StudyProvider({ children, setErrorCtx }) {
           await DB.saveJournal(course.id, journal.slice(-50));
         }
       }
+      await DB.saveChat(course.id, []);
     } catch (e) { console.error("Journal capture on enter:", e); }
-    await DB.saveChat(course.id, []);
   };
 
   // --- Mode Selection ---

@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-03-06
-**Updated By:** Product Analyst (post Phase 4 decomposition)
+**Updated By:** Product Analyst (post stability hardening)
 **Overall Status:** 🟢 Active
 
 ---
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. Next priorities: parent skill layer, cross-skill concept links.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. **Stability hardening complete** — 5 fixes (S1–S5) targeting white-screen crashes, data-loss race conditions, and duplicate error handlers. Release build verified, no regressions. Next priorities: parent skill layer, cross-skill concept links.
 
 ---
 
@@ -17,9 +17,9 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
 | Research | Idle | — | No knowledge deposited |
-| Systems Architecture | Active | 2026-03-06 | Architecture blueprint for App.jsx decomposition delivered (`knowledge/architecture/`) |
-| Development | Active | 2026-03-06 | 65 commits. Latest: Phase 4 study screen decomposition (refactor, no feature changes). |
-| Security & Testing | Active | 2026-03-06 | Phase 4 security & testing report (`knowledge/qa/`). 1 pre-existing bug found and fixed (S1: `setSessionElapsed`). |
+| Systems Architecture | Active | 2026-03-06 | Architecture blueprints for decomposition + stability hardening (`knowledge/architecture/`) |
+| Development | Active | 2026-03-06 | 68 commits. Latest: Stability hardening (S1–S5) — race conditions, data-loss guards, error handler cleanup. Release build verified. |
+| Security & Testing | Active | 2026-03-06 | Stability hardening QA report (`knowledge/qa/`). All 5 fixes verified via static analysis. |
 | Design & Experience | Active | 2026-03-06 | Phase 4 UX validation report (`knowledge/design/validation/`). All flows verified identical. |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
 | Documentation | Idle | — | README is blank; 26 design docs exist in docs/ folder but no user-facing documentation |
@@ -44,7 +44,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | SQLite-only storage | ✅ Live | localStorage fully removed; WAL mode; transaction serialization |
 | DOCX export | ✅ Live | Assignment submission export |
 | Reset Skill Data (dev tool) | ✅ Live | Settings panel |
-| Error safety net | ✅ Live | ErrorBoundary in App.jsx + async error listeners in StudyContext + 3s mount-failure fallback in index.html |
+| Error safety net | ✅ Live | ErrorBoundary in App.jsx + async error listeners in StudyContext + 3s mount-failure fallback in index.html. Stability-hardened: StrictMode cancellation guard, coursesLoaded ref, auto-save gated on !asyncError. |
 | PDF support | ✅ Live | pdfjs-dist (lazy-loaded), heading detection via font size analysis, page-based fallback, metadata/outline extraction |
 | File drag-and-drop | ✅ Live | Tauri native drop disabled so WebView receives drag events |
 | DB Migrations 001 + 002 | ✅ Applied | v2 schema + skill extraction v2 (concept_key, category, blooms_level, evidence, soft-delete) |
@@ -104,6 +104,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Date | Work |
 |---|---|
+| 2026-03-06 | **Stability hardening (S1–S5):** Fixed 5 stability issues — enterStudy unprotected await (S1), setReady outside try/catch (S2), StrictMode cancellation guard (S3), duplicate error listeners removed from main.jsx (S4), auto-save coursesLoaded ref guard (S5). No features, no schema changes. Release build verified — binary boots, no white screen. |
 | 2026-03-06 | **Codebase decomposition (Phases 1–4):** Split 4,416-line App.jsx into 42 files. Phase 1: StudyContext extraction. Phase 2/2b: 8 screen components + 3 shared components. Phase 4: Study screen into 10 sub-components + layout shell, ScreenRouter reduced from 1,860 to 62 lines. Pure refactor, no feature changes. Bug S1 (`setSessionElapsed` missing from context) found and fixed. 6 latent import bugs from Phase 1 proactively fixed. UX validation + security/testing reports written. |
 | 2026-03-06 | PDF support via pdfjs-dist, lazy-loading safety, mount-failure detection, file drop fix, material card redesign |
 | 2026-03-05 | Chunking pipeline hardening (bundled JSZip, zip bomb defense, stack-based XML), UX polish |
@@ -124,16 +125,16 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Source files | 42 JS/JSX files |
 | Total LOC | ~12,960 |
 | Design docs | 26 MD files in docs/ |
-| Knowledge base | 8 MD files in knowledge/ (architecture, development, design, QA) |
-| Git commits | 65 |
+| Knowledge base | 13 MD files in knowledge/ (architecture, development, design, QA) |
+| Git commits | 68 |
 | Most recent commit | 2026-03-06 |
 
 ### Source File Breakdown (post-decomposition)
 
 | Layer | Files | LOC | Key Files |
 |---|---|---|---|
-| Entry | 2 | 170 | App.jsx (147), main.jsx (23) |
-| State & Routing | 2 | 991 | StudyContext.jsx (929), ScreenRouter.jsx (62) |
+| Entry | 2 | 157 | App.jsx (147), main.jsx (10) |
+| State & Routing | 2 | 1,001 | StudyContext.jsx (939), ScreenRouter.jsx (62) |
 | Screens | 8 | 1,563 | MaterialsScreen (555), ProfileScreen (339), UploadScreen (169), SkillsScreen (153), StudyScreen (116), HomeScreen (94), NotifsScreen (73), ManageScreen (64) |
 | Shared Components | 3 | 212 | SettingsModal (93), ErrorDisplay (73), GlobalLockOverlay (46) |
 | Study Sub-Components | 10 | 2,094 | ModePicker (411), PracticeMode (394), SkillsPanel (205), MaterialsPanel (186), ChunkPicker (149), InputBar (131), AssignmentPanel (120), StudyScreen layout (116), SessionSummary (104), MessageList (95), NotifPanel (83) |
@@ -184,5 +185,26 @@ The original monolithic `App.jsx` (4,416 lines) has been fully decomposed across
 - `knowledge/development/phase1-context-extraction-2026-03-06.md` — Phase 1 dev log
 - `knowledge/development/phase2-screen-extraction-2026-03-06.md` — Phase 2 dev log
 - `knowledge/development/phase2b-screen-extraction-2026-03-06.md` — Phase 2b dev log
+- `knowledge/development/phase4-study-decomposition-2026-03-06.md` — Phase 4 dev log
 - `knowledge/design/validation/phase4-study-screen-decomposition-2026-03-06.md` — Phase 4 UX validation
 - `knowledge/qa/phase4-security-testing-2026-03-06.md` — Phase 4 security & testing report
+
+---
+
+## Stability Hardening Status
+
+5 stability fixes applied to StudyContext.jsx and main.jsx. No features, no schema changes.
+
+| Fix | Severity | File | Description | Status |
+|-----|----------|------|-------------|--------|
+| S1 | Medium | StudyContext.jsx | `enterStudy` unprotected `await DB.saveChat` — moved inside try/catch | **Fixed** |
+| S2 | High | StudyContext.jsx | `setReady(true)` outside try/catch — moved inside, error path gates auto-save | **Fixed** |
+| S3 | Medium | StudyContext.jsx | No StrictMode cancellation guard — added `cancelled` flag + cleanup | **Fixed** |
+| S4 | Low | main.jsx | Duplicate error listeners appending `<pre>` elements — removed (23→10 lines) | **Fixed** |
+| S5 | High | StudyContext.jsx | Auto-save could write empty courses — `coursesLoaded` ref guard added | **Fixed** |
+
+**Knowledge artifacts:**
+- `knowledge/architecture/stability-hardening-2026-03-06.md` — blueprint (issue catalog + fix specs)
+- `knowledge/development/stability-hardening-2026-03-06.md` — dev log
+- `knowledge/development/stability-hardening-build-verification-2026-03-06.md` — release build verification
+- `knowledge/qa/stability-hardening-testing-2026-03-06.md` — QA report (all 5 fixes PASS)
