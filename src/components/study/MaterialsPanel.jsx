@@ -8,7 +8,7 @@ import { useStudy } from "../../StudyContext.jsx";
 export default function MaterialsPanel() {
   const {
     active, setActive, setCourses,
-    files, setFiles, drag, setDrag, parsing,
+    files, setFiles, drag, setDrag,
     busy, setBusy,
     status, setStatus, processingMatId, setProcessingMatId,
     globalLock, setGlobalLock,

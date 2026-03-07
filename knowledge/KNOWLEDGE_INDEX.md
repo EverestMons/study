@@ -1,6 +1,6 @@
 # study — Knowledge Index
 **Maintained By:** Study Documentation Analyst
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-03-06
 
 ---
 
@@ -41,19 +41,22 @@ knowledge/
 
 | File | Date | Author | Summary |
 |---|---|---|---|
-| *(none yet)* | — | — | — |
+| `app-jsx-decomposition-2026-03-06.md` | 2026-03-06 | Planner / Study Systems Analyst | Architecture blueprint for App.jsx decomposition — context design, file structure, state-to-screen dependency map, chat sub-component boundaries |
+| `decomposition-validation-2026-03-06.md` | 2026-03-06 | Study Systems Analyst | Validation of blueprint — approved with amendments (hook count corrections, ManageScreen underestimate, rendering order concern, missing state vars) |
 
 ## Development
 
 | File | Date | Author | Summary |
 |---|---|---|---|
-| *(none yet)* | — | — | — |
+| `phase1-context-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 1: StudyContext.jsx (929 lines) + App.jsx thin shell (147 lines) + ScreenRouter.jsx (3,375 lines) |
+| `phase2-screen-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 2a: Extracted HomeScreen, UploadScreen, ManageScreen, NotifsScreen + ErrorDisplay, GlobalLockOverlay, SettingsModal |
+| `phase2b-screen-extraction-2026-03-06.md` | 2026-03-06 | Study Developer | Phase 2b: Extracted ProfileScreen, MaterialsScreen, SkillsScreen. ScreenRouter reduced from 2,854 to 1,860 lines |
 
 ## QA
 
 | File | Date | Author | Summary |
 |---|---|---|---|
-| *(none yet)* | — | — | — |
+| `phase4-security-testing-2026-03-06.md` | 2026-03-06 | Study Security & Testing Analyst | Phase 4 regression testing — PASS. Session state persistence, global lock, error boundaries, stale state audit, FSRS unchanged. Confirmed pre-existing bug S1. |
 
 ## Design
 
@@ -65,7 +68,7 @@ knowledge/
 
 | File | Date | Author | Summary |
 |---|---|---|---|
-| *(none yet)* | — | — | — |
+| `phase4-study-screen-decomposition-2026-03-06.md` | 2026-03-06 | Study UX Validator | Phase 4 UX validation — PASS. All screen transitions, 5-state material cards, practice mode, assignment sidebar, session summary verified identical. 1 pre-existing bug found (S1). 6 latent import bugs fixed. |
 
 ## Product
 

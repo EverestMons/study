@@ -7,8 +7,7 @@ import { useStudy } from "../../StudyContext.jsx";
 export default function SkillsPanel() {
   const {
     active,
-    busy, setBusy,
-    status, setStatus,
+    busy, setBusy, setStatus,
     showSkills, skillViewData, setSkillViewData,
     expandedCats, setExpandedCats,
     addNotif,

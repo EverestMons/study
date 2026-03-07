@@ -4,11 +4,10 @@ import { DB } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
 import {
-  effectiveStrength, strengthToTier,
+  strengthToTier,
   TIERS, createPracticeSet, generateProblems,
   loadPracticeMaterialCtx,
 } from "../../lib/study.js";
-import { currentRetrievability } from "../../lib/fsrs.js";
 import { useStudy } from "../../StudyContext.jsx";
 
 export default function ModePicker() {
