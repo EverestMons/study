@@ -2,7 +2,6 @@ import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { effectiveStrength, generateSessionEntry } from "../lib/study.js";
 import { useStudy } from "../StudyContext.jsx";
-import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import MaterialsPanel from "../components/study/MaterialsPanel.jsx";
 import SkillsPanel from "../components/study/SkillsPanel.jsx";
 import PracticeMode from "../components/study/PracticeMode.jsx";
@@ -18,7 +17,6 @@ export default function StudyScreen() {
   const {
     msgs, setMsgs, setInput, setCodeMode,
     setScreen, active,
-    globalLock,
     sessionMode, setSessionMode,
     pickerData, setPickerData,
     chunkPicker, setChunkPicker,
@@ -37,8 +35,6 @@ export default function StudyScreen() {
   } = useStudy();
 
   return (
-    <>
-    {globalLock && <GlobalLockOverlay />}
     <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
       {/* Top bar */}
@@ -111,6 +107,5 @@ export default function StudyScreen() {
       <InputBar />
       <SessionSummary />
     </div>
-    </>
   );
 }

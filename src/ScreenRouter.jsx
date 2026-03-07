@@ -28,6 +28,9 @@ export default function ScreenRouter() {
     </div>
   );
 
+  // --- GLOBAL LOCK OVERLAY ---
+  if (globalLock) return <GlobalLockOverlay />;
+
   // --- SETTINGS MODAL ---
   if (showSettings) return <SettingsModal />;
 
@@ -54,9 +57,6 @@ export default function ScreenRouter() {
 
   // --- STUDY / CHAT SCREEN ---
   if (screen === "study" && active) return <StudyScreen />;
-
-  // Always render lock overlay on top if active
-  if (globalLock) return <GlobalLockOverlay />;
 
   return null;
 }
