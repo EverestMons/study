@@ -11,6 +11,7 @@ import NotifsScreen from "./screens/NotifsScreen.jsx";
 import ProfileScreen from "./screens/ProfileScreen.jsx";
 import MaterialsScreen from "./screens/MaterialsScreen.jsx";
 import SkillsScreen from "./screens/SkillsScreen.jsx";
+import ScheduleScreen from "./screens/ScheduleScreen.jsx";
 import StudyScreen from "./screens/StudyScreen.jsx";
 
 export default function ScreenRouter() {
@@ -51,6 +52,9 @@ export default function ScreenRouter() {
 
   // --- SKILLS SCREEN ---
   if (screen === "skills" && active) return <SkillsScreen />;
+
+  // --- SCHEDULE SCREEN ---
+  if (screen === "schedule" && active) return <ScheduleScreen />;
 
   // --- NOTIFICATIONS SCREEN ---
   if (screen === "notifs" && active) return <NotifsScreen />;

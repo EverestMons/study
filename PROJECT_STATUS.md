@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-03-08
-**Updated By:** Product Analyst (post Phase 3 — Due Dates + Assignment Picker Sort)
+**Updated By:** Product Analyst (post Phase 4 — Schedule UI)
 **Overall Status:** 🟢 Active
 
 ---
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. **Stability hardening complete** — 5 fixes (S1–S5) targeting white-screen crashes, data-loss race conditions, and duplicate error handlers. Release build verified, no regressions. **Assignment table migration (003) complete** — assignments now stored in normalized relational tables (3 tables, 8 indexes) instead of JSON blobs. Blob migration runs automatically on app startup. V1 `saveAsgn`/`getAsgn` dead code removed. **Syllabus parsing pipeline complete** — uploading a syllabus auto-extracts weekly schedule, grading breakdown, course metadata, and placeholder assignments via Haiku LLM. Deterministic validation with composite confidence scoring. Graceful degradation on partial data. QA: no critical findings. **Due dates + assignment picker sort (Phase 3) complete** — urgency-aware date display (relative when close, absolute when far), soonest-first sort, native date picker editing, overdue card treatment (red tint + border). UX validated: sort order and urgency colors rated strong; 2 minor discoverability recommendations deferred. Next priorities: assignment scheduler UI (Phases 4–5), parent skill layer, cross-skill concept links.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. **Stability hardening complete** — 5 fixes (S1–S5) targeting white-screen crashes, data-loss race conditions, and duplicate error handlers. Release build verified, no regressions. **Assignment table migration (003) complete** — assignments now stored in normalized relational tables (3 tables, 8 indexes) instead of JSON blobs. Blob migration runs automatically on app startup. V1 `saveAsgn`/`getAsgn` dead code removed. **Syllabus parsing pipeline complete** — uploading a syllabus auto-extracts weekly schedule, grading breakdown, course metadata, and placeholder assignments via Haiku LLM. Deterministic validation with composite confidence scoring. Graceful degradation on partial data. QA: no critical findings. **Due dates + assignment picker sort (Phase 3) complete** — urgency-aware date display (relative when close, absolute when far), soonest-first sort, native date picker editing, overdue card treatment (red tint + border). UX validated: sort order and urgency colors rated strong; 2 minor discoverability recommendations deferred. **Schedule UI (Phase 4) complete** — ScheduleScreen shows assignments + exams in 5 temporal sections (Past Due, This Week, Next Week, Later, Not Yet Uploaded) with expandable cards, readiness percentages, and skill breakdowns. HomeScreen per-course info bars surface urgency signals (overdue, due this week, exam proximity) with one-click navigation to schedule. Component-local data loading — no StudyContext state added. QA: no critical findings. Next priorities: assignment scheduler (Phase 5), parent skill layer, cross-skill concept links.
 
 ---
 
@@ -18,9 +18,9 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 |---|---|---|---|
 | Research | Idle | — | No knowledge deposited |
 | Systems Architecture | Active | 2026-03-08 | Architecture blueprints for decomposition, stability hardening, assignment table migration, syllabus parser (`knowledge/architecture/`) |
-| Development | Active | 2026-03-08 | 69 commits. Latest: Phase 3 due dates — `formatDueDate`, urgency colors, soonest-first sort, native date picker in ModePicker.jsx + StudyContext.jsx. |
-| Security & Testing | Active | 2026-03-08 | Phase 3 due date QA report — no critical findings, 3 minor items (M1–M3) documented (`knowledge/qa/`). |
-| Design & Experience | Active | 2026-03-08 | Phase 3 UX design (`knowledge/design/`) + UX validation report (`knowledge/design/validation/`). 2 non-blocking recommendations (R1 hover underline, R2 "Add due date" label). |
+| Development | Active | 2026-03-08 | 69 commits. Latest: Phase 4 schedule UI — ScheduleScreen.jsx (289 lines), HomeScreen info bars, ScreenRouter schedule route. |
+| Security & Testing | Active | 2026-03-08 | Phase 4 schedule UI QA report — 20 test scenarios, PASS verdict, 4 minor items (M1–M4) documented (`knowledge/qa/`). |
+| Design & Experience | Active | 2026-03-08 | Phase 4 UX design (`knowledge/design/schedule-ui-2026-03-08.md`) + UX validation report (`knowledge/design/validation/`). APPROVED, 2 non-blocking recommendations (R1 schedule entry without urgency, R2 readiness threshold alignment). |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
 | Documentation | Idle | — | README is blank; 26 design docs exist in docs/ folder but no user-facing documentation |
 | Engineering & Physical Design | N/A | — | No physical components |
@@ -53,6 +53,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Placeholder assignment system | ✅ Live | Syllabus-sourced assignments created with `source='syllabus'`, `material_id=NULL`. Due dates from schedule weeks. Idempotent via `findPlaceholderMatch`. Matched when real assignment materials are uploaded via `decomposeAssignments`. |
 | Due date editing | ✅ Live | Native date picker on assignment cards (click date text → calendar). Optimistic UI update + SQLite persist via `Assignments.updateDueDate`. End-of-day epoch (`T23:59:59`) prevents premature overdue. Clear date sets NULL. |
 | Assignment picker sort + urgency | ✅ Live | Soonest-first sort (nulls last, alphabetical tiebreak). Urgency colors: overdue/urgent (<48h) red, soon (<7d) amber, normal (>7d) blue, no date muted gray. Overdue cards get red-tinted background + border. Smart hybrid date format (relative when close, absolute when far). |
+| HomeScreen info bars | ✅ Live | Per-course urgency signals below materials line: overdue count (red), due this week (amber), exam proximity (amber <7d, blue >7d). Click navigates to schedule screen. Zero-signal suppression (no bar if nothing to show). |
+| Schedule screen | ✅ Live | ScheduleScreen.jsx — temporal sections (Past Due / This Week / Next Week / Later / Not Yet Uploaded), expandable cards for assignments + exams, FSRS-based readiness %, weakest-skills drill-down for exams (top 10 + expand), placeholder cards with dashed borders. Component-local data loading (no StudyContext state). |
 
 ---
 
@@ -67,7 +69,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | ~~Assignment table migration (003)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Migration 003 applied. Moved to "What Is Working." |
 | ~~Syllabus parsing (Phase 2)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Implemented — `syllabusParser.js` + upload auto-trigger. Moved to "What Is Working." |
 | ~~Due dates + picker sort (Phase 3)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Implemented — `formatDueDate`, urgency colors, soonest-first sort, native date picker. Moved to "What Is Working." |
-| Assignment scheduler UI (Phases 4–5) | `docs/planning/assignment-scheduler-spec.md` | 🔴 High | Calendar panel, dashboard, notifications |
+| ~~Schedule UI (Phase 4)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Implemented — ScheduleScreen + HomeScreen info bars + ScreenRouter route. Moved to "What Is Working." |
+| Assignment scheduler UI (Phase 5) | `docs/planning/assignment-scheduler-spec.md` | 🔴 High | Calendar panel, dashboard, notifications |
 | Migration 004 — v1 skill data migration | `docs/skill-architecture-redesign.md` | 🟡 Medium | JS-level migration in migrate.js |
 | Migration 005 — Cleanup | `docs/skill-architecture-redesign.md` | 🟡 Medium | Drop old tables after confirmed migration |
 | Concept links (cross-skill similarity) | `docs/skill-architecture-redesign.md` Q5 | 🟡 Medium | |
@@ -114,6 +117,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Date | Work |
 |---|---|
+| 2026-03-08 | **Schedule UI (Phase 4):** ScheduleScreen.jsx (289 lines) — 5 temporal sections, expandable cards for assignments + exams, FSRS-based readiness %, weakest-skills drill-down (top 10 + expand). HomeScreen info bars — per-course urgency signals (overdue, due this week, exam proximity) with click-to-schedule navigation. ScreenRouter schedule route. Component-local data loading (SA decided no StudyContext state). 4 CEO defaults approved. QA: PASS, 4 minor items. UXV: APPROVED, 2 non-blocking recommendations. |
 | 2026-03-08 | **Due dates + assignment picker sort (Phase 3):** `formatDueDate` smart hybrid formatter (relative ≤14d, absolute >14d) in StudyContext.jsx. `getUrgencyLevel` + `URGENCY_COLORS` in ModePicker.jsx — 4-tier urgency (overdue/urgent/soon/normal) mapped to red/amber/blue. Overdue card treatment (red tint bg + border). Native `<input type="date">` with `showPicker()`, optimistic state update, end-of-day epoch. Soonest-first sort in both `selectMode` code paths. UX design + validation deposited. QA: PASS, 3 minor items. |
 | 2026-03-08 | **Syllabus parsing pipeline (Phase 2):** `syllabusParser.js` (322 lines) — Haiku LLM extraction with JSON schema prompt, `validateSchedule` deterministic validation (composite: date 35% + week 35% + grading 30%), `parseSyllabus` pipeline writes to 4 DB targets (schedule, assessments, course metadata, placeholder assignments). Upload auto-trigger wired into both course creation and material add flows in StudyContext.jsx. Exam scope enrichment (`coversWeeks`/`coversTopics`). QA: PASS, 6 minor items. |
 | 2026-03-08 | **Assignment table migration (Phase 1):** Migration 003 — 3 new tables (assignments, assignment_questions, assignment_question_skills). Assignments DB module with 13 methods + `normalizeAssignmentTitle` helper + `resolveSkillId` resolver. Blob-to-table migration (`migrateAssignmentBlobs`) wired into app startup. `decomposeAssignments` rewritten to use new tables with `scanForDueDate` regex + placeholder matching. `loadAssignmentsCompat` bridges old shape for consumers. V1 `saveAsgn`/`getAsgn` dead code removed. QA: PASS, no critical findings. |
@@ -135,10 +139,10 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Desktop | Tauri 2.10.0 |
 | Database | SQLite via @tauri-apps/plugin-sql |
 | AI | Claude API via @tauri-apps/plugin-http |
-| Source files | 43 JS/JSX files |
-| Total LOC | ~13,740 |
+| Source files | 44 JS/JSX files |
+| Total LOC | ~14,100 |
 | Design docs | 26 MD files in docs/ |
-| Knowledge base | 23 MD files in knowledge/ (architecture, development, design, design/validation, QA) |
+| Knowledge base | 28 MD files in knowledge/ (architecture, development, design, design/validation, QA) |
 | Git commits | 69 |
 | Most recent commit | 2026-03-08 |
 
@@ -147,8 +151,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Layer | Files | LOC | Key Files |
 |---|---|---|---|
 | Entry | 2 | 157 | App.jsx (147), main.jsx (10) |
-| State & Routing | 2 | 1,069 | StudyContext.jsx (1,007), ScreenRouter.jsx (62) |
-| Screens | 8 | 1,563 | MaterialsScreen (555), ProfileScreen (339), UploadScreen (169), SkillsScreen (153), StudyScreen (116), HomeScreen (94), NotifsScreen (73), ManageScreen (64) |
+| State & Routing | 2 | 1,074 | StudyContext.jsx (1,007), ScreenRouter.jsx (67) |
+| Screens | 9 | 1,921 | MaterialsScreen (555), ProfileScreen (339), ScheduleScreen (289), UploadScreen (169), SkillsScreen (153), HomeScreen (163), StudyScreen (116), NotifsScreen (73), ManageScreen (64) |
 | Shared Components | 3 | 212 | SettingsModal (93), ErrorDisplay (73), GlobalLockOverlay (46) |
 | Study Sub-Components | 10 | 2,094 | ModePicker (411), PracticeMode (394), SkillsPanel (205), MaterialsPanel (186), ChunkPicker (149), InputBar (131), AssignmentPanel (120), StudyScreen layout (116), SessionSummary (104), MessageList (95), NotifPanel (83) |
 | Libraries | 18 | 8,715 | db.js (1,804), extraction.js (1,346), study.js (940), docxParser (633), htmlToMarkdown (502), epubParser (477), pdfParser (448), skills (467), chunker (427), parsers (416), migrate (388), syllabusParser (322), api (228), fsrs (206), export (143), theme (100), classify (~40), pptxParser (~40) |
@@ -172,6 +176,7 @@ None currently active. Knowledge base flags folder is empty.
 - ~~Session intent UX introduction~~ — **RESOLVED: 5-mode picker implemented** (assignment, recap, skills, exam, explore)
 - ~~Python sidecar bundling strategy~~ — **RESOLVED: separate install** to maintain stability and quality
 - ~~Phase 3 urgency color thresholds + overdue treatment + section headers~~ — **RESOLVED: CEO approved defaults** (<48h red, <7d amber, >7d blue; red bg+border for overdue; sort-only, no section headers)
+- ~~Phase 4 schedule UI design defaults~~ — **RESOLVED: CEO approved defaults** (info bar signals max 3 inline, temporal sections not calendar, exam readiness = all skills for v1, ★ prefix not separate exam section)
 - **Parent skill level + readiness visualization approach** — Not yet designed
 
 ---

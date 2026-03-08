@@ -1,13 +1,61 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
+import { Assignments, CourseSchedule } from "../lib/db.js";
 import { useStudy } from "../StudyContext.jsx";
 
 export default function HomeScreen() {
   const {
     courses, cName, setCName, pendingConfirm, setPendingConfirm,
-    setScreen, setShowSettings, quickCreateCourse, loadProfile, enterStudy, delCourse,
+    setScreen, setActive, setShowSettings, quickCreateCourse, loadProfile, enterStudy, delCourse,
   } = useStudy();
+
+  var [summaries, setSummaries] = useState({});
+
+  useEffect(() => {
+    if (courses.length === 0) return;
+    var cancelled = false;
+    (async () => {
+      var result = {};
+      for (var c of courses) {
+        try {
+          var asgn = await Assignments.getByCourse(c.id);
+          var schedule = await CourseSchedule.getByCourse(c.id);
+          var now = Math.floor(Date.now() / 1000);
+          var overdueCount = asgn.filter(a => a.dueDate && a.dueDate < now && a.status !== "completed").length;
+          var dueThisWeek = asgn.filter(a => a.dueDate && a.dueDate >= now && a.dueDate < now + 7 * 86400).length;
+          var nextExam = null;
+          for (var week of schedule) {
+            try {
+              var exams = JSON.parse(week.exams || "[]");
+              for (var exam of exams) {
+                if (!exam.date) continue;
+                var epoch = Math.floor(new Date(exam.date).getTime() / 1000);
+                if (isNaN(epoch) || epoch <= now) continue;
+                var daysUntil = Math.floor((epoch - now) / 86400);
+                if (!nextExam || epoch < nextExam.epoch) {
+                  nextExam = { name: exam.name || exam.title || "Exam", daysUntil: daysUntil, epoch: epoch };
+                }
+              }
+            } catch (e) { /* skip malformed exams JSON */ }
+          }
+          if (overdueCount || dueThisWeek || nextExam) {
+            result[c.id] = { overdueCount: overdueCount, dueThisWeek: dueThisWeek, nextExam: nextExam };
+          }
+        } catch (e) {
+          console.error("Failed to load schedule summary for", c.name, e);
+        }
+      }
+      if (!cancelled) setSummaries(result);
+    })();
+    return () => { cancelled = true; };
+  }, [courses]);
+
+  function formatExamProximity(days) {
+    if (days === 0) return "Exam today";
+    if (days === 1) return "Exam tomorrow";
+    return "Exam in " + days + " days";
+  }
 
   return (
     <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
@@ -49,6 +97,13 @@ export default function HomeScreen() {
             {courses.map(c => {
               const mats = c.materials || [];
               const types = [...new Set(mats.map(m => m.classification))].filter(Boolean).map(v => CLS.find(cl => cl.v === v)?.l || v).join(", ");
+              const summary = summaries[c.id];
+              const signals = [];
+              if (summary) {
+                if (summary.overdueCount > 0) signals.push({ text: summary.overdueCount + " overdue", color: T.rd });
+                if (summary.dueThisWeek > 0) signals.push({ text: summary.dueThisWeek + " due this week", color: T.am });
+                if (summary.nextExam) signals.push({ text: formatExamProximity(summary.nextExam.daysUntil), color: summary.nextExam.daysUntil < 7 ? T.am : T.ac });
+              }
               return (
                 <div key={c.id} onClick={() => enterStudy(c)}
                   style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, cursor: "pointer", transition: "all 0.2s" }}
@@ -60,6 +115,19 @@ export default function HomeScreen() {
                       <div style={{ fontSize: 13, color: T.txD }}>
                         {mats.length} material{mats.length !== 1 ? "s" : ""}{types ? " \u00B7 " + types : ""}
                       </div>
+                      {signals.length > 0 && (
+                        <div onClick={e => { e.stopPropagation(); setActive(c); setScreen("schedule"); }}
+                          style={{ fontSize: 12, marginTop: 6, cursor: "pointer" }}
+                          onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                          onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>
+                          {signals.map((s, i) => (
+                            <React.Fragment key={i}>
+                              {i > 0 && <span style={{ color: T.txM }}> {"\u00B7"} </span>}
+                              <span style={{ color: s.color }}>{s.text}</span>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <button onClick={e => { e.stopPropagation();
                         if (pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id) { setPendingConfirm(null); delCourse(c.id); }
