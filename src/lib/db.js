@@ -78,6 +78,28 @@ export const generateConceptKey = (name, category = null) => {
   return kebab;
 };
 
+/**
+ * Normalize an assignment title for placeholder matching.
+ * Strips common prefixes (homework/hw/assignment/etc), punctuation,
+ * and collapses whitespace. Used for matching uploaded assignments
+ * to syllabus placeholders.
+ */
+export const normalizeAssignmentTitle = (title) => {
+  if (!title) return '';
+  let t = title.toLowerCase();
+  // Strip common prefixes (greedy, order matters — longer first)
+  t = t.replace(/^(problem\s*set|homework|assignment|project|quiz|exam|pset|asgn|lab|hw)\s*/i, '');
+  // Strip leading punctuation and whitespace
+  t = t.replace(/^[\s:.\-–—]+/, '');
+  // Strip trailing punctuation and whitespace
+  t = t.replace(/[\s:.\-–—]+$/, '');
+  // Remove all non-alphanumeric except spaces
+  t = t.replace(/[^a-z0-9\s]/g, '');
+  // Collapse internal whitespace
+  t = t.replace(/\s+/g, ' ');
+  return t.trim();
+};
+
 // ============================================================
 // Settings
 // ============================================================
@@ -321,6 +343,303 @@ export const CourseAssessments = {
     await db.execute('DELETE FROM course_assessments WHERE course_id = ?', [courseId]);
   },
 };
+
+// ============================================================
+// Assignments
+// ============================================================
+
+export const Assignments = {
+  // --- Core CRUD ---
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT a.*, COUNT(aq.id) AS question_count
+       FROM assignments a
+       LEFT JOIN assignment_questions aq ON aq.assignment_id = a.id
+       WHERE a.course_id = ?
+       GROUP BY a.id
+       ORDER BY CASE WHEN a.due_date IS NULL THEN 1 ELSE 0 END, a.due_date ASC, a.created_at ASC`,
+      [courseId]
+    );
+    return rows.map(r => ({
+      id: r.id, courseId: r.course_id, materialId: r.material_id,
+      title: r.title, titleNormalized: r.title_normalized,
+      dueDate: r.due_date, status: r.status, source: r.source,
+      createdAt: r.created_at, updatedAt: r.updated_at,
+      questionCount: r.question_count,
+    }));
+  },
+
+  async getById(id) {
+    const db = await getDb();
+    const rows = await db.select('SELECT * FROM assignments WHERE id = ?', [id]);
+    if (rows.length === 0) return null;
+    const a = rows[0];
+
+    // Load questions
+    const qRows = await db.select(
+      'SELECT * FROM assignment_questions WHERE assignment_id = ? ORDER BY ordering, id', [id]
+    );
+
+    // Load skill mappings for all questions in one query
+    const questions = [];
+    if (qRows.length > 0) {
+      const qIds = qRows.map(q => q.id);
+      const placeholders = qIds.map(() => '?').join(',');
+      const skillRows = await db.select(
+        `SELECT aqs.question_id, aqs.sub_skill_id, ss.name, ss.concept_key
+         FROM assignment_question_skills aqs
+         JOIN sub_skills ss ON ss.id = aqs.sub_skill_id
+         WHERE aqs.question_id IN (${placeholders})`,
+        qIds
+      );
+
+      // Group skills by question_id
+      const skillsByQ = {};
+      for (const sr of skillRows) {
+        if (!skillsByQ[sr.question_id]) skillsByQ[sr.question_id] = [];
+        skillsByQ[sr.question_id].push({
+          subSkillId: sr.sub_skill_id, name: sr.name, conceptKey: sr.concept_key,
+        });
+      }
+
+      for (const q of qRows) {
+        questions.push({
+          id: q.id, questionRef: q.question_ref, description: q.description,
+          difficulty: q.difficulty, ordering: q.ordering,
+          requiredSkills: skillsByQ[q.id] || [],
+        });
+      }
+    }
+
+    return {
+      id: a.id, courseId: a.course_id, materialId: a.material_id,
+      title: a.title, dueDate: a.due_date, status: a.status, source: a.source,
+      createdAt: a.created_at, updatedAt: a.updated_at,
+      questions,
+    };
+  },
+
+  async create({ courseId, materialId = null, title, dueDate = null, source = 'decomposition' }) {
+    const id = uuid();
+    const normalized = normalizeAssignmentTitle(title);
+    return withTransaction(async (db) => {
+      await db.execute(
+        `INSERT INTO assignments (id, course_id, material_id, title, title_normalized, due_date, status, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+        [id, courseId, materialId, title, normalized, dueDate, source, now()]
+      );
+      return id;
+    });
+  },
+
+  async updateDueDate(id, dueDate) {
+    const db = await getDb();
+    await db.execute(
+      'UPDATE assignments SET due_date = ?, updated_at = ? WHERE id = ?',
+      [dueDate, now(), id]
+    );
+  },
+
+  async updateStatus(id, status) {
+    const db = await getDb();
+    await db.execute(
+      'UPDATE assignments SET status = ?, updated_at = ? WHERE id = ?',
+      [status, now(), id]
+    );
+  },
+
+  async linkMaterial(id, materialId) {
+    const db = await getDb();
+    await db.execute(
+      "UPDATE assignments SET material_id = ?, source = 'decomposition', updated_at = ? WHERE id = ?",
+      [materialId, now(), id]
+    );
+  },
+
+  async delete(id) {
+    const db = await getDb();
+    await db.execute('DELETE FROM assignments WHERE id = ?', [id]);
+  },
+
+  // --- Schedule Queries ---
+
+  async getUpcoming(dayRange = 14) {
+    const db = await getDb();
+    const start = now();
+    const end = start + dayRange * 86400;
+    const rows = await db.select(
+      `SELECT a.*, c.name AS course_name, COUNT(aq.id) AS question_count
+       FROM assignments a
+       JOIN courses c ON c.id = a.course_id
+       LEFT JOIN assignment_questions aq ON aq.assignment_id = a.id
+       WHERE a.due_date BETWEEN ? AND ?
+         AND a.status = 'active'
+       GROUP BY a.id
+       ORDER BY a.due_date ASC`,
+      [start, end]
+    );
+    return rows.map(r => ({
+      id: r.id, courseId: r.course_id, materialId: r.material_id,
+      title: r.title, dueDate: r.due_date, status: r.status, source: r.source,
+      createdAt: r.created_at, updatedAt: r.updated_at,
+      courseName: r.course_name, questionCount: r.question_count,
+    }));
+  },
+
+  async getByDateRange(startEpoch, endEpoch) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM assignments WHERE due_date BETWEEN ? AND ? ORDER BY due_date ASC',
+      [startEpoch, endEpoch]
+    );
+  },
+
+  async getOverdue() {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT a.*, c.name AS course_name
+       FROM assignments a
+       JOIN courses c ON c.id = a.course_id
+       WHERE a.due_date < ? AND a.status = 'active' AND a.due_date IS NOT NULL
+       ORDER BY a.due_date ASC`,
+      [now()]
+    );
+    return rows.map(r => ({
+      id: r.id, courseId: r.course_id, materialId: r.material_id,
+      title: r.title, dueDate: r.due_date, status: r.status, source: r.source,
+      courseName: r.course_name,
+    }));
+  },
+
+  // --- Questions ---
+
+  async getQuestions(assignmentId) {
+    const db = await getDb();
+    const qRows = await db.select(
+      'SELECT * FROM assignment_questions WHERE assignment_id = ? ORDER BY ordering, id',
+      [assignmentId]
+    );
+    if (qRows.length === 0) return [];
+
+    const qIds = qRows.map(q => q.id);
+    const placeholders = qIds.map(() => '?').join(',');
+    const skillRows = await db.select(
+      `SELECT aqs.question_id, aqs.sub_skill_id, ss.name, ss.concept_key
+       FROM assignment_question_skills aqs
+       JOIN sub_skills ss ON ss.id = aqs.sub_skill_id
+       WHERE aqs.question_id IN (${placeholders})`,
+      qIds
+    );
+
+    const skillsByQ = {};
+    for (const sr of skillRows) {
+      if (!skillsByQ[sr.question_id]) skillsByQ[sr.question_id] = [];
+      skillsByQ[sr.question_id].push({
+        subSkillId: sr.sub_skill_id, name: sr.name, conceptKey: sr.concept_key,
+      });
+    }
+
+    return qRows.map(q => ({
+      id: q.id, questionRef: q.question_ref, description: q.description,
+      difficulty: q.difficulty, ordering: q.ordering,
+      requiredSkills: skillsByQ[q.id] || [],
+    }));
+  },
+
+  async saveQuestions(assignmentId, courseId, questions) {
+    return withTransaction(async (db) => {
+      // Delete existing questions (CASCADE removes skill mappings)
+      await db.execute('DELETE FROM assignment_questions WHERE assignment_id = ?', [assignmentId]);
+
+      if (!Array.isArray(questions) || questions.length === 0) return;
+
+      // Load course skills for ID resolution
+      const courseSkills = await db.select(
+        'SELECT id, name, concept_key FROM sub_skills WHERE source_course_id = ? AND is_archived = 0',
+        [courseId]
+      );
+
+      for (let i = 0; i < questions.length; i++) {
+        const q = questions[i];
+        const result = await db.execute(
+          `INSERT INTO assignment_questions (assignment_id, question_ref, description, difficulty, ordering)
+           VALUES (?, ?, ?, ?, ?)`,
+          [assignmentId, q.id || q.questionRef || `q${i + 1}`, q.description || null, q.difficulty || null, i]
+        );
+        const questionId = result.lastInsertId;
+
+        // Resolve and insert skill mappings
+        for (const skillRef of (q.requiredSkills || [])) {
+          const resolved = resolveSkillId(courseSkills, skillRef);
+          if (resolved) {
+            await db.execute(
+              'INSERT INTO assignment_question_skills (question_id, sub_skill_id) VALUES (?, ?)',
+              [questionId, resolved]
+            );
+          }
+        }
+      }
+    });
+  },
+
+  // --- Placeholder Matching ---
+
+  async getPlaceholders(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      "SELECT * FROM assignments WHERE course_id = ? AND source = 'syllabus' AND material_id IS NULL ORDER BY due_date ASC",
+      [courseId]
+    );
+    return rows;
+  },
+
+  async findPlaceholderMatch(courseId, title) {
+    const normalized = normalizeAssignmentTitle(title);
+    if (!normalized) return null;
+
+    const placeholders = await this.getPlaceholders(courseId);
+    if (placeholders.length === 0) return null;
+
+    // Exact match
+    const exact = placeholders.filter(p => p.title_normalized === normalized);
+    if (exact.length === 1) return { match: exact[0], confidence: 'high' };
+    if (exact.length > 1) return { matches: exact, confidence: 'ambiguous' };
+
+    // Starts-with: upload title starts with placeholder's normalized title
+    const startsWith = placeholders.filter(p => p.title_normalized && normalized.startsWith(p.title_normalized));
+    if (startsWith.length === 1) return { match: startsWith[0], confidence: 'high' };
+    if (startsWith.length > 1) return { matches: startsWith, confidence: 'ambiguous' };
+
+    // Reverse starts-with: placeholder starts with upload's normalized title
+    const reverseStarts = placeholders.filter(p => p.title_normalized && p.title_normalized.startsWith(normalized));
+    if (reverseStarts.length === 1) return { match: reverseStarts[0], confidence: 'high' };
+    if (reverseStarts.length > 1) return { matches: reverseStarts, confidence: 'ambiguous' };
+
+    return null;
+  },
+};
+
+/**
+ * Resolve a skill reference string to a sub_skills.id.
+ * Tries: exact id match → concept_key match → case-insensitive name match.
+ * Returns the integer ID or null.
+ */
+function resolveSkillId(courseSkills, ref) {
+  if (!ref || !courseSkills.length) return null;
+  // Exact id match (v1 compat: skill IDs like "skill-chunk-3")
+  const byId = courseSkills.find(s => String(s.id) === String(ref));
+  if (byId) return byId.id;
+  // Concept key match
+  const byKey = courseSkills.find(s => s.concept_key === ref);
+  if (byKey) return byKey.id;
+  // Case-insensitive name match
+  const refLower = ref.toLowerCase();
+  const byName = courseSkills.find(s => s.name && s.name.toLowerCase() === refLower);
+  if (byName) return byName.id;
+  return null;
+}
 
 // ============================================================
 // Materials
@@ -1181,6 +1500,7 @@ export const resetAll = async ({ confirmed = false } = {}) => {
 
   // Order matters for FK constraints
   const tables = [
+    'assignment_question_skills', 'assignment_questions', 'assignments',
     'practice_sets', 'journal_entries', 'session_events', 'session_skills',
     'messages', 'sessions', 'sub_skill_mastery', 'skill_prerequisites',
     'concept_links', 'chunk_skill_bindings', 'chunk_fingerprints',
@@ -1335,8 +1655,7 @@ export const DB = {
   async getSkills(cid) { return this._getCourseData(cid, 'skills'); }, // used by migrate.js
   // saveRefTaxonomy, saveValidation, getValidation removed (v1 dead code)
   async getRefTaxonomy(cid) { return this._getCourseData(cid, 'reftax'); }, // used by App.jsx + migrate.js
-  async saveAsgn(cid, a) { return this._saveCourseData(cid, 'asgn', a); },
-  async getAsgn(cid) { return this._getCourseData(cid, 'asgn'); },
+  // saveAsgn, getAsgn removed — assignments now use Assignments module + 003 tables
 
   // V1_COMPAT: profile — mapped to settings blob
   async saveProfile(cid, p) {

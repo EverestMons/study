@@ -6,7 +6,7 @@
  * Generates conceptKeys from category/name so re-extraction can match later.
  */
 
-import { DB, SubSkills, SkillPrerequisites, ChunkSkillBindings, Chunks, Mastery, ParentSkills } from './db.js';
+import { DB, SubSkills, SkillPrerequisites, ChunkSkillBindings, Chunks, Mastery, ParentSkills, Assignments, getDb } from './db.js';
 import { effectiveStrength, DEFAULT_EASE } from './study.js';
 
 // ============================================================
@@ -288,4 +288,101 @@ export async function needsV1Migration(courseId) {
   if (!Array.isArray(v1Skills) || v1Skills.length === 0) return false;
   const v2Skills = await SubSkills.getByCourse(courseId);
   return v2Skills.length === 0;
+}
+
+// ============================================================
+// Assignment Blob → Table Migration
+// ============================================================
+
+/**
+ * Attempt to parse a dueDate string into Unix epoch seconds.
+ * Returns null if unparseable.
+ */
+function parseDueDate(dueDate) {
+  if (!dueDate) return null;
+  if (typeof dueDate === 'number') return dueDate;
+  const d = new Date(dueDate);
+  if (isNaN(d.getTime())) return null;
+  return Math.floor(d.getTime() / 1000);
+}
+
+/**
+ * Migrate assignment JSON blobs from the settings table to the
+ * assignments/assignment_questions/assignment_question_skills tables.
+ *
+ * For each course:
+ *   1. Read blob from settings (v1_course_data:{courseId}:asgn)
+ *   2. If blob exists and course has no assignments yet: migrate
+ *   3. Delete blob after successful migration
+ *
+ * Non-fatal: errors are logged and collected, never thrown.
+ *
+ * @param {Array} courses — array from DB.getCourses()
+ * @returns {Promise<{ migrated: number, skipped: number, errors: Array }>}
+ */
+export async function migrateAssignmentBlobs(courses) {
+  let migrated = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const course of courses) {
+    try {
+      // Read the v1 blob directly from settings table
+      const db0 = await getDb();
+      const blobRows = await db0.select('SELECT value FROM settings WHERE key = ?', [`v1_course_data:${course.id}:asgn`]);
+      let blob = null;
+      if (blobRows.length > 0) try { blob = JSON.parse(blobRows[0].value); } catch { blob = null; }
+      if (!Array.isArray(blob) || blob.length === 0) {
+        // No blob or empty — clean up empty key if it exists
+        if (blob !== null) {
+          const db = await getDb();
+          await db.execute('DELETE FROM settings WHERE key = ?', [`v1_course_data:${course.id}:asgn`]);
+        }
+        continue;
+      }
+
+      // Check if assignments already exist for this course (avoid double migration)
+      const existing = await Assignments.getByCourse(course.id);
+      if (existing.length > 0) {
+        skipped++;
+        // Blob exists but assignments already migrated — delete the blob
+        const db = await getDb();
+        await db.execute('DELETE FROM settings WHERE key = ?', [`v1_course_data:${course.id}:asgn`]);
+        continue;
+      }
+
+      // Migrate each assignment in the blob
+      for (const a of blob) {
+        try {
+          const assignmentId = await Assignments.create({
+            courseId: course.id,
+            materialId: null, // blobs don't store material references
+            title: a.title || a.id || 'Untitled Assignment',
+            dueDate: parseDueDate(a.dueDate),
+            source: 'decomposition',
+          });
+
+          // Save questions with skill resolution
+          if (Array.isArray(a.questions) && a.questions.length > 0) {
+            await Assignments.saveQuestions(assignmentId, course.id, a.questions);
+          }
+        } catch (e) {
+          errors.push({ courseId: course.id, assignmentTitle: a.title || a.id, error: e.message });
+          console.error(`[Migration] Failed to migrate assignment "${a.title}" for course ${course.id}:`, e);
+        }
+      }
+
+      // Delete the blob after all assignments processed
+      const db = await getDb();
+      await db.execute('DELETE FROM settings WHERE key = ?', [`v1_course_data:${course.id}:asgn`]);
+
+      migrated++;
+      console.log(`[Migration] Migrated ${blob.length} assignments for course ${course.id}`);
+    } catch (e) {
+      errors.push({ courseId: course.id, error: e.message });
+      console.error(`[Migration] Assignment blob migration failed for course ${course.id}:`, e);
+    }
+  }
+
+  return { migrated, skipped, errors };
 }

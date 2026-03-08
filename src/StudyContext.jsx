@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites } from "./lib/db.js";
+import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
   storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2
 } from "./lib/skills.js";
-import { migrateV1ToV2 } from "./lib/migrate.js";
+import { migrateV1ToV2, migrateAssignmentBlobs } from "./lib/migrate.js";
 import { generateSubmission, downloadBlob } from "./lib/export.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
@@ -18,6 +18,24 @@ import {
   createPracticeSet, generateProblems, evaluateAnswer,
   completeTierAttempt, loadPracticeMaterialCtx
 } from "./lib/study.js";
+
+/** Load assignments with questions mapped to the shape consumers expect. */
+async function loadAssignmentsCompat(courseId) {
+  const assignments = await Assignments.getByCourse(courseId);
+  for (const a of assignments) {
+    const questions = await Assignments.getQuestions(a.id);
+    a.questions = questions.map(q => ({
+      id: q.questionRef || String(q.id),
+      description: q.description,
+      difficulty: q.difficulty,
+      requiredSkills: (q.requiredSkills || []).map(s => s.conceptKey || s.name || String(s.subSkillId)),
+    }));
+    if (a.dueDate) {
+      a.dueDate = new Date(a.dueDate * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  return assignments;
+}
 
 const StudyContext = createContext(null);
 export const useStudy = () => useContext(StudyContext);
@@ -205,6 +223,12 @@ export function StudyProvider({ children, setErrorCtx }) {
         if (cancelled) return;
         setCourses(loaded);
         coursesLoaded.current = true;
+        // Migrate assignment blobs → tables (non-fatal)
+        try {
+          const migResult = await migrateAssignmentBlobs(loaded);
+          if (migResult.migrated > 0) console.log(`[Init] Migrated ${migResult.migrated} assignment blob(s)`);
+        } catch (e) { console.error("Assignment blob migration failed:", e); }
+        if (cancelled) return;
         const key = await getApiKey();
         if (cancelled) return;
         setApiKeyInput(key);
@@ -525,7 +549,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       const skills = await loadSkillsV2(active.id);
       const profile = await DB.getProfile(active.id);
       if (mode === "assignment") {
-        const asgn = await DB.getAsgn(active.id);
+        const asgn = await loadAssignmentsCompat(active.id);
         if (!Array.isArray(asgn) || asgn.length === 0) {
           var hasAsgnMats = (active.materials || []).some(m => m.classification === "assignment");
           var hasSkills = skills && Array.isArray(skills) && skills.length > 0;
@@ -533,7 +557,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             setPickerData({ mode, empty: true, message: "Decomposing assignment..." });
             try {
               await decomposeAssignments(active.id, active.materials, skills, () => {});
-              var freshAsgn = await DB.getAsgn(active.id);
+              var freshAsgn = await loadAssignmentsCompat(active.id);
               if (Array.isArray(freshAsgn) && freshAsgn.length > 0) {
                 var enriched2 = freshAsgn.map(a => {
                   var reqSkills2 = new Set();
@@ -718,7 +742,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam" || focusContext.type === "explore")) {
           ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
         } else {
-          const asgn = await DB.getAsgn(active.id) || [];
+          const asgn = await loadAssignmentsCompat(active.id) || [];
           ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs, discussedChunks.current);
         }
       }

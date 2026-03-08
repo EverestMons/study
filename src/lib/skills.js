@@ -1,4 +1,4 @@
-import { DB, Materials, Chunks, SubSkills, SkillPrerequisites, Mastery } from './db.js';
+import { DB, Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments } from './db.js';
 import { callClaude, extractJSON } from './api.js';
 import { chunkDocument } from './chunker.js';
 
@@ -205,24 +205,43 @@ export const verifyDocument = async (courseId, mat) => {
   return { status: "partial", summary: "Verification could not complete (API response was not parseable). Content may still be valid.", keyItems: [], issues: ["Automated verification failed"], questions: [] };
 };
 
+// --- Due Date Scanner ---
+function scanForDueDate(text) {
+  if (!text) return null;
+  const patterns = [
+    /(?:due|deadline|submit(?:ted)?\s*(?:by|before))[:\s]+(\w+\s+\d{1,2},?\s*\d{4})/i,
+    /(?:due|deadline|submit(?:ted)?\s*(?:by|before))[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      const d = new Date(m[1]);
+      if (!isNaN(d.getTime())) return Math.floor(d.getTime() / 1000);
+    }
+  }
+  return null;
+}
+
 // --- Assignment Decomposition ---
 export const decomposeAssignments = async (courseId, materialsMeta, skills, onStatus) => {
   let asgnContent = "";
+  const scannedDueDates = {};
   for (const mat of materialsMeta) {
     if (mat.classification !== "assignment") continue;
     const loaded = await getMatContent(courseId, mat);
-    if (loaded.content) asgnContent += "\n--- ASSIGNMENT: " + mat.name + " ---\n" + loaded.content + "\n";
+    if (loaded.content) {
+      asgnContent += "\n--- ASSIGNMENT: " + mat.name + " ---\n" + loaded.content + "\n";
+      const dd = scanForDueDate(loaded.content);
+      if (dd) scannedDueDates[mat.name.toLowerCase()] = dd;
+    }
   }
 
-  if (!asgnContent.trim()) {
-    await DB.saveAsgn(courseId, []);
-    return [];
-  }
+  if (!asgnContent.trim()) return [];
 
   onStatus("Decomposing assignments into skill requirements...");
 
   const skillList = Array.isArray(skills)
-    ? skills.map(s => s.id + ": " + s.name).join("\n")
+    ? skills.map(s => (s.conceptKey || s.id) + ": " + s.name).join("\n")
     : "Skills not yet structured";
 
   const asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + skillList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
@@ -231,11 +250,48 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
   const asgn = extractJSON(result);
 
   if (asgn && Array.isArray(asgn)) {
-    await DB.saveAsgn(courseId, asgn);
+    for (const a of asgn) {
+      // Resolve due date: LLM response > scanned from raw text
+      let dueDate = null;
+      if (a.dueDate) {
+        const d = new Date(a.dueDate);
+        if (!isNaN(d.getTime())) dueDate = Math.floor(d.getTime() / 1000);
+      }
+      if (!dueDate) {
+        const titleLower = (a.title || '').toLowerCase();
+        for (const [matName, dd] of Object.entries(scannedDueDates)) {
+          if (matName.includes(titleLower) || titleLower.includes(matName.substring(0, 15))) {
+            dueDate = dd;
+            break;
+          }
+        }
+      }
+
+      // Link to syllabus placeholder if one matches
+      let assignmentId;
+      try {
+        const match = await Assignments.findPlaceholderMatch(courseId, a.title);
+        if (match?.match) {
+          assignmentId = match.match.id;
+          if (dueDate) await Assignments.updateDueDate(assignmentId, dueDate);
+        }
+      } catch { /* placeholder matching is best-effort */ }
+
+      if (!assignmentId) {
+        assignmentId = await Assignments.create({
+          courseId,
+          title: a.title || 'Untitled Assignment',
+          dueDate,
+          source: 'decomposition',
+        });
+      }
+
+      if (Array.isArray(a.questions) && a.questions.length > 0) {
+        await Assignments.saveQuestions(assignmentId, courseId, a.questions);
+      }
+    }
     return asgn;
   }
-  // Parse failed — return empty array instead of raw string
-  await DB.saveAsgn(courseId, []);
   return [];
 };
 

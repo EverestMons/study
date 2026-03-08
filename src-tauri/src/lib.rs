@@ -20,6 +20,12 @@ pub fn run() {
             description: "skill_extraction_v2",
             sql: include_str!("../migrations/002_skill_extraction_v2.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "assignment_tables",
+            sql: include_str!("../migrations/003_assignments.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 
