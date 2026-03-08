@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { T } from "../../lib/theme.jsx";
-import { DB, Assignments } from "../../lib/db.js";
+import { DB, Assignments, CourseSchedule } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
 
@@ -17,8 +17,22 @@ function getUrgencyLevel(dueDateEpoch) {
 const URGENCY_COLORS = {
   overdue: T.rd, urgent: T.rd, soon: T.am, normal: T.ac, none: T.txM,
 };
+
+function formatNudgeDate(epoch) {
+  if (!epoch) return null;
+  var now = Math.floor(Date.now() / 1000);
+  var diff = epoch - now;
+  var days = Math.floor(Math.abs(diff) / 86400);
+  if (diff < 0) return days === 0 ? "overdue" : "overdue by " + days + (days === 1 ? " day" : " days");
+  if (days === 0) return "due today";
+  if (days === 1) return "tomorrow";
+  if (days <= 14) return "in " + days + " days";
+  var d = new Date(epoch * 1000);
+  if (d.getFullYear() === new Date().getFullYear()) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
 import {
-  strengthToTier,
+  strengthToTier, effectiveStrength, nextReviewDate,
   TIERS, createPracticeSet, generateProblems,
   loadPracticeMaterialCtx,
 } from "../../lib/study.js";
@@ -40,46 +54,232 @@ export default function ModePicker() {
     selectMode, bootWithFocus,
   } = useStudy();
 
+  var [nudgeItem, setNudgeItem] = useState(null);
+  var [suggestedMode, setSuggestedMode] = useState(null);
+  var [nudgeDismissed, setNudgeDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!active) return;
+    var cancelled = false;
+
+    (async () => {
+      var now = Math.floor(Date.now() / 1000);
+      var candidates = [];
+
+      var asgn = await Assignments.getByCourse(active.id);
+      var sk = await loadSkillsV2(active.id);
+
+      for (var a of asgn) {
+        if (a.status === "completed") continue;
+        if (a.source === "syllabus" && !a.materialId) continue;
+
+        var questions = await Assignments.getQuestions(a.id);
+        var reqIds = new Set();
+        questions.forEach(function (q) {
+          (q.requiredSkills || []).forEach(function (s) { reqIds.add(s.conceptKey || s.name || String(s.subSkillId)); });
+        });
+        var skillList = [...reqIds].map(function (sid) {
+          var s = (sk || []).find(function (x) { return x.id === sid || x.conceptKey === sid; });
+          if (!s) s = (sk || []).find(function (x) { return x.name && x.name.toLowerCase() === sid.toLowerCase(); });
+          return { id: s?.id || sid, name: s?.name || sid, strength: s ? effectiveStrength(s) : 0 };
+        });
+        var avg = skillList.length > 0 ? skillList.reduce(function (sum, x) { return sum + x.strength; }, 0) / skillList.length : 0;
+
+        var isOverdue = a.dueDate && a.dueDate < now;
+        var daysUntil = a.dueDate ? Math.floor((a.dueDate - now) / 86400) : null;
+
+        if (isOverdue || (daysUntil !== null && daysUntil <= 3 && avg < 0.6)) {
+          // Build enriched assignment for bootWithFocus
+          var enrichedQuestions = questions.map(function (q) {
+            return {
+              id: q.questionRef || String(q.id),
+              description: q.description,
+              difficulty: q.difficulty,
+              requiredSkills: (q.requiredSkills || []).map(function (s) { return s.conceptKey || s.name || String(s.subSkillId); }),
+            };
+          });
+          candidates.push({
+            type: "assignment",
+            title: a.title,
+            dueDateEpoch: a.dueDate,
+            readiness: avg,
+            isOverdue: isOverdue,
+            daysUntil: daysUntil,
+            assignment: { ...a, questions: enrichedQuestions, dueDateEpoch: a.dueDate || null, dueDate: formatNudgeDate(a.dueDate) },
+          });
+        }
+      }
+
+      // Exams
+      var schedule = await CourseSchedule.getByCourse(active.id);
+      var allSkillAvg = (sk || []).length > 0
+        ? sk.reduce(function (s, x) { return s + effectiveStrength(x); }, 0) / sk.length : 0;
+
+      for (var week of schedule) {
+        try {
+          var exams = JSON.parse(week.exams || "[]");
+          for (var exam of exams) {
+            if (!exam.date) continue;
+            var epoch = Math.floor(new Date(exam.date).getTime() / 1000);
+            if (isNaN(epoch)) continue;
+            var examOverdue = epoch < now;
+            var examDays = Math.floor((epoch - now) / 86400);
+
+            if (examOverdue || (examDays <= 7 && allSkillAvg < 0.6)) {
+              candidates.push({
+                type: "exam",
+                title: exam.name || exam.title || "Exam",
+                dueDateEpoch: epoch,
+                readiness: allSkillAvg,
+                isOverdue: examOverdue,
+                daysUntil: examDays,
+              });
+            }
+          }
+        } catch (e) { /* skip malformed */ }
+      }
+
+      if (cancelled) return;
+
+      if (candidates.length === 0) {
+        // Check for spaced repetition due
+        if (Array.isArray(sk)) {
+          var today = new Date().toISOString().split("T")[0];
+          var dueForReview = sk.filter(function (s) { var rd = nextReviewDate(s); return rd && rd <= today; });
+          if (dueForReview.length > 0) setSuggestedMode("skills");
+        }
+        return;
+      }
+
+      candidates.sort(function (a, b) {
+        if (a.isOverdue && !b.isOverdue) return -1;
+        if (!a.isOverdue && b.isOverdue) return 1;
+        if (a.isOverdue && b.isOverdue) return b.dueDateEpoch - a.dueDateEpoch;
+        return a.dueDateEpoch - b.dueDateEpoch;
+      });
+
+      var top = candidates[0];
+      setNudgeItem(top);
+      setSuggestedMode(top.type === "exam" ? "exam" : "assignment");
+    })();
+
+    return function () { cancelled = true; };
+  }, [active?.id]);
+
+  // Mode button style helper — accent for suggested mode, neutral for others
+  function modeBtn(mode) {
+    var isSuggested = suggestedMode === mode || (!suggestedMode && mode === "assignment");
+    return {
+      bg: isSuggested ? T.acS : T.sf,
+      border: isSuggested ? T.acB : T.bd,
+      titleColor: isSuggested ? T.ac : T.tx,
+      hoverBg: isSuggested ? "rgba(108,156,252,0.15)" : T.sfH,
+      hoverBorder: T.acB,
+    };
+  }
+
   // Main mode picker (no session, no boot, no chunk picker, no practice)
   if (!sessionMode && !booting && !chunkPicker && !practiceMode) {
+    var nudgeLabel = null;
+    var nudgeBg = null;
+    var nudgeBorder = null;
+    var nudgeColor = null;
+    if (nudgeItem && !nudgeDismissed) {
+      var isRed = nudgeItem.isOverdue || (nudgeItem.daysUntil !== null && nudgeItem.daysUntil < 2);
+      nudgeBg = isRed ? "rgba(248,113,113,0.08)" : "rgba(245,158,11,0.06)";
+      nudgeBorder = isRed ? "rgba(248,113,113,0.3)" : "rgba(245,158,11,0.2)";
+      nudgeColor = isRed ? (T.rd || "#EF4444") : T.am;
+      if (nudgeItem.isOverdue) {
+        var overdueDays = Math.abs(nudgeItem.daysUntil);
+        nudgeLabel = overdueDays === 0 ? "overdue" : "overdue by " + overdueDays + (overdueDays === 1 ? " day" : " days");
+      } else if (nudgeItem.daysUntil === 0) {
+        nudgeLabel = "due today";
+      } else if (nudgeItem.daysUntil === 1) {
+        nudgeLabel = "due tomorrow";
+      } else {
+        nudgeLabel = "due in " + nudgeItem.daysUntil + " days";
+      }
+    }
+
+    var readinessColor = function (v) { return v >= 0.6 ? T.gn : v >= 0.3 ? "#F59E0B" : (T.txM || T.txD); };
+
+    var a1 = modeBtn("assignment");
+    var a2 = modeBtn("recap");
+    var a3 = modeBtn("skills");
+    var a4 = modeBtn("exam");
+    var a5 = modeBtn("explore");
+
     return (
       <div style={{ padding: 32, maxWidth: 640, margin: "0 auto", animation: "fadeIn 0.3s" }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>{active.name}</h1>
-        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32 }}>Pick a direction and we'll get started.</p>
+        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: nudgeItem && !nudgeDismissed ? 16 : 32 }}>Pick a direction and we'll get started.</p>
+
+        {/* Deadline nudge banner */}
+        {nudgeItem && !nudgeDismissed && (
+          <div style={{ background: nudgeBg, border: "1px solid " + nudgeBorder, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: nudgeColor, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {nudgeItem.title.length > 30 ? nudgeItem.title.substring(0, 30) + "\u2026" : nudgeItem.title}
+                  <span style={{ fontWeight: 400, color: T.txD }}> {"\u2014"} {nudgeLabel}</span>
+                  <span style={{ fontWeight: 400 }}> {"\u00B7"} </span>
+                  <span style={{ color: readinessColor(nudgeItem.readiness) }}>{Math.round(nudgeItem.readiness * 100)}% ready</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 12 }}>
+                <button onClick={() => {
+                  if (nudgeItem.type === "assignment" && nudgeItem.assignment) {
+                    bootWithFocus({ type: "assignment", assignment: nudgeItem.assignment });
+                  } else {
+                    selectMode("exam");
+                  }
+                }}
+                  style={{ background: nudgeColor, color: "#0F1115", border: "none", borderRadius: 8, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                  {nudgeItem.type === "exam" ? "Start prep" : "Work on it"}
+                </button>
+                <button onClick={() => setNudgeDismissed(true)}
+                  style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 12, padding: "5px 6px" }}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <button onClick={() => selectMode("assignment")}
-            style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(108,156,252,0.15)"}
-            onMouseLeave={e => e.currentTarget.style.background = T.acS}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.ac, marginBottom: 4 }}>Work on an assignment</div>
+            style={{ background: a1.bg, border: "1px solid " + a1.border, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = a1.hoverBg; e.currentTarget.style.borderColor = a1.hoverBorder; }}
+            onMouseLeave={e => { e.currentTarget.style.background = a1.bg; e.currentTarget.style.borderColor = a1.border; }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: a1.titleColor, marginBottom: 4 }}>Work on an assignment</div>
             <div style={{ fontSize: 12, color: T.txD }}>Pick an assignment, then get taught what you need to complete it.</div>
           </button>
           <button onClick={() => selectMode("recap")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-            onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Recap last session</div>
+            style={{ background: a2.bg, border: "1px solid " + a2.border, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = a2.hoverBg; e.currentTarget.style.borderColor = a2.hoverBorder; }}
+            onMouseLeave={e => { e.currentTarget.style.background = a2.bg; e.currentTarget.style.borderColor = a2.border; }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: a2.titleColor, marginBottom: 4 }}>Recap last session</div>
             <div style={{ fontSize: 12, color: T.txD }}>Review where you left off and what still needs work.</div>
           </button>
           <button onClick={() => selectMode("skills")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-            onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Skill work</div>
+            style={{ background: a3.bg, border: "1px solid " + a3.border, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = a3.hoverBg; e.currentTarget.style.borderColor = a3.hoverBorder; }}
+            onMouseLeave={e => { e.currentTarget.style.background = a3.bg; e.currentTarget.style.borderColor = a3.border; }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: a3.titleColor, marginBottom: 4 }}>Skill work</div>
             <div style={{ fontSize: 12, color: T.txD }}>Pick a skill to strengthen and go deep.</div>
           </button>
           <button onClick={() => selectMode("exam")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-            onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Prepare for exam</div>
+            style={{ background: a4.bg, border: "1px solid " + a4.border, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = a4.hoverBg; e.currentTarget.style.borderColor = a4.hoverBorder; }}
+            onMouseLeave={e => { e.currentTarget.style.background = a4.bg; e.currentTarget.style.borderColor = a4.border; }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: a4.titleColor, marginBottom: 4 }}>Prepare for exam</div>
             <div style={{ fontSize: 12, color: T.txD }}>Select materials and drill across topics with interleaved practice.</div>
           </button>
           <button onClick={() => selectMode("explore")}
-            style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-            onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-            onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Explore a topic</div>
+            style={{ background: a5.bg, border: "1px solid " + a5.border, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = a5.hoverBg; e.currentTarget.style.borderColor = a5.hoverBorder; }}
+            onMouseLeave={e => { e.currentTarget.style.background = a5.bg; e.currentTarget.style.borderColor = a5.border; }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: a5.titleColor, marginBottom: 4 }}>Explore a topic</div>
             <div style={{ fontSize: 12, color: T.txD }}>Freely explore something you're curious about.</div>
           </button>
         </div>
@@ -417,6 +617,7 @@ export default function ModePicker() {
                     <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>
                       {s.lastRating ? "Last: " + s.lastRating : "Not yet practiced"}
                       {s.lastPracticed ? " | " + Math.round((Date.now() - new Date(s.lastPracticed).getTime()) / 86400000) + "d ago" : ""}
+                      {s.deadlineTitle && <span style={{ color: s.deadlineDays < 7 ? T.am : T.ac }}>{" | Needed for " + s.deadlineTitle + " (" + s.deadlineDays + "d)"}</span>}
                     </div>
                   </div>
                   {isExp && (

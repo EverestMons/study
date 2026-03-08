@@ -1,4 +1,4 @@
-import { DB, Mastery, SubSkills } from './db.js';
+import { DB, Mastery, SubSkills, Assignments, CourseSchedule } from './db.js';
 import { callClaude, extractJSON } from './api.js';
 import { getMatContent } from './skills.js';
 import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
@@ -48,6 +48,91 @@ export const nextReviewDate = (skillOrMastery) => {
   const now = new Date();
   if (next <= now) return "now";
   return next.toISOString().split("T")[0];
+};
+
+// --- Deadline Context for LLM ---
+// Returns a text block describing the nearest 3 upcoming deadlines with readiness + weakest skills.
+export const buildDeadlineContext = async (courseId, skills) => {
+  var asgn = await Assignments.getByCourse(courseId);
+  var schedule = await CourseSchedule.getByCourse(courseId);
+  var now = Math.floor(Date.now() / 1000);
+  var items = [];
+
+  // Assignments
+  for (var a of asgn) {
+    if (a.status === "completed") continue;
+    if (a.source === "syllabus" && !a.materialId) continue;
+    var questions = await Assignments.getQuestions(a.id);
+    var reqIds = new Set();
+    questions.forEach(function (q) {
+      (q.requiredSkills || []).forEach(function (s) { reqIds.add(s.conceptKey || s.name || String(s.subSkillId)); });
+    });
+    var skillList = [...reqIds].map(function (sid) {
+      var s = (skills || []).find(function (x) { return x.id === sid || x.conceptKey === sid; });
+      if (!s) s = (skills || []).find(function (x) { return x.name && x.name.toLowerCase() === sid.toLowerCase(); });
+      return { id: s?.conceptKey || s?.id || sid, name: s?.name || sid, strength: effectiveStrength(s) };
+    });
+    var avg = skillList.length > 0 ? skillList.reduce(function (sum, x) { return sum + x.strength; }, 0) / skillList.length : 0;
+    var weakest = skillList.slice().sort(function (x, y) { return x.strength - y.strength; }).slice(0, 3);
+    items.push({ title: a.title, dueDateEpoch: a.dueDate || null, readiness: avg, weakest: weakest, type: "assignment" });
+  }
+
+  // Exams
+  var allSkillAvg = (skills || []).length > 0
+    ? skills.reduce(function (s, x) { return s + effectiveStrength(x); }, 0) / skills.length : 0;
+  var allWeakest = (skills || []).map(function (x) { return { id: x.conceptKey || x.id, name: x.name, strength: effectiveStrength(x) }; })
+    .sort(function (a, b) { return a.strength - b.strength; }).slice(0, 3);
+
+  for (var week of schedule) {
+    try {
+      var exams = JSON.parse(week.exams || "[]");
+      for (var exam of exams) {
+        if (!exam.date) continue;
+        var epoch = Math.floor(new Date(exam.date).getTime() / 1000);
+        if (isNaN(epoch)) continue;
+        items.push({ title: exam.name || exam.title || "Exam", dueDateEpoch: epoch, readiness: allSkillAvg, weakest: allWeakest, type: "exam" });
+      }
+    } catch (e) { /* skip malformed */ }
+  }
+
+  // Sort by due date ascending (nulls last), take nearest 3
+  items.sort(function (a, b) {
+    if (a.dueDateEpoch && b.dueDateEpoch) return a.dueDateEpoch - b.dueDateEpoch;
+    if (a.dueDateEpoch) return -1;
+    if (b.dueDateEpoch) return 1;
+    return 0;
+  });
+  items = items.slice(0, 3);
+
+  if (items.length === 0) return "";
+
+  var ctx = "UPCOMING DEADLINES:\n";
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var dueStr = "";
+    if (it.dueDateEpoch) {
+      var diff = it.dueDateEpoch - now;
+      var days = Math.floor(Math.abs(diff) / 86400);
+      if (diff < 0) dueStr = days === 0 ? "OVERDUE" : "overdue by " + days + (days === 1 ? " day" : " days") + ", OVERDUE";
+      else if (days === 0) dueStr = "due today";
+      else if (days === 1) dueStr = "due tomorrow";
+      else dueStr = "due in " + days + " days";
+    } else {
+      dueStr = "no due date";
+    }
+
+    ctx += "\n" + (i + 1) + ". " + it.title + " (" + dueStr + ")\n";
+    ctx += "   Readiness: " + Math.round(it.readiness * 100) + "%\n";
+    if (it.weakest.length > 0) {
+      ctx += "   Weakest skills:\n";
+      for (var w of it.weakest) {
+        ctx += "     - " + w.id + ": " + w.name + " [" + Math.round(w.strength * 100) + "%]\n";
+      }
+    } else {
+      ctx += "   Weakest skills:\n     - (no skills mapped yet)\n";
+    }
+  }
+  return ctx;
 };
 
 // Keep DEFAULT_EASE export for any remaining references (backward compat)
@@ -281,6 +366,10 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
     }
   }
 
+  // 2b. Deadline context
+  var deadlineCtx = await buildDeadlineContext(courseId, skills);
+  if (deadlineCtx) ctx += "\n" + deadlineCtx + "\n";
+
   // 3. Student profile
   ctx += "\nSTUDENT PROFILE:\n";
   ctx += "Total study sessions: " + profile.sessions + "\n";
@@ -424,6 +513,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
       }
     }
 
+    var dlCtx1 = await buildDeadlineContext(courseId, allSkills);
+    if (dlCtx1) ctx += "\n" + dlCtx1 + "\n";
+
   } else if (focus.type === "skill") {
     const skill = focus.skill;
     const str = effectiveStrength(skill);
@@ -481,6 +573,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
       }
     }
 
+    var dlCtx2 = await buildDeadlineContext(courseId, allSkills);
+    if (dlCtx2) ctx += "\n" + dlCtx2 + "\n";
+
   } else if (focus.type === "recap") {
     // Just skill summary, no materials
     ctx += "STUDENT PROFILE:\n";
@@ -493,6 +588,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
         ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength\n";
       }
     }
+
+    var dlCtx3 = await buildDeadlineContext(courseId, allSkills);
+    if (dlCtx3) ctx += "\n" + dlCtx3 + "\n";
 
   } else if (focus.type === "exam") {
     // Load ALL chunks from the selected materials for broad exam coverage
@@ -555,6 +653,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
         ctx += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
       }
     }
+
+    var dlCtx4 = await buildDeadlineContext(courseId, allSkills);
+    if (dlCtx4) ctx += "\n" + dlCtx4 + "\n";
 
   } else if (focus.type === "explore") {
     // Lightweight context prioritizing chunks matching the topic

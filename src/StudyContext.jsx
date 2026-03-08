@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments } from "./lib/db.js";
+import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -643,8 +643,38 @@ export function StudyProvider({ children, setErrorCtx }) {
           setPickerData({ mode, empty: true, message: "No skills yet. Activate sections and extract skills first." });
           return;
         }
+        // Build deadline skill map: which skills are needed for upcoming assignments
+        var deadlineSkillMap = {};
+        try {
+          var skAsgn = await Assignments.getByCourse(active.id);
+          var skNow = Math.floor(Date.now() / 1000);
+          for (var sa of skAsgn) {
+            if (sa.status === "completed") continue;
+            if (sa.source === "syllabus" && !sa.materialId) continue;
+            if (!sa.dueDate || sa.dueDate < skNow) continue;
+            var skDaysUntil = Math.floor((sa.dueDate - skNow) / 86400);
+            if (skDaysUntil > 14) continue;
+            var skQuestions = await Assignments.getQuestions(sa.id);
+            for (var sq of skQuestions) {
+              for (var srs of (sq.requiredSkills || [])) {
+                var ssid = srs.conceptKey || srs.name || String(srs.subSkillId);
+                if (!deadlineSkillMap[ssid] || skDaysUntil < deadlineSkillMap[ssid].daysUntil) {
+                  deadlineSkillMap[ssid] = { title: sa.title, daysUntil: skDaysUntil };
+                }
+              }
+            }
+          }
+        } catch (e) { console.error("Deadline skill map failed:", e); }
+
         const enriched = skills.map(s => {
           const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
+          // Match deadline info via 3-tier resolution
+          var dl = deadlineSkillMap[s.id] || deadlineSkillMap[s.conceptKey] || null;
+          if (!dl && s.name) {
+            for (var [dsid, dinfo] of Object.entries(deadlineSkillMap)) {
+              if (s.name.toLowerCase() === dsid.toLowerCase()) { dl = dinfo; break; }
+            }
+          }
           return {
             ...s,
             points: s.mastery?.totalMasteryPoints || 0,
@@ -652,9 +682,22 @@ export function StudyProvider({ children, setErrorCtx }) {
             lastPracticed: s.mastery?.lastReviewAt ? new Date((s.mastery.lastReviewAt < 1e11 ? s.mastery.lastReviewAt * 1000 : s.mastery.lastReviewAt)).toISOString() : null,
             reviewDate: nextReviewDate(s),
             sessions: s.mastery?.reps || 0,
-            lastRating: pd?.entries?.slice(-1)[0]?.rating || null
+            lastRating: pd?.entries?.slice(-1)[0]?.rating || null,
+            deadlineTitle: dl?.title || null,
+            deadlineDays: dl?.daysUntil ?? null,
           };
-        }).sort((a, b) => a.strength - b.strength);
+        }).sort((a, b) => {
+          var strengthDiff = a.strength - b.strength;
+          // Within same strength band (±10%), promote deadline-relevant skills
+          if (Math.abs(strengthDiff) < 0.10) {
+            var aHas = a.deadlineDays !== null;
+            var bHas = b.deadlineDays !== null;
+            if (aHas && !bHas) return -1;
+            if (!aHas && bHas) return 1;
+            if (aHas && bHas) return a.deadlineDays - b.deadlineDays;
+          }
+          return strengthDiff;
+        });
         setPickerData({ mode, items: enriched });
       } else if (mode === "exam") {
         var mats = (active.materials || []).filter(m => (m.chunks || []).some(c => c.status === "extracted"));
@@ -662,7 +705,46 @@ export function StudyProvider({ children, setErrorCtx }) {
           setPickerData({ mode, empty: true, message: "No extracted materials found. Extract skills from your course materials first." });
           return;
         }
-        setPickerData({ mode, materials: mats, selectedMats: new Set() });
+        // Auto-select materials based on nearest exam scope
+        var preSelected = new Set();
+        try {
+          var examSchedule = await CourseSchedule.getByCourse(active.id);
+          var examNow = Math.floor(Date.now() / 1000);
+          var nearestExam = null;
+          for (var ew of examSchedule) {
+            var ewExams = JSON.parse(ew.exams || "[]");
+            for (var eex of ewExams) {
+              if (!eex.date || !eex.coversWeeks?.length) continue;
+              var eEpoch = Math.floor(new Date(eex.date).getTime() / 1000);
+              if (isNaN(eEpoch) || eEpoch <= examNow) continue;
+              if (!nearestExam || eEpoch < nearestExam.epoch) {
+                nearestExam = { ...eex, epoch: eEpoch };
+              }
+            }
+          }
+          if (nearestExam && nearestExam.coversWeeks.length > 0) {
+            var readingSet = new Set();
+            for (var sw of examSchedule) {
+              var swn = sw.week_number || sw.weekNumber;
+              if (nearestExam.coversWeeks.includes(swn)) {
+                var readings = JSON.parse(sw.readings || "[]");
+                readings.forEach(function (r) { readingSet.add(r.toLowerCase()); });
+              }
+            }
+            if (readingSet.size > 0) {
+              for (var em of mats) {
+                var emName = em.name.toLowerCase();
+                for (var reading of readingSet) {
+                  if (emName.includes(reading) || reading.includes(emName)) {
+                    preSelected.add(em.id);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) { console.error("Exam scope auto-selection failed:", e); }
+        setPickerData({ mode, materials: mats, selectedMats: preSelected });
       } else if (mode === "explore") {
         setPickerData({ mode, exploreTopic: "" });
       }
