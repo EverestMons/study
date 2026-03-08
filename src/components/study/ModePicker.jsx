@@ -1,8 +1,22 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
-import { DB } from "../../lib/db.js";
+import { DB, Assignments } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
+
+function getUrgencyLevel(dueDateEpoch) {
+  if (!dueDateEpoch) return 'none';
+  const now = Math.floor(Date.now() / 1000);
+  const diff = dueDateEpoch - now;
+  if (diff < 0) return 'overdue';
+  if (diff < 48 * 3600) return 'urgent';
+  if (diff < 7 * 86400) return 'soon';
+  return 'normal';
+}
+
+const URGENCY_COLORS = {
+  overdue: T.rd, urgent: T.rd, soon: T.am, normal: T.ac, none: T.txM,
+};
 import {
   strengthToTier,
   TIERS, createPracticeSet, generateProblems,
@@ -180,17 +194,58 @@ export default function ModePicker() {
             {pickerData.items.map((a, i) => {
               var isExpanded = pickerData.expanded === i;
               var readyColor = a.avgStrength >= 0.6 ? T.gn : a.avgStrength >= 0.3 ? "#F59E0B" : (T.txM || T.txD);
+              var urgency = getUrgencyLevel(a.dueDateEpoch);
+              var urgencyColor = URGENCY_COLORS[urgency];
+              var isOverdue = urgency === 'overdue';
+              var cardBorder = isExpanded ? T.acB : isOverdue ? "rgba(248,113,113,0.3)" : T.bd;
+              var cardBg = isOverdue ? "rgba(248,113,113,0.06)" : T.sf;
               return (
-                <div key={i} style={{ background: T.sf, border: "1px solid " + (isExpanded ? T.acB : T.bd), borderRadius: 12, overflow: "hidden", transition: "all 0.15s" }}>
+                <div key={a.id || i} style={{ background: cardBg, border: "1px solid " + cardBorder, borderRadius: 12, overflow: "hidden", transition: "all 0.15s" }}>
                   <div onClick={() => setPickerData(prev => ({ ...prev, expanded: isExpanded ? null : i }))}
                     style={{ padding: "16px 20px", cursor: "pointer" }}
-                    onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = T.acS; }}
+                    onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = isOverdue ? "rgba(248,113,113,0.1)" : T.acS; }}
                     onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = "transparent"; }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{a.title}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {a.dueDate && <div style={{ fontSize: 11, color: T.ac, flexShrink: 0 }}>{a.dueDate}</div>}
-                        <span style={{ fontSize: 11, color: T.txD }}>{isExpanded ? "^" : "v"}</span>
+                        <div onClick={e => { e.stopPropagation(); e.currentTarget.querySelector('input')?.showPicker(); }}
+                          style={{ fontSize: 11, color: urgencyColor, flexShrink: 0, cursor: "pointer", position: "relative" }}
+                          title="Click to set due date">
+                          <span>{a.dueDate || "No due date"}</span>
+                          <input type="date" style={{ position: "absolute", opacity: 0, width: 0, height: 0, top: 0, left: 0 }}
+                            value={a.dueDateEpoch ? new Date(a.dueDateEpoch * 1000).toISOString().split('T')[0] : ''}
+                            onChange={async (ev) => {
+                              ev.stopPropagation();
+                              var val = ev.target.value;
+                              var newEpoch = val ? Math.floor(new Date(val + 'T23:59:59').getTime() / 1000) : null;
+                              await Assignments.updateDueDate(a.id, newEpoch);
+                              setPickerData(prev => {
+                                if (!prev?.items) return prev;
+                                var updated = prev.items.map(item => {
+                                  if (item.id !== a.id) return item;
+                                  var now = Math.floor(Date.now() / 1000);
+                                  var diff = newEpoch ? newEpoch - now : null;
+                                  var days = diff !== null ? Math.floor(Math.abs(diff) / 86400) : null;
+                                  var label = null;
+                                  if (newEpoch) {
+                                    if (diff < 0) label = days === 0 ? 'overdue' : 'overdue by ' + days + (days === 1 ? ' day' : ' days');
+                                    else if (days === 0) label = 'due today';
+                                    else if (days === 1) label = 'tomorrow';
+                                    else if (days <= 14) label = 'in ' + days + ' days';
+                                    else {
+                                      var d = new Date(newEpoch * 1000);
+                                      label = d.getFullYear() === new Date().getFullYear()
+                                        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                    }
+                                  }
+                                  return { ...item, dueDateEpoch: newEpoch, dueDate: label };
+                                });
+                                return { ...prev, items: updated };
+                              });
+                            }} />
+                        </div>
+                        <span style={{ fontSize: 11, color: T.txD }}>{isExpanded ? "\u25b4" : "\u25be"}</span>
                       </div>
                     </div>
                     <div style={{ fontSize: 12, color: T.txD }}>

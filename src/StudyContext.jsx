@@ -20,6 +20,22 @@ import {
   completeTierAttempt, loadPracticeMaterialCtx
 } from "./lib/study.js";
 
+/** Format due date epoch — relative when close, absolute when far. */
+function formatDueDate(dueDateEpoch) {
+  if (!dueDateEpoch) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const diff = dueDateEpoch - now;
+  const days = Math.floor(Math.abs(diff) / 86400);
+  if (diff < 0) return days === 0 ? 'overdue' : 'overdue by ' + days + (days === 1 ? ' day' : ' days');
+  if (days === 0) return 'due today';
+  if (days === 1) return 'tomorrow';
+  if (days <= 14) return 'in ' + days + ' days';
+  const d = new Date(dueDateEpoch * 1000);
+  const thisYear = new Date().getFullYear();
+  if (d.getFullYear() === thisYear) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 /** Load assignments with questions mapped to the shape consumers expect. */
 async function loadAssignmentsCompat(courseId) {
   const assignments = await Assignments.getByCourse(courseId);
@@ -31,9 +47,8 @@ async function loadAssignmentsCompat(courseId) {
       difficulty: q.difficulty,
       requiredSkills: (q.requiredSkills || []).map(s => s.conceptKey || s.name || String(s.subSkillId)),
     }));
-    if (a.dueDate) {
-      a.dueDate = new Date(a.dueDate * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    }
+    a.dueDateEpoch = a.dueDate || null;
+    a.dueDate = formatDueDate(a.dueDate);
   }
   return assignments;
 }
@@ -589,6 +604,11 @@ export function StudyProvider({ children, setErrorCtx }) {
                   });
                   return { ...a, skillList: skillList2, avgStrength: skillList2.length > 0 ? skillList2.reduce((s, sk) => s + sk.strength, 0) / skillList2.length : 0, weakSkills: skillList2.filter(sk => sk.strength < 0.4), questionCount: a.questions?.length || 0 };
                 });
+                enriched2.sort((a, b) => {
+                  if (a.dueDateEpoch && b.dueDateEpoch) return a.dueDateEpoch - b.dueDateEpoch;
+                  if (a.dueDateEpoch) return -1; if (b.dueDateEpoch) return 1;
+                  return (a.title || '').localeCompare(b.title || '');
+                });
                 setPickerData({ mode, items: enriched2, _skills: skills });
                 addNotif("success", "Assignments decomposed.");
                 return;
@@ -611,6 +631,11 @@ export function StudyProvider({ children, setErrorCtx }) {
           const weakSkills = skillList.filter(sk => sk.strength < 0.4);
           const avgStrength = skillList.length > 0 ? skillList.reduce((s, sk) => s + sk.strength, 0) / skillList.length : 0;
           return { ...a, skillList, avgStrength, weakSkills, questionCount: a.questions?.length || 0 };
+        });
+        enriched.sort((a, b) => {
+          if (a.dueDateEpoch && b.dueDateEpoch) return a.dueDateEpoch - b.dueDateEpoch;
+          if (a.dueDateEpoch) return -1; if (b.dueDateEpoch) return 1;
+          return (a.title || '').localeCompare(b.title || '');
         });
         setPickerData({ mode, items: enriched, _skills: skills });
       } else if (mode === "skills") {
