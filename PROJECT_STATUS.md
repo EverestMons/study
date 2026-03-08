@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-03-08
-**Updated By:** Product Analyst (post Phase 1 — Assignment Table Migration)
+**Updated By:** Product Analyst (post Phase 2 — Syllabus Parsing Pipeline)
 **Overall Status:** 🟢 Active
 
 ---
 
 ## Current Sprint / Focus
 
-Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. **Stability hardening complete** — 5 fixes (S1–S5) targeting white-screen crashes, data-loss race conditions, and duplicate error handlers. Release build verified, no regressions. **Assignment table migration (003) complete** — assignments now stored in normalized relational tables (3 tables, 8 indexes) instead of JSON blobs. Blob migration runs automatically on app startup. V1 `saveAsgn`/`getAsgn` dead code removed. QA: no critical findings. Next priorities: assignment scheduler UI (Phase 2), parent skill layer, cross-skill concept links.
+Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the working app. Core extraction, practice, and chat flows are live. Session intent system is **complete** (5 modes: assignment, recap, skills, exam prep, explore). Material upload pipeline redesigned — auto-extraction, state-aware cards, and transparent processing replace the old manual activate→extract flow. Chunking pipeline hardened with bundled JSZip, safety limits, and stack-based XML parsing. **PDF support now live** via pdfjs-dist — no Python sidecar needed. **Codebase decomposition complete** — the original 4,416-line god-component has been split across 4 phases into a context provider, screen router, 8 screen components, 3 shared components, and 10 study sub-components (42 source files, ~12,960 LOC). This was a pure refactor with no feature changes. **Stability hardening complete** — 5 fixes (S1–S5) targeting white-screen crashes, data-loss race conditions, and duplicate error handlers. Release build verified, no regressions. **Assignment table migration (003) complete** — assignments now stored in normalized relational tables (3 tables, 8 indexes) instead of JSON blobs. Blob migration runs automatically on app startup. V1 `saveAsgn`/`getAsgn` dead code removed. **Syllabus parsing pipeline complete** — uploading a syllabus auto-extracts weekly schedule, grading breakdown, course metadata, and placeholder assignments via Haiku LLM. Deterministic validation with composite confidence scoring. Graceful degradation on partial data. QA: no critical findings. Next priorities: assignment scheduler UI (Phases 3–5), parent skill layer, cross-skill concept links.
 
 ---
 
@@ -17,9 +17,9 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
 | Research | Idle | — | No knowledge deposited |
-| Systems Architecture | Active | 2026-03-08 | Architecture blueprints for decomposition, stability hardening, assignment table migration (`knowledge/architecture/`) |
-| Development | Active | 2026-03-08 | 68 commits. Latest: Assignment table migration (003) — 3 new tables, Assignments DB module (13 methods), blob migration, call site rewrites, V1 dead code removed. |
-| Security & Testing | Active | 2026-03-08 | Phase 1 assignment migration QA report — no critical findings, 5 minor items documented (`knowledge/qa/`). |
+| Systems Architecture | Active | 2026-03-08 | Architecture blueprints for decomposition, stability hardening, assignment table migration, syllabus parser (`knowledge/architecture/`) |
+| Development | Active | 2026-03-08 | 69 commits. Latest: Syllabus parsing pipeline — `syllabusParser.js` (322 lines), upload auto-trigger wired in StudyContext.jsx. |
+| Security & Testing | Active | 2026-03-08 | Phase 2 syllabus parsing QA report — no critical findings, 6 minor items documented (`knowledge/qa/`). |
 | Design & Experience | Active | 2026-03-06 | Phase 4 UX validation report (`knowledge/design/validation/`). All flows verified identical. |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
 | Documentation | Idle | — | README is blank; 26 design docs exist in docs/ folder but no user-facing documentation |
@@ -49,6 +49,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | File drag-and-drop | ✅ Live | Tauri native drop disabled so WebView receives drag events |
 | DB Migrations 001 + 002 + 003 | ✅ Applied | v2 schema + skill extraction v2 + assignment tables (3 tables, 8 indexes, full CASCADE) |
 | Assignment table migration | ✅ Live | Assignments stored in normalized tables. Blob migration on startup. `saveAsgn`/`getAsgn` V1 compat removed. |
+| Syllabus parsing pipeline | ✅ Live | Auto-triggered on syllabus upload. Haiku LLM extracts schedule, grading, metadata, exam scope. Deterministic validation (composite confidence). Populates `course_schedule`, `course_assessments`, course metadata, placeholder assignments. |
+| Placeholder assignment system | ✅ Live | Syllabus-sourced assignments created with `source='syllabus'`, `material_id=NULL`. Due dates from schedule weeks. Idempotent via `findPlaceholderMatch`. Matched when real assignment materials are uploaded via `decomposeAssignments`. |
 
 ---
 
@@ -61,7 +63,8 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | ~~PDF support~~ | ~~`docs/study-tauri-architecture.md`~~ | ~~Done~~ | ✅ Implemented via pdfjs-dist — no sidecar needed. Moved to "What Is Working." |
 | Python sidecar (Unstructured) | `docs/study-tauri-architecture.md` | 🟡 Medium | CEO decided: separate install. Deprioritized — PDF now handled client-side. |
 | ~~Assignment table migration (003)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Migration 003 applied. Moved to "What Is Working." |
-| Assignment scheduler UI (Phases 2–5) | `docs/planning/assignment-scheduler-spec.md` | 🔴 High | Syllabus parsing, calendar panel, dashboard, notifications |
+| ~~Syllabus parsing (Phase 2)~~ | ~~`docs/planning/assignment-scheduler-spec.md`~~ | ~~Done~~ | ✅ Implemented — `syllabusParser.js` + upload auto-trigger. Moved to "What Is Working." |
+| Assignment scheduler UI (Phases 3–5) | `docs/planning/assignment-scheduler-spec.md` | 🔴 High | Calendar panel, dashboard, notifications |
 | Migration 004 — v1 skill data migration | `docs/skill-architecture-redesign.md` | 🟡 Medium | JS-level migration in migrate.js |
 | Migration 005 — Cleanup | `docs/skill-architecture-redesign.md` | 🟡 Medium | Drop old tables after confirmed migration |
 | Concept links (cross-skill similarity) | `docs/skill-architecture-redesign.md` Q5 | 🟡 Medium | |
@@ -108,6 +111,7 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 
 | Date | Work |
 |---|---|
+| 2026-03-08 | **Syllabus parsing pipeline (Phase 2):** `syllabusParser.js` (322 lines) — Haiku LLM extraction with JSON schema prompt, `validateSchedule` deterministic validation (composite: date 35% + week 35% + grading 30%), `parseSyllabus` pipeline writes to 4 DB targets (schedule, assessments, course metadata, placeholder assignments). Upload auto-trigger wired into both course creation and material add flows in StudyContext.jsx. Exam scope enrichment (`coversWeeks`/`coversTopics`). QA: PASS, 6 minor items. |
 | 2026-03-08 | **Assignment table migration (Phase 1):** Migration 003 — 3 new tables (assignments, assignment_questions, assignment_question_skills). Assignments DB module with 13 methods + `normalizeAssignmentTitle` helper + `resolveSkillId` resolver. Blob-to-table migration (`migrateAssignmentBlobs`) wired into app startup. `decomposeAssignments` rewritten to use new tables with `scanForDueDate` regex + placeholder matching. `loadAssignmentsCompat` bridges old shape for consumers. V1 `saveAsgn`/`getAsgn` dead code removed. QA: PASS, no critical findings. |
 | 2026-03-06 | **Stability hardening (S1–S5):** Fixed 5 stability issues — enterStudy unprotected await (S1), setReady outside try/catch (S2), StrictMode cancellation guard (S3), duplicate error listeners removed from main.jsx (S4), auto-save coursesLoaded ref guard (S5). No features, no schema changes. Release build verified — binary boots, no white screen. |
 | 2026-03-06 | **Codebase decomposition (Phases 1–4):** Split 4,416-line App.jsx into 42 files. Phase 1: StudyContext extraction. Phase 2/2b: 8 screen components + 3 shared components. Phase 4: Study screen into 10 sub-components + layout shell, ScreenRouter reduced from 1,860 to 62 lines. Pure refactor, no feature changes. Bug S1 (`setSessionElapsed` missing from context) found and fixed. 6 latent import bugs from Phase 1 proactively fixed. UX validation + security/testing reports written. |
@@ -127,23 +131,23 @@ Closing the gap between the spec (`docs/skill-architecture-redesign.md`) and the
 | Desktop | Tauri 2.10.0 |
 | Database | SQLite via @tauri-apps/plugin-sql |
 | AI | Claude API via @tauri-apps/plugin-http |
-| Source files | 42 JS/JSX files |
-| Total LOC | ~13,420 |
+| Source files | 43 JS/JSX files |
+| Total LOC | ~13,740 |
 | Design docs | 26 MD files in docs/ |
-| Knowledge base | 17 MD files in knowledge/ (architecture, development, design, QA) |
-| Git commits | 68 |
-| Most recent commit | 2026-03-06 |
+| Knowledge base | 20 MD files in knowledge/ (architecture, development, design, QA) |
+| Git commits | 69 |
+| Most recent commit | 2026-03-08 |
 
 ### Source File Breakdown (post-decomposition)
 
 | Layer | Files | LOC | Key Files |
 |---|---|---|---|
 | Entry | 2 | 157 | App.jsx (147), main.jsx (10) |
-| State & Routing | 2 | 1,026 | StudyContext.jsx (964), ScreenRouter.jsx (62) |
+| State & Routing | 2 | 1,069 | StudyContext.jsx (1,007), ScreenRouter.jsx (62) |
 | Screens | 8 | 1,563 | MaterialsScreen (555), ProfileScreen (339), UploadScreen (169), SkillsScreen (153), StudyScreen (116), HomeScreen (94), NotifsScreen (73), ManageScreen (64) |
 | Shared Components | 3 | 212 | SettingsModal (93), ErrorDisplay (73), GlobalLockOverlay (46) |
 | Study Sub-Components | 10 | 2,094 | ModePicker (411), PracticeMode (394), SkillsPanel (205), MaterialsPanel (186), ChunkPicker (149), InputBar (131), AssignmentPanel (120), StudyScreen layout (116), SessionSummary (104), MessageList (95), NotifPanel (83) |
-| Libraries | 17 | 8,393 | db.js (1,804), extraction.js (1,346), study.js (940), docxParser (633), htmlToMarkdown (502), epubParser (477), pdfParser (448), skills (467), chunker (427), parsers (416), migrate (388), api (228), fsrs (206), export (143), theme (100), classify (~40), pptxParser (~40) |
+| Libraries | 18 | 8,715 | db.js (1,804), extraction.js (1,346), study.js (940), docxParser (633), htmlToMarkdown (502), epubParser (477), pdfParser (448), skills (467), chunker (427), parsers (416), migrate (388), syllabusParser (322), api (228), fsrs (206), export (143), theme (100), classify (~40), pptxParser (~40) |
 
 ---
 

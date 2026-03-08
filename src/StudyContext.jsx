@@ -6,8 +6,9 @@ import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
-  storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2
+  storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2, getMatContent
 } from "./lib/skills.js";
+import { parseSyllabus } from "./lib/syllabusParser.js";
 import { migrateV1ToV2, migrateAssignmentBlobs } from "./lib/migrate.js";
 import { generateSubmission, downloadBlob } from "./lib/export.js";
 import {
@@ -369,6 +370,26 @@ export function StudyProvider({ children, setErrorCtx }) {
       }
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
       setScreen("materials");
+
+      // --- Syllabus parsing (before skill extraction) ---
+      var syllabusMats = mats.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
+      for (const syllMat of syllabusMats) {
+        setStatus("Parsing syllabus: " + syllMat.name + "...");
+        try {
+          const { content: fullText } = await getMatContent(courseId, syllMat);
+          if (fullText && fullText.trim()) {
+            const syllResult = await parseSyllabus(courseId, fullText, { onStatus: setStatus });
+            if (syllResult.success) {
+              addNotif("success", "Syllabus processed — " + syllResult.weeksFound + " weeks, " + syllResult.assignmentsCreated + " assignment(s) found.");
+            } else {
+              addNotif("warn", "Syllabus parsed with issues: " + syllResult.issues.map(i => i.message).join("; "));
+            }
+          }
+        } catch (e) {
+          console.error("Syllabus parsing failed:", e);
+          addNotif("warn", "Could not parse syllabus: " + e.message);
+        }
+      }
 
       var extractable = mats.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
       if (extractable.length > 0) {
@@ -846,6 +867,28 @@ export function StudyProvider({ children, setErrorCtx }) {
       delete mat._pendingDocs;
     }
     setCourses(updatedCourses); setActive(updatedCourse); setFiles([]);
+
+    // --- Syllabus parsing (before skill extraction) ---
+    if (!active.syllabus_parsed) {
+      var syllabusMats2 = newMeta.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
+      for (const syllMat of syllabusMats2) {
+        setStatus("Parsing syllabus: " + syllMat.name + "...");
+        try {
+          const { content: fullText } = await getMatContent(active.id, syllMat);
+          if (fullText && fullText.trim()) {
+            const syllResult = await parseSyllabus(active.id, fullText, { onStatus: setStatus });
+            if (syllResult.success) {
+              addNotif("success", "Syllabus processed — " + syllResult.weeksFound + " weeks, " + syllResult.assignmentsCreated + " assignment(s) found.");
+            } else {
+              addNotif("warn", "Syllabus parsed with issues: " + syllResult.issues.map(i => i.message).join("; "));
+            }
+          }
+        } catch (e) {
+          console.error("Syllabus parsing failed:", e);
+          addNotif("warn", "Could not parse syllabus: " + e.message);
+        }
+      }
+    }
 
     var extractable = newMeta.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
     if (extractable.length > 0) {
