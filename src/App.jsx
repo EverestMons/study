@@ -3,28 +3,10 @@ import { T, CSS } from "./lib/theme.jsx";
 import { DB } from "./lib/db.js";
 import { StudyProvider } from "./StudyContext.jsx";
 import ScreenRouter from "./ScreenRouter.jsx";
+export { CIP_DOMAINS } from "./lib/cipData.js";
 
 // --- Error Context (for capturing app state in crash reports) ---
 export const ErrorContext = createContext({ screen: "unknown", courseId: null, sessionMode: null });
-
-// --- CIP Domain Lookup ---
-export const CIP_DOMAINS = {
-  "01": "Agriculture & Natural Resources", "03": "Natural Resources & Conservation",
-  "04": "Architecture", "05": "Area, Ethnic & Gender Studies",
-  "09": "Communication & Journalism", "10": "Communications Technologies",
-  "11": "Computer & Information Sciences", "12": "Culinary & Personal Services",
-  "13": "Education", "14": "Engineering", "15": "Engineering Technologies",
-  "16": "Foreign Languages & Linguistics", "19": "Family & Consumer Sciences",
-  "22": "Legal Studies", "23": "English Language & Literature",
-  "24": "Liberal Arts & General Studies", "25": "Library Science",
-  "26": "Biological & Biomedical Sciences", "27": "Mathematics & Statistics",
-  "30": "Interdisciplinary Studies", "31": "Parks, Recreation & Fitness",
-  "38": "Philosophy & Religious Studies", "40": "Physical Sciences",
-  "42": "Psychology", "43": "Criminal Justice",
-  "44": "Public Administration", "45": "Social Sciences",
-  "50": "Visual & Performing Arts", "51": "Health Professions",
-  "52": "Business & Marketing", "54": "History",
-};
 
 // --- Error Boundary ---
 class StudyErrorBoundary extends Component {

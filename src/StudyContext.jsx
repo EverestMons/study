@@ -10,6 +10,7 @@ import {
 } from "./lib/skills.js";
 import { parseSyllabus } from "./lib/syllabusParser.js";
 import { migrateV1ToV2, migrateAssignmentBlobs } from "./lib/migrate.js";
+import { seedCipTaxonomy } from "./lib/cipSeeder.js";
 import { generateSubmission, downloadBlob } from "./lib/export.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
@@ -235,6 +236,12 @@ export function StudyProvider({ children, setErrorCtx }) {
     let cancelled = false;
     (async () => {
       try {
+        // Seed CIP taxonomy (idempotent, fast-path skips if already seeded)
+        try {
+          const cipResult = await seedCipTaxonomy();
+          if (cipResult.seeded > 0) console.log(`[Init] Seeded ${cipResult.seeded} CIP parent skills, ${cipResult.aliases} aliases`);
+        } catch (e) { console.error("CIP taxonomy seeding failed:", e); }
+        if (cancelled) return;
         const loaded = await DB.getCourses();
         if (cancelled) return;
         setCourses(loaded);

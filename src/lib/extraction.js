@@ -10,6 +10,7 @@ import {
   Chunks, SubSkills, ChunkSkillBindings, SkillPrerequisites,
   ParentSkills, Materials, withTransaction
 } from './db.js';
+import { CIP_TAXONOMY } from './cipData.js';
 
 // ============================================================
 // Constants
@@ -288,12 +289,15 @@ INSTRUCTIONS:
    - bloomsLevel: remember | understand | apply | analyze | evaluate | create`;
 
   if (isFirstChapter) {
+    const cipList = CIP_TAXONOMY.map(e => e.code + ' ' + e.name).join('\n');
     prompt += `
 
-FOR THE FIRST CHAPTER ONLY, also determine the academic classification:
-Output a CIP (Classification of Instructional Programs) code that best describes
-the subject. Format: "XX.XX" (e.g., "14.10" for Electrical Engineering,
-"27.01" for Mathematics, "11.01" for Computer Science).
+FOR THE FIRST CHAPTER ONLY, also determine the academic classification.
+Pick the CIP code from this list that BEST matches the subject:
+
+${cipList}
+
+If nothing fits, use cipCode: "custom" and provide your own name.
 
 RESPOND WITH ONLY a JSON object:
 {

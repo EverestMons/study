@@ -29,7 +29,7 @@ knowledge/
 
 | File | Date | Author | Summary |
 |---|---|---|---|
-| *(none yet)* | — | — | — |
+| `cip-2020-taxonomy-2026-03-08.md` | 2026-03-08 | Educational Research Analyst | Complete CIP 2020 4-digit taxonomy from NCES — 416 entries across 42 academic domains. Structured JSON with code, name, domain, domainName, aliases (2-5 student-oriented aliases per entry, ~1,429 total). Series 60-61 excluded per blueprint. |
 
 ## Research — UX
 
@@ -48,6 +48,8 @@ knowledge/
 | `syllabus-parser-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | Assignment scheduler Phase 2 — syllabus parsing pipeline architecture. Haiku LLM extraction, deterministic validation, composite confidence scoring, 4 DB write targets. |
 | `schedule-ui-data-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | Assignment scheduler Phase 4 — schedule UI data architecture. Temporal sections, component-local data loading, FSRS readiness computation, HomeScreen info bars. |
 | `deadline-intelligence-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | Assignment scheduler Phase 5 — deadline intelligence architecture. `buildDeadlineContext()` spec, FSRS priority boost (±10% band), exam auto-scope, nudge computation, insertion points. |
+| `cip-taxonomy-seeding-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | CIP taxonomy seeding blueprint — pre-seed `parent_skills`/`parent_skill_aliases` with CIP 2020 4-digit taxonomy, constrain extraction prompt, update `findOrCreateByCip`. 6 components specified. |
+| `cip-taxonomy-validation-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | CIP taxonomy validation — data structure verification, alias collision analysis (22 found, 4 critical), prompt token budget (~4,300 tokens), seeder performance, bundle size impact. APPROVED WITH AMENDMENTS A1 + A2. |
 
 ## Development
 
@@ -65,6 +67,7 @@ knowledge/
 | `phase3-due-dates-2026-03-08.md` | 2026-03-08 | Study Developer | Assignment scheduler Phase 3: `formatDueDate`, `getUrgencyLevel`, urgency colors, native date picker, soonest-first sort, overdue card treatment. |
 | `phase4-schedule-ui-2026-03-08.md` | 2026-03-08 | Study Developer | Assignment scheduler Phase 4: ScheduleScreen.jsx (289 lines), HomeScreen info bars, ScreenRouter schedule route. Temporal sections, expandable cards, FSRS readiness. |
 | `phase5-deadline-intelligence-2026-03-08.md` | 2026-03-08 | Study Developer | Assignment scheduler Phase 5: Nudge banner (+255 lines ModePicker), `buildDeadlineContext()` (+101 lines study.js), skill priority boost + exam auto-scope (+107 lines StudyContext). FSRS untouched. |
+| `cip-taxonomy-implementation-2026-03-08.md` | 2026-03-08 | Study Developer | CIP taxonomy seeding: `cipData.js` (420 lines, 85 KB), `cipSeeder.js` (54 lines), `findOrCreateByCip` update (+10 lines), extraction prompt update (+6 lines), StudyContext seed call (+6 lines), App.jsx re-export (-17/+1 lines). Build +14.4 KB gzip. |
 
 ## QA
 
@@ -77,6 +80,7 @@ knowledge/
 | `phase3-due-date-testing-2026-03-08.md` | 2026-03-08 | Study Security & Testing Analyst | Assignment scheduler Phase 3 QA — date formatting, urgency computation, sort order, date picker persistence. PASS, 3 minor items. |
 | `phase4-schedule-ui-testing-2026-03-08.md` | 2026-03-08 | Study Security & Testing Analyst | Assignment scheduler Phase 4 QA — temporal sections, data accuracy, navigation, exam readiness. PASS, 4 minor items. |
 | `phase5-deadline-intelligence-testing-2026-03-08.md` | 2026-03-08 | Study Security & Testing Analyst | Assignment scheduler Phase 5 QA — 23 scenarios: nudge accuracy, AI context, skill prioritization, exam auto-scope, FSRS integrity. PASS, 4 minor items. |
+| `cip-taxonomy-testing-2026-03-08.md` | 2026-03-08 | Study Security & Testing Analyst | CIP taxonomy seeding QA — 6 test categories (fresh DB, existing data, extraction integration, ProfileScreen, CIP_DOMAINS imports, startup performance), SQL injection analysis, write serialization, FK integrity. PASS, 3 minor items (M1–M3). |
 
 ## Design
 

@@ -200,9 +200,23 @@ export const ParentSkills = {
   },
 
   async findOrCreateByCip(cipCode, displayName) {
+    // 1. Exact CIP code match — use it, add display name as alias if different
     let parent = await this.findByCip(cipCode);
-    if (parent) return parent.id;
-    return this.create({ name: displayName, cipCode, isCustom: false });
+    if (parent) {
+      if (displayName && displayName.trim().toLowerCase() !== parent.name.toLowerCase()) {
+        await this.addAlias(parent.id, displayName.trim());
+      }
+      return parent.id;
+    }
+    // 2. Alias/name match on the display name — catches abbreviations
+    if (displayName) {
+      parent = await this.findByName(displayName.trim());
+      if (parent) {
+        return parent.id;
+      }
+    }
+    // 3. Create new custom parent skill
+    return this.create({ name: displayName || cipCode, cipCode, isCustom: true });
   },
 };
 
