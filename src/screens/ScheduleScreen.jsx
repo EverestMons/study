@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { useStudy } from "../StudyContext.jsx";
 import { Assignments, CourseSchedule } from "../lib/db.js";
 import { loadSkillsV2 } from "../lib/skills.js";
 import { effectiveStrength } from "../lib/study.js";
+import DatePicker from "../components/DatePicker.jsx";
 
 function formatDueDate(epoch) {
   if (!epoch) return null;
@@ -42,6 +43,8 @@ export default function ScheduleScreen() {
   var [skills, setSkills] = useState([]);
   var [expanded, setExpanded] = useState(null);
   var [showAllExamSkills, setShowAllExamSkills] = useState(false);
+  var [openPicker, setOpenPicker] = useState(null);
+  var dateRefs = useRef({});
 
   useEffect(() => { if (active) loadData(); }, []);
 
@@ -154,7 +157,40 @@ export default function ScheduleScreen() {
               {isExam ? "\u2605 " : ""}{it.title}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, marginLeft: 12 }}>
-              <span style={{ fontSize: 12, color: urgencyColor }}>{it.dueDate || "No date"}</span>
+              {isExam ? (
+                <span style={{ fontSize: 12, color: urgencyColor }}>{it.dueDate || "No date"}</span>
+              ) : (
+                <>
+                  <span ref={function (el) { dateRefs.current[it.id] = el; }}
+                    onClick={function (e) { e.stopPropagation(); setOpenPicker(openPicker === it.id ? null : it.id); }}
+                    style={{ fontSize: 12, color: urgencyColor, cursor: "pointer",
+                      padding: "3px 10px", borderRadius: 6, border: "1px solid " + (urgencyColor === T.txM ? T.bd : urgencyColor + "40"),
+                      background: isOverdue ? "rgba(248,113,113,0.08)" : "rgba(255,255,255,0.03)",
+                      transition: "all 0.15s", whiteSpace: "nowrap", display: "inline-block" }}
+                    onMouseEnter={function (e) { e.currentTarget.style.borderColor = urgencyColor; e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                    onMouseLeave={function (e) { e.currentTarget.style.borderColor = urgencyColor === T.txM ? T.bd : urgencyColor + "40"; e.currentTarget.style.background = isOverdue ? "rgba(248,113,113,0.08)" : "rgba(255,255,255,0.03)"; }}
+                    title="Click to set due date">
+                    {it.dueDate || "Set date"}
+                  </span>
+                  {openPicker === it.id && (
+                    <DatePicker value={it.dueDateEpoch}
+                      onChange={async function (newEpoch) {
+                        await Assignments.updateDueDate(it.id, newEpoch);
+                        setItems(function (prev) {
+                          if (!prev) return prev;
+                          return prev.map(function (item) {
+                            if (item.id !== it.id) return item;
+                            return Object.assign({}, item, { dueDateEpoch: newEpoch, dueDate: formatDueDate(newEpoch) });
+                          });
+                        });
+                        setOpenPicker(null);
+                      }}
+                      anchorRef={{ current: dateRefs.current[it.id] }}
+                      onClose={function () { setOpenPicker(null); }}
+                    />
+                  )}
+                </>
+              )}
               {!isPlaceholder && <span style={{ fontSize: 12, fontWeight: 600, color: readinessColor(it.avgStrength) }}>{Math.round(it.avgStrength * 100)}%</span>}
               {isPlaceholder && <span style={{ fontSize: 12, color: T.txM }}>&mdash;</span>}
               <span style={{ fontSize: 11, color: T.txD }}>{isExp ? "\u25B4" : "\u25BE"}</span>

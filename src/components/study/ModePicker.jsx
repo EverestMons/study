@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { T } from "../../lib/theme.jsx";
 import { DB, Assignments, CourseSchedule } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
+import DatePicker from "../DatePicker.jsx";
 
 function getUrgencyLevel(dueDateEpoch) {
   if (!dueDateEpoch) return 'none';
@@ -57,6 +58,8 @@ export default function ModePicker() {
   var [nudgeItem, setNudgeItem] = useState(null);
   var [suggestedMode, setSuggestedMode] = useState(null);
   var [nudgeDismissed, setNudgeDismissed] = useState(false);
+  var [openPicker, setOpenPicker] = useState(null);
+  var dateRefs = useRef({});
 
   useEffect(() => {
     if (!active) return;
@@ -408,43 +411,30 @@ export default function ModePicker() {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{a.title}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div onClick={e => { e.stopPropagation(); e.currentTarget.querySelector('input')?.showPicker(); }}
-                          style={{ fontSize: 11, color: urgencyColor, flexShrink: 0, cursor: "pointer", position: "relative" }}
+                        <span ref={el => { dateRefs.current[a.id] = el; }}
+                          onClick={e => { e.stopPropagation(); setOpenPicker(openPicker === a.id ? null : a.id); }}
+                          style={{ fontSize: 11, color: urgencyColor, cursor: "pointer" }}
                           title="Click to set due date">
-                          <span>{a.dueDate || "No due date"}</span>
-                          <input type="date" style={{ position: "absolute", opacity: 0, width: 0, height: 0, top: 0, left: 0 }}
-                            value={a.dueDateEpoch ? new Date(a.dueDateEpoch * 1000).toISOString().split('T')[0] : ''}
-                            onChange={async (ev) => {
-                              ev.stopPropagation();
-                              var val = ev.target.value;
-                              var newEpoch = val ? Math.floor(new Date(val + 'T23:59:59').getTime() / 1000) : null;
+                          {a.dueDate || "No due date"}
+                        </span>
+                        {openPicker === a.id && (
+                          <DatePicker value={a.dueDateEpoch}
+                            onChange={async (newEpoch) => {
                               await Assignments.updateDueDate(a.id, newEpoch);
                               setPickerData(prev => {
                                 if (!prev?.items) return prev;
                                 var updated = prev.items.map(item => {
                                   if (item.id !== a.id) return item;
-                                  var now = Math.floor(Date.now() / 1000);
-                                  var diff = newEpoch ? newEpoch - now : null;
-                                  var days = diff !== null ? Math.floor(Math.abs(diff) / 86400) : null;
-                                  var label = null;
-                                  if (newEpoch) {
-                                    if (diff < 0) label = days === 0 ? 'overdue' : 'overdue by ' + days + (days === 1 ? ' day' : ' days');
-                                    else if (days === 0) label = 'due today';
-                                    else if (days === 1) label = 'tomorrow';
-                                    else if (days <= 14) label = 'in ' + days + ' days';
-                                    else {
-                                      var d = new Date(newEpoch * 1000);
-                                      label = d.getFullYear() === new Date().getFullYear()
-                                        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                                        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                                    }
-                                  }
-                                  return { ...item, dueDateEpoch: newEpoch, dueDate: label };
+                                  return { ...item, dueDateEpoch: newEpoch, dueDate: formatNudgeDate(newEpoch) };
                                 });
                                 return { ...prev, items: updated };
                               });
-                            }} />
-                        </div>
+                              setOpenPicker(null);
+                            }}
+                            anchorRef={{ current: dateRefs.current[a.id] }}
+                            onClose={() => setOpenPicker(null)}
+                          />
+                        )}
                         <span style={{ fontSize: 11, color: T.txD }}>{isExpanded ? "\u25b4" : "\u25be"}</span>
                       </div>
                     </div>
