@@ -1,7 +1,6 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { loadSkillsV2 } from "../lib/skills.js";
-import { migrateV1ToV2 } from "../lib/migrate.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import { useStudy } from "../StudyContext.jsx";
 
@@ -32,36 +31,6 @@ export default function SkillsScreen() {
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Skills</h1>
         <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
-
-        {/* V1->V2 Migration Banner */}
-        {skillViewData && !skillViewData.isV2 && skillViewData.skills?.length > 0 && (
-          <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 10, padding: 16, marginBottom: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: T.ac, marginBottom: 6 }}>Upgrade available</div>
-            <div style={{ fontSize: 13, color: T.txD, marginBottom: 12 }}>This course uses v1 skills. Migrate to v2 for richer mastery criteria, Bloom's levels, and prerequisite tracking. All existing progress is preserved.</div>
-            <button disabled={!!globalLock} onClick={async () => {
-              if (globalLock) return;
-              setGlobalLock({ message: "Migrating skills to v2..." });
-              setBusy(true); setStatus("Starting migration...");
-              try {
-                var result = await migrateV1ToV2(active.id, {
-                  onProgress: setStatus,
-                });
-                if (result.migrated > 0) {
-                  addNotif("success", "Migrated " + result.migrated + " skills, " + result.mastery + " mastery records.");
-                  var sk = await loadSkillsV2(active.id);
-                  setSkillViewData({ skills: sk, isV2: true });
-                } else {
-                  addNotif("warn", "Migration returned 0 skills. " + (result.issues?.[0]?.type || "Unknown issue."));
-                }
-              } catch (e) {
-                console.error("Migration failed:", e);
-                addNotif("error", "Migration failed: " + e.message);
-              } finally {
-                setGlobalLock(null); setBusy(false); setStatus("");
-              }
-            }} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: T.ac, color: "#0F1115", fontWeight: 600, fontSize: 13, cursor: globalLock ? "not-allowed" : "pointer", opacity: globalLock ? 0.5 : 1 }}>Migrate to v2</button>
-          </div>
-        )}
 
         {/* Reference Taxonomy */}
         {skillViewData?.refTax && (

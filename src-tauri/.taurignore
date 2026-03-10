@@ -1,0 +1,9 @@
+# Tauri dev watcher — ignore build artifacts to prevent rebuild loops
+/target
+/gen
+../dist
+../node_modules
+../.git
+*.db
+*.db-wal
+*.db-shm

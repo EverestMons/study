@@ -1,6 +1,6 @@
 import React, { useState, Component, createContext } from "react";
 import { T, CSS } from "./lib/theme.jsx";
-import { DB } from "./lib/db.js";
+import { resetAll } from "./lib/db.js";
 import { StudyProvider } from "./StudyContext.jsx";
 import ScreenRouter from "./ScreenRouter.jsx";
 export { CIP_DOMAINS } from "./lib/cipData.js";
@@ -52,7 +52,7 @@ class StudyErrorBoundary extends Component {
   }
   async handleHardReset() {
     try {
-      await DB.resetAll();
+      await resetAll({ confirmed: true });
     } catch (e) { console.error("Failed to clear database:", e); }
     window.location.reload();
   }

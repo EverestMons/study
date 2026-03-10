@@ -1,4 +1,4 @@
-import { DB, Mastery, SubSkills, Assignments, CourseSchedule } from './db.js';
+import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills } from './db.js';
 import { callClaude, extractJSON } from './api.js';
 import { getMatContent } from './skills.js';
 import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
@@ -135,6 +135,88 @@ export const buildDeadlineContext = async (courseId, skills) => {
   return ctx;
 };
 
+// --- Cross-Skill Connection Context ---
+
+const CROSS_SKILL_CHAR_LIMIT = 2000; // ~500 tokens
+const LINK_TYPE_PRIORITY = { same_concept: 0, prerequisite: 1, related: 2 };
+
+export const buildCrossSkillContext = async (courseId, skills) => {
+  if (!Array.isArray(skills) || skills.length === 0) return "";
+  const skillIds = skills.map(s => s.id);
+  const skillIdSet = new Set(skillIds);
+
+  var links;
+  try { links = await ConceptLinks.getBySkillBatch(skillIds); } catch { return ""; }
+  if (!links.length) return "";
+
+  // Deduplicate (same link found from both A and B sides)
+  const seen = new Set();
+  const unique = [];
+  for (const l of links) {
+    const key = l.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Determine which side is "ours" and which is "linked"
+    const aIsOurs = skillIdSet.has(l.sub_skill_a_id);
+    const bIsOurs = skillIdSet.has(l.sub_skill_b_id);
+    if (aIsOurs && bIsOurs) continue; // both sides in same course — skip
+    unique.push({
+      ourId: aIsOurs ? l.sub_skill_a_id : l.sub_skill_b_id,
+      ourName: aIsOurs ? l.name_a : l.name_b,
+      linkedId: aIsOurs ? l.sub_skill_b_id : l.sub_skill_a_id,
+      linkedName: aIsOurs ? l.name_b : l.name_a,
+      linkedCourseId: aIsOurs ? l.course_b : l.course_a,
+      linkType: l.link_type,
+      score: l.similarity_score,
+    });
+  }
+  if (!unique.length) return "";
+
+  // Sort: same_concept > prerequisite > related, then by score desc
+  unique.sort((a, b) => (LINK_TYPE_PRIORITY[a.linkType] ?? 3) - (LINK_TYPE_PRIORITY[b.linkType] ?? 3) || b.score - a.score);
+
+  // Load mastery for linked skills (map snake_case DB columns to camelCase for effectiveStrength)
+  const linkedIds = [...new Set(unique.map(u => u.linkedId))];
+  const masteryRows = await Mastery.getBySkills(linkedIds);
+  const masteryMap = new Map(masteryRows.map(m => [m.sub_skill_id, {
+    stability: m.stability, lastReviewAt: m.last_review_at,
+    retrievability: m.retrievability, reps: m.reps,
+  }]));
+
+  // Load course names
+  const courseIds = [...new Set(unique.map(u => u.linkedCourseId).filter(Boolean))];
+  const courseNameMap = new Map();
+  for (const cid of courseIds) {
+    try {
+      const c = await Courses.getById(cid);
+      if (c) courseNameMap.set(cid, c.name || c.course_number || cid);
+    } catch { /* skip */ }
+  }
+
+  var ctx = "CROSS-SKILL CONNECTIONS:\n";
+  var charCount = ctx.length;
+  var added = 0;
+  var remaining = 0;
+
+  for (const u of unique) {
+    const m = masteryMap.get(u.linkedId);
+    const str = m ? effectiveStrength(m) : 0;
+    const strPct = Math.round(str * 100);
+    const tier = strengthToTier(str);
+    const courseName = courseNameMap.get(u.linkedCourseId) || "another course";
+    const arrow = u.linkType === "prerequisite" ? " → " : " ↔ ";
+    const line = "  " + u.ourName + " (this course)" + arrow + u.linkedName + " in " + courseName + " [" + u.linkType + ", " + strPct + "% strength, Tier " + tier + "]\n";
+
+    if (charCount + line.length > CROSS_SKILL_CHAR_LIMIT) { remaining++; continue; }
+    ctx += line;
+    charCount += line.length;
+    added++;
+  }
+
+  if (remaining > 0) ctx += "  ... and " + remaining + " more connections\n";
+  return added > 0 ? ctx : "";
+};
+
 // Keep DEFAULT_EASE export for any remaining references (backward compat)
 export const DEFAULT_EASE = 2.5;
 
@@ -155,11 +237,9 @@ export const masteryConfidence = (fitness) => {
 // --- Strength Update (FSRS-backed, weighted by context/source/bloom's) ---
 // Applies skill updates using FSRS state transitions with evidence-quality weighting.
 // Tutor-assessed interactions carry less weight than practice/diagnostic verification.
-// Also maintains profile.skills for backward-compatible journal/display data.
 export const applySkillUpdates = async (courseId, updates, intentWeight) => {
   if (intentWeight === undefined || intentWeight === null) intentWeight = 1.0;
   if (!updates.length) return;
-  var profile = await DB.getProfile(courseId);
   var now = new Date();
   var nowIso = now.toISOString();
   var date = nowIso.split("T")[0];
@@ -229,6 +309,36 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
       updated.stability = card.stability + (baseStabilityGain * stabilityModifier);
     }
 
+    // --- Mastery transfer from same_concept links (first interaction only) ---
+    if (!existing && grade >= 3) {
+      try {
+        var conceptLinks = await ConceptLinks.getBySkill(u.skillId);
+        var sameConceptLinks = conceptLinks.filter(function (l) { return l.link_type === 'same_concept'; });
+        if (sameConceptLinks.length > 0) {
+          var bestStrength = 0;
+          for (var link of sameConceptLinks) {
+            var linkedId = link.sub_skill_a_id === u.skillId ? link.sub_skill_b_id : link.sub_skill_a_id;
+            var linkedMastery = await Mastery.getBySkill(linkedId);
+            if (linkedMastery && linkedMastery.stability) {
+              var linkedStr = currentRetrievability({
+                stability: linkedMastery.stability,
+                lastReviewAt: linkedMastery.last_review_at
+                  ? new Date(linkedMastery.last_review_at * 1000).toISOString() : null,
+              });
+              if (linkedStr > bestStrength) bestStrength = linkedStr;
+            }
+          }
+          // Apply transfer bonus: stability boost + difficulty ease
+          // Scales linearly from threshold (0.7) to full mastery (1.0)
+          if (bestStrength > 0.7) {
+            var transferScale = (bestStrength - 0.7) / 0.3; // 0.0 at 70%, 1.0 at 100%
+            updated.stability = updated.stability * (1 + transferScale * 0.4); // up to 1.4x
+            updated.difficulty = Math.max(1, updated.difficulty - transferScale * 1.0); // up to -1.0
+          }
+        }
+      } catch (e) { /* mastery transfer lookup failed, non-critical */ }
+    }
+
     // --- Weighted points ---
     var basePts = BASE_POINTS[u.rating] || 2;
     var weightedPts = Math.max(1, Math.round(basePts * contextMult * bloomsMult * sourceWeight * decayBonus * intentWeight));
@@ -244,6 +354,7 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
       lastReviewAt: Math.floor(new Date(updated.lastReviewAt).getTime() / 1000),
       nextReviewAt: Math.floor(new Date(updated.nextReviewAt).getTime() / 1000),
       totalMasteryPoints: totalPts,
+      lastRating: u.rating,
     });
 
     // --- Fitness counter updates ---
@@ -288,19 +399,7 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
       } catch (e) { /* criteria update failed, non-critical */ }
     }
 
-    // --- Profile.skills for journal/session history (backward compat) ---
-    if (!profile.skills[u.skillId]) {
-      profile.skills[u.skillId] = { points: 0, entries: [] };
-    }
-    var sk = profile.skills[u.skillId];
-    sk.points = (sk.points || 0) + weightedPts;
-    if (!sk.entries) sk.entries = [];
-    sk.entries.push({ date, rating: u.rating, reason: u.reason, context, source, weightedPts });
   }
-
-  profile.sessions = (profile.sessions || 0) + 1;
-  await DB.saveProfile(courseId, profile);
-  return profile;
 };
 
 // --- Keyword Extraction ---
@@ -326,8 +425,40 @@ export const extractKeywords = (messages, count = 20) => {
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, count).map(([w]) => w);
 };
 
+// --- Domain Proficiency for AI Context ---
+const buildDomainProficiency = async (courseId) => {
+  var courseSubs = await SubSkills.getByCourse(courseId);
+  var parentIds = [...new Set(courseSubs.map(s => s.parent_skill_id).filter(Boolean))];
+  if (parentIds.length === 0) return "";
+  var results = [];
+  for (var pid of parentIds) {
+    var parent = await ParentSkills.getById(pid);
+    if (!parent) continue;
+    var allSubs = await SubSkills.getByParent(pid);
+    var masteryRows = await Mastery.getBySkills(allSubs.map(s => s.id));
+    var mMap = new Map(masteryRows.map(m => [m.sub_skill_id, m]));
+    var totalPoints = 0, rSum = 0, rCount = 0;
+    for (var sub of allSubs) {
+      var m = mMap.get(sub.id);
+      if (m) {
+        totalPoints += m.total_mastery_points || 0;
+        var r = currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at });
+        if (r > 0) { rSum += r; rCount++; }
+      }
+    }
+    var level = Math.floor(Math.sqrt(totalPoints));
+    var readiness = rCount > 0 ? Math.round((rSum / rCount) * 100) : 0;
+    results.push({ name: parent.name, level, readiness, subCount: allSubs.length });
+  }
+  results.sort((a, b) => b.level - a.level);
+  var top = results.slice(0, 8);
+  var ctx = "DOMAIN PROFICIENCY (student's skill levels across all courses):\n";
+  for (var r of top) ctx += "  " + r.name + ": Level " + r.level + " (" + r.readiness + "% ready, " + r.subCount + " sub-skills)\n";
+  return ctx;
+};
+
 // --- Smart Context Builder ---
-export const buildContext = async (courseId, materials, skills, assignments, profile, recentMsgs, excludeChunkIds) => {
+export const buildContext = async (courseId, materials, skills, assignments, recentMsgs, excludeChunkIds) => {
   let ctx = "";
 
   // 1. Skill tree
@@ -340,8 +471,7 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
       const str = effectiveStrength(s);
       const strPct = Math.round(str * 100);
       const reps = s.mastery?.reps || 0;
-      const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
-      const lastRating = pd?.entries?.slice(-1)[0]?.rating || "";
+      const lastRating = s.mastery?.lastRating || "";
       var prereqStr = (s.prerequisites?.length) ? s.prerequisites.map(function(p) { return typeof p === "string" ? p : (p.name || p.conceptKey || p.id); }).join(", ") : "";
       var skillLabel = s.conceptKey || s.id;
       categories[cat].push("  " + skillLabel + ": " + s.name + " [strength: " + strPct + "%" + (lastRating ? ", last: " + lastRating : "") + ", " + reps + " reviews] -- " + s.description + (prereqStr ? " (needs: " + prereqStr + ")" : ""));
@@ -352,6 +482,10 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
   } else {
     ctx += skills + "\n";
   }
+
+  // 1b. Cross-skill connections
+  var crossCtx = await buildCrossSkillContext(courseId, skills);
+  if (crossCtx) ctx += "\n" + crossCtx;
 
   // 2. Assignment decomposition
   if (Array.isArray(assignments) && assignments.length > 0) {
@@ -372,24 +506,27 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
 
   // 3. Student profile
   ctx += "\nSTUDENT PROFILE:\n";
-  ctx += "Total study sessions: " + profile.sessions + "\n";
+  var sessionCount = await Sessions.countByCourse(courseId);
+  ctx += "Total study sessions: " + sessionCount + "\n";
   if (Array.isArray(skills) && skills.some(s => s.mastery)) {
     const sorted = [...skills].sort((a, b) => effectiveStrength(b) - effectiveStrength(a));
     ctx += "Skill strength (FSRS retrievability):\n";
     for (const s of sorted) {
       const str = effectiveStrength(s);
       if (str === 0 && !s.mastery) continue; // skip unreviewed
-      const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
       ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength";
-      if (pd?.entries?.length) {
-        const last = pd.entries[pd.entries.length - 1];
-        ctx += " (last: " + last.rating + " on " + last.date + ")";
+      if (s.mastery?.lastRating) {
+        var lastDate = s.mastery.lastReviewAt ? new Date(s.mastery.lastReviewAt * 1000).toISOString().split("T")[0] : "";
+        ctx += " (last: " + s.mastery.lastRating + (lastDate ? " on " + lastDate : "") + ")";
       }
       ctx += "\n";
     }
   } else {
     ctx += "New student -- no skill history yet.\n";
   }
+
+  var domProfCtx = await buildDomainProficiency(courseId);
+  if (domProfCtx) ctx += "\n" + domProfCtx;
 
   // 4. Selectively load relevant source documents
   const recentText = recentMsgs.slice(-6).map(m => m.content).join(" ").toLowerCase();
@@ -454,7 +591,7 @@ export const buildContext = async (courseId, materials, skills, assignments, pro
 };
 
 // --- Focused Context Builder ---
-export const buildFocusedContext = async (courseId, materials, focus, skills, profile) => {
+export const buildFocusedContext = async (courseId, materials, focus, skills) => {
   let ctx = "";
   const allSkills = Array.isArray(skills) ? skills : [];
 
@@ -479,8 +616,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
       const skill = allSkills.find(s => s.id === sid || s.conceptKey === sid);
       const str = effectiveStrength(skill);
       const strPct = Math.round(str * 100);
-      const pd = profile.skills[sid] || (skill && profile.skills[skill.conceptKey]) || null;
-      const lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
+      const lastRating = skill?.mastery?.lastRating || "untested";
       if (skill) {
         ctx += "  " + (skill.conceptKey || sid) + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "] -- " + skill.description + "\n";
         if (skill.sources) skill.sources.forEach(src => neededSources.add(src.toLowerCase()));
@@ -516,12 +652,19 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
     var dlCtx1 = await buildDeadlineContext(courseId, allSkills);
     if (dlCtx1) ctx += "\n" + dlCtx1 + "\n";
 
+    // Cross-skill connections for required skills
+    var asgnSkills = [...requiredSkillIds].map(sid => allSkills.find(s => s.id === sid || s.conceptKey === sid)).filter(Boolean);
+    var crossCtx1 = await buildCrossSkillContext(courseId, asgnSkills);
+    if (crossCtx1) ctx += "\n" + crossCtx1;
+
+    var domProfCtx1 = await buildDomainProficiency(courseId);
+    if (domProfCtx1) ctx += "\n" + domProfCtx1;
+
   } else if (focus.type === "skill") {
     const skill = focus.skill;
     const str = effectiveStrength(skill);
     const strPct = Math.round(str * 100);
-    const pd = profile.skills[skill.id] || profile.skills[skill.conceptKey] || null;
-    const lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
+    const lastRating = skill?.mastery?.lastRating || "untested";
     var focusLabel = skill.conceptKey || skill.id;
     ctx += "FOCUS SKILL: " + focusLabel + ": " + skill.name + " [strength: " + strPct + "%, last: " + lastRating + "]\n";
     ctx += "Description: " + skill.description + "\n";
@@ -576,10 +719,18 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
     var dlCtx2 = await buildDeadlineContext(courseId, allSkills);
     if (dlCtx2) ctx += "\n" + dlCtx2 + "\n";
 
+    // Cross-skill connections for focused skill
+    var crossCtx2 = await buildCrossSkillContext(courseId, [skill]);
+    if (crossCtx2) ctx += "\n" + crossCtx2;
+
+    var domProfCtx2 = await buildDomainProficiency(courseId);
+    if (domProfCtx2) ctx += "\n" + domProfCtx2;
+
   } else if (focus.type === "recap") {
     // Just skill summary, no materials
     ctx += "STUDENT PROFILE:\n";
-    ctx += "Total sessions: " + profile.sessions + "\n";
+    var recapSessionCount = await Sessions.countByCourse(courseId);
+    ctx += "Total sessions: " + recapSessionCount + "\n";
     if (allSkills.some(s => s.mastery)) {
       const sorted = [...allSkills].filter(s => s.mastery).sort((a, b) => effectiveStrength(b) - effectiveStrength(a));
       ctx += "Skills engaged:\n";
@@ -591,6 +742,12 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
 
     var dlCtx3 = await buildDeadlineContext(courseId, allSkills);
     if (dlCtx3) ctx += "\n" + dlCtx3 + "\n";
+
+    var crossCtx3 = await buildCrossSkillContext(courseId, allSkills);
+    if (crossCtx3) ctx += "\n" + crossCtx3;
+
+    var domProfCtx3 = await buildDomainProficiency(courseId);
+    if (domProfCtx3) ctx += "\n" + domProfCtx3;
 
   } else if (focus.type === "exam") {
     // Load ALL chunks from the selected materials for broad exam coverage
@@ -626,8 +783,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
         examSkillIds.add(s.id);
         var str = effectiveStrength(s);
         var strPct = Math.round(str * 100);
-        var pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
-        var lastRating = pd?.entries?.slice(-1)[0]?.rating || "untested";
+        var lastRating = s.mastery?.lastRating || "untested";
         ctx += "  " + (s.conceptKey || s.id) + ": " + s.name + " [strength: " + strPct + "%, last: " + lastRating + "] -- " + s.description + "\n";
       }
     }
@@ -656,6 +812,12 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
 
     var dlCtx4 = await buildDeadlineContext(courseId, allSkills);
     if (dlCtx4) ctx += "\n" + dlCtx4 + "\n";
+
+    var crossCtx4 = await buildCrossSkillContext(courseId, allSkills);
+    if (crossCtx4) ctx += "\n" + crossCtx4;
+
+    var domProfCtx4 = await buildDomainProficiency(courseId);
+    if (domProfCtx4) ctx += "\n" + domProfCtx4;
 
   } else if (focus.type === "explore") {
     // Lightweight context prioritizing chunks matching the topic
@@ -707,6 +869,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills, pr
         if (loadedCount >= 3) break;
       }
     }
+
+    var domProfCtx5 = await buildDomainProficiency(courseId);
+    if (domProfCtx5) ctx += "\n" + domProfCtx5;
   }
 
   return ctx;

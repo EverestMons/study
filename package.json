@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "npx tauri",
-    "tauri:dev": "npx tauri dev",
+    "tauri:dev": "lsof -ti:5173 | xargs kill -9 2>/dev/null; npx tauri dev",
     "tauri:build": "npx tauri build"
   },
   "dependencies": {

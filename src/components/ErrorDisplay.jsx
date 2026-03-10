@@ -1,6 +1,6 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
-import { DB } from "../lib/db.js";
+import { resetAll } from "../lib/db.js";
 import { useStudy } from "../StudyContext.jsx";
 
 export default function ErrorDisplay() {
@@ -26,7 +26,7 @@ export default function ErrorDisplay() {
 
   const handleAsyncHardReset = async () => {
     try {
-      await DB.resetAll();
+      await resetAll({ confirmed: true });
     } catch (e) { console.error("Failed to clear database:", e); }
     window.location.reload();
   };

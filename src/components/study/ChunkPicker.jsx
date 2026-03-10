@@ -1,6 +1,6 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
-import { DB } from "../../lib/db.js";
+import { loadCoursesNested } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
 import { useStudy } from "../../StudyContext.jsx";
@@ -116,7 +116,7 @@ export default function ChunkPicker() {
                   });
                   if (result.success) totalSkills += result.totalSkills || 0;
                 }
-                var refreshed = await DB.getCourses();
+                var refreshed = await loadCoursesNested();
                 var updatedCourse = refreshed.find(c => c.id === active.id);
                 if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                 if (totalSkills > 0) {

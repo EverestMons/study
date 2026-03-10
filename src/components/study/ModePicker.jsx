@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { T } from "../../lib/theme.jsx";
-import { DB, Assignments, CourseSchedule } from "../../lib/db.js";
+import { Assignments, CourseSchedule, PracticeSets, loadCoursesNested } from "../../lib/db.js";
 import { runExtractionV2, loadSkillsV2 } from "../../lib/skills.js";
 import { decomposeAssignments } from "../../lib/skills.js";
 import DatePicker from "../DatePicker.jsx";
@@ -361,7 +361,7 @@ export default function ModePicker() {
                       });
                       if (result.success) totalSkills += result.totalSkills || 0;
                     }
-                    var refreshed = await DB.getCourses();
+                    var refreshed = await loadCoursesNested();
                     var updatedCourse = refreshed.find(c => c.id === active.id);
                     if (updatedCourse) { setActive(updatedCourse); setCourses(refreshed); }
                     if (totalSkills > 0) {
@@ -465,7 +465,8 @@ export default function ModePicker() {
                                         e.stopPropagation();
                                         var fullSkill = Array.isArray(pickerData._skills) ? pickerData._skills.find(s => s.id === sk.id) : null;
                                         if (!fullSkill) { addNotif("error", "Skill not found"); return; }
-                                        var existing = await DB.getPractice(active.id, fullSkill.id);
+                                        var existingRow = await PracticeSets.get(fullSkill.id);
+                                        var existing = existingRow?.data || null;
                                         var str = sk.strength || 0;
                                         var startTier = strengthToTier(str);
                                         var pset = existing || createPracticeSet(active.id, fullSkill, active.name);
@@ -479,7 +480,7 @@ export default function ModePicker() {
                                             var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, fullSkill);
                                             pset = await generateProblems(pset, fullSkill, active.name, matCtx);
                                           }
-                                          await DB.savePractice(active.id, fullSkill.id, pset);
+                                          await PracticeSets.upsert(fullSkill.id, pset);
                                           var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
                                           var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
                                           setPracticeMode({ set: pset, skill: fullSkill, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
@@ -618,8 +619,8 @@ export default function ModePicker() {
                         <div style={{ fontSize: 10, fontWeight: 400, color: T.txD, marginTop: 2 }}>AI-guided dialogue</div>
                       </button>
                       <button onClick={async () => {
-                        var existing = await DB.getPractice(active.id, s.id);
-                        var pset = existing || createPracticeSet(active.id, s, active.name);
+                        var existingRow = await PracticeSets.get(s.id);
+                        var pset = existingRow?.data || createPracticeSet(active.id, s, active.name);
                         var tier = pset.currentTier;
                         setPracticeMode({ generating: true, set: pset, skill: s });
                         setPickerData(null); setSessionMode("practice");
@@ -630,7 +631,7 @@ export default function ModePicker() {
                             var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, s);
                             pset = await generateProblems(pset, s, active.name, matCtx);
                           }
-                          await DB.savePractice(active.id, s.id, pset);
+                          await PracticeSets.upsert(s.id, pset);
                           var curAttempt = pset.tiers[pset.currentTier].attempts.slice(-1)[0];
                           var firstUnanswered = curAttempt.problems.findIndex(p => p.passed === null);
                           setPracticeMode({ set: pset, skill: s, currentProblemIdx: firstUnanswered >= 0 ? firstUnanswered : 0, feedback: null, evaluating: false, generating: false, tierComplete: null });

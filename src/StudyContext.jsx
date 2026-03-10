@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getDb, DB, Courses, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule } from "./lib/db.js";
+import { getApiKey, setApiKey, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
 import {
-  storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2, getMatContent
+  storeAsChunks, decomposeAssignments, loadSkillsV2, runExtractionV2, getMatContent,
+  computeAndStoreFingerprints
 } from "./lib/skills.js";
 import { parseSyllabus } from "./lib/syllabusParser.js";
-import { migrateV1ToV2, migrateAssignmentBlobs } from "./lib/migrate.js";
 import { seedCipTaxonomy } from "./lib/cipSeeder.js";
 import { generateSubmission, downloadBlob } from "./lib/export.js";
 import {
@@ -110,6 +110,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [expandedSubSkill, setExpandedSubSkill] = useState(null);
   const [materialSkillCounts, setMaterialSkillCounts] = useState({});
   const [expandedMaterial, setExpandedMaterial] = useState(null);
+  const [dupPrompt, setDupPrompt] = useState(null);
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -122,6 +123,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [sessionSummary, setSessionSummary] = useState(null);
   const sessionStartTime = useRef(null);
   const discussedChunks = useRef(new Set());
+  const chatSessionId = useRef(null);
   const [sessionElapsed, setSessionElapsed] = useState(0);
   const [breakDismissed, setBreakDismissed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -138,18 +140,30 @@ export function StudyProvider({ children, setErrorCtx }) {
   const getMaterialState = (mat) => {
     const chunks = mat.chunks || [];
     if (chunks.length === 0) return "reading";
-    const pending = chunks.filter(c => c.status === "pending").length;
-    const failed = chunks.filter(c => c.status === "failed").length;
+
+    const total = chunks.length;
     const extracted = chunks.filter(c => c.status === "extracted").length;
+    const failed = chunks.filter(c => c.status === "failed").length;
+    const errored = chunks.filter(c => c.status === "error").length;
+    const pending = chunks.filter(c => c.status === "pending").length;
     const sc = materialSkillCounts[mat.id];
-    if (pending > 0) return (sc && sc.count > 0) ? "extracting" : "analyzing";
-    if (failed > 0) {
-      const permanent = chunks.filter(c => c.status === "failed" && (c.failCount || 0) >= 2).length;
-      if (permanent === chunks.length) return "critical_error";
-      if (failed > chunks.length * 0.25) return "error";
+
+    // Everything done (success or permanent failure) — no pending/errored chunks
+    if (pending === 0 && errored === 0) {
+      if (extracted > 0 && sc?.count > 0) return "ready";
+      if (failed === total) return "critical_error";
+      if (extracted > 0 && failed > 0) return "partial";
+      return "ready"; // extracted but no skills yet — possible for very short docs
     }
-    if (extracted > 0 && sc && sc.count > 0) return "ready";
-    if (extracted > 0 && (!sc || sc.count === 0)) return "extracting";
+
+    // Active processing — extraction is currently running on this material
+    if (processingMatId === mat.id) {
+      return (sc?.count > 0) ? "extracting" : "analyzing";
+    }
+
+    // Not processing but has unfinished chunks — stale
+    if (pending > 0 || errored > 0) return "incomplete";
+
     return "analyzing";
   };
 
@@ -242,15 +256,10 @@ export function StudyProvider({ children, setErrorCtx }) {
           if (cipResult.seeded > 0) console.log(`[Init] Seeded ${cipResult.seeded} CIP parent skills, ${cipResult.aliases} aliases`);
         } catch (e) { console.error("CIP taxonomy seeding failed:", e); }
         if (cancelled) return;
-        const loaded = await DB.getCourses();
+        const loaded = await loadCoursesNested();
         if (cancelled) return;
         setCourses(loaded);
         coursesLoaded.current = true;
-        // Migrate assignment blobs → tables (non-fatal)
-        try {
-          const migResult = await migrateAssignmentBlobs(loaded);
-          if (migResult.migrated > 0) console.log(`[Init] Migrated ${migResult.migrated} assignment blob(s)`);
-        } catch (e) { console.error("Assignment blob migration failed:", e); }
         if (cancelled) return;
         const key = await getApiKey();
         if (cancelled) return;
@@ -268,7 +277,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => { if (ready && !globalLock && !asyncError && coursesLoaded.current) { var t = setTimeout(() => DB.saveCourses(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock, asyncError]);
+  useEffect(() => { if (ready && !globalLock && !asyncError && coursesLoaded.current) { var t = setTimeout(() => saveCoursesNested(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock, asyncError]);
 
   // Prevent browser default of opening dropped files
   useEffect(() => {
@@ -294,10 +303,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     try {
       const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
       if (!entry) return;
-      const journal = await DB.getJournal(active.id);
-      journal.push(entry);
-      await DB.saveJournal(active.id, journal.slice(-50));
-      await DB.saveChat(active.id, msgs.slice(-100));
+      await JournalEntries.create({ sessionId: chatSessionId.current, courseId: active.id, intent: 'v1_compat', entryData: entry });
       sessionStartIdx.current = msgs.length;
       sessionSkillLog.current = [];
     } catch (e) { console.error("Journal save failed:", e); }
@@ -383,10 +389,15 @@ export function StudyProvider({ children, setErrorCtx }) {
 
       const newCourse = { id: courseId, name: cName.trim(), materials: mats, createdAt: new Date().toISOString() };
       const updated = [...courses.filter(c => c.id !== courseId), newCourse];
-      await DB.saveCourses(updated);
+      await saveCoursesNested(updated);
       for (const mat of mats) {
-        for (const pd of (mat._pendingDocs || [])) {
-          await DB.saveDoc(courseId, pd.chunkId, pd.doc);
+        const pendingDocs = mat._pendingDocs || [];
+        for (const pd of pendingDocs) {
+          await Chunks.updateContent(pd.chunkId, typeof pd.doc === 'string' ? pd.doc : JSON.stringify(pd.doc));
+        }
+        // Fingerprint V1 chunks (content now flushed to DB — loads from chunks table)
+        if (pendingDocs.length > 0) {
+          try { await computeAndStoreFingerprints(mat.id); } catch (e) { console.warn('[MinHash] Fingerprint failed:', e); }
         }
         delete mat._pendingDocs;
       }
@@ -420,18 +431,34 @@ export function StudyProvider({ children, setErrorCtx }) {
           setStatus("Extracting skills: " + extractable[ei].name + "...");
           setProcessingMatId(extractable[ei].id);
           try {
-            await runExtractionV2(courseId, extractable[ei].id, {
+            var exResult = await runExtractionV2(courseId, extractable[ei].id, {
               onStatus: setStatus,
               onNotif: addNotif,
               onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
             });
+            if (exResult?.needsUserDecision) {
+              const decision = await new Promise(resolve => {
+                setDupPrompt({ materialName: extractable[ei].name, dupSummary: exResult.dupSummary, resolve });
+              });
+              setDupPrompt(null);
+              if (decision === 'extract') {
+                await runExtractionV2(courseId, extractable[ei].id, {
+                  onStatus: setStatus, onNotif: addNotif,
+                  onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
+                }, { skipNearDedupCheck: true });
+              } else {
+                const skippedIds = [...new Set(exResult.nearDuplicates.map(m => m.newChunkId))];
+                await Chunks.updateStatusBatch(skippedIds, 'extracted');
+                addNotif("info", "Skipped \"" + extractable[ei].name + "\" — matched existing content.");
+              }
+            }
           } catch (e) {
             console.error("Auto-extraction failed for", extractable[ei].name, e);
             addNotif("warn", "Could not extract skills from " + extractable[ei].name + ". You can retry from the material card.");
           }
         }
         setProcessingMatId(null);
-        var refreshed2 = await DB.getCourses();
+        var refreshed2 = await loadCoursesNested();
         var rc2 = refreshed2.find(c => c.id === courseId);
         if (rc2) { setCourses(refreshed2); setActive(rc2); }
         await refreshMaterialSkillCounts(courseId);
@@ -453,7 +480,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (!cName.trim()) return;
     try {
       await Courses.create({ name: cName.trim() });
-      const refreshed = await DB.getCourses();
+      const refreshed = await loadCoursesNested();
       setCourses(refreshed);
       addNotif("success", "Course created: " + cName.trim());
       setCName("");
@@ -568,16 +595,21 @@ export function StudyProvider({ children, setErrorCtx }) {
     setBreakDismissed(false);
     setSidebarCollapsed(false);
     try {
-      const savedMsgs = await DB.getChat(course.id);
+      const oldSid = await Sessions.getOrCreateCompat(course.id);
+      const savedRows = await Messages.getBySession(oldSid);
+      const savedMsgs = savedRows.map(r => {
+        let meta = {};
+        try { meta = r.metadata ? JSON.parse(r.metadata) : {}; } catch { /* ignored */ }
+        return { role: r.role, content: r.content, ...meta };
+      });
       if (savedMsgs.length > 1) {
         const entry = generateSessionEntry(savedMsgs, 0, []);
         if (entry) {
-          const journal = await DB.getJournal(course.id);
-          journal.push(entry);
-          await DB.saveJournal(course.id, journal.slice(-50));
+          await JournalEntries.create({ sessionId: oldSid, courseId: course.id, intent: 'v1_compat', entryData: entry });
         }
       }
-      await DB.saveChat(course.id, []);
+      await Sessions.end(oldSid);
+      chatSessionId.current = await Sessions.create({ courseId: course.id, intent: 'explore' });
     } catch (e) { console.error("Journal capture on enter:", e); }
   };
 
@@ -590,7 +622,6 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
     try {
       const skills = await loadSkillsV2(active.id);
-      const profile = await DB.getProfile(active.id);
       if (mode === "assignment") {
         const asgn = await loadAssignmentsCompat(active.id);
         if (!Array.isArray(asgn) || asgn.length === 0) {
@@ -674,7 +705,6 @@ export function StudyProvider({ children, setErrorCtx }) {
         } catch (e) { console.error("Deadline skill map failed:", e); }
 
         const enriched = skills.map(s => {
-          const pd = profile.skills[s.id] || profile.skills[s.conceptKey] || null;
           // Match deadline info via 3-tier resolution
           var dl = deadlineSkillMap[s.id] || deadlineSkillMap[s.conceptKey] || null;
           if (!dl && s.name) {
@@ -689,7 +719,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             lastPracticed: s.mastery?.lastReviewAt ? new Date((s.mastery.lastReviewAt < 1e11 ? s.mastery.lastReviewAt * 1000 : s.mastery.lastReviewAt)).toISOString() : null,
             reviewDate: nextReviewDate(s),
             sessions: s.mastery?.reps || 0,
-            lastRating: pd?.entries?.slice(-1)[0]?.rating || null,
+            lastRating: s.mastery?.lastRating || null,
             deadlineTitle: dl?.title || null,
             deadlineDays: dl?.daysUntil ?? null,
           };
@@ -777,11 +807,11 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
     try {
       const skills = await loadSkillsV2(active.id);
-      const profile = await DB.getProfile(active.id);
-      const journal = await DB.getJournal(active.id);
-      const ctx = await buildFocusedContext(active.id, active.materials, focus, skills, profile);
+      const journalRows = await JournalEntries.getByCourse(active.id);
+      const journal = journalRows.reverse().map(r => { try { return typeof r.entry_data === 'string' ? JSON.parse(r.entry_data) : r.entry_data; } catch { return null; } }).filter(Boolean);
+      const ctx = await buildFocusedContext(active.id, active.materials, focus, skills);
 
-      cachedSessionCtx.current = { ctx, skills, profile, journal, focus };
+      cachedSessionCtx.current = { ctx, skills, journal, focus };
 
       var studentContext = "";
       if (Array.isArray(skills) && skills.length > 0) {
@@ -844,7 +874,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       const asstTs = Date.now();
       setMsgs([{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: response, ts: asstTs }]);
       sessionStartIdx.current = 0;
-      await DB.saveChat(active.id, [{ role: "user", content: userMsg, ts: userTs }, { role: "assistant", content: response, ts: asstTs }]);
+      await Messages.appendBatch(chatSessionId.current, [{ role: "user", content: userMsg }, { role: "assistant", content: response }]);
     } catch (err) {
       console.error("Boot failed:", err);
       addNotif("error", "Failed to start session: " + err.message);
@@ -864,21 +894,20 @@ export function StudyProvider({ children, setErrorCtx }) {
     setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
 
     try {
-      let ctx, skills, profile, journal;
+      let ctx, skills, journal;
       if (cachedSessionCtx.current && focusContext) {
         ctx = cachedSessionCtx.current.ctx;
         skills = cachedSessionCtx.current.skills;
-        profile = cachedSessionCtx.current.profile;
         journal = cachedSessionCtx.current.journal;
       } else {
         skills = await loadSkillsV2(active.id);
-        profile = await DB.getProfile(active.id);
-        journal = await DB.getJournal(active.id);
+        var jRows = await JournalEntries.getByCourse(active.id);
+        journal = jRows.reverse().map(r => { try { return typeof r.entry_data === 'string' ? JSON.parse(r.entry_data) : r.entry_data; } catch { return null; } }).filter(Boolean);
         if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam" || focusContext.type === "explore")) {
-          ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills, profile);
+          ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills);
         } else {
           const asgn = await loadAssignmentsCompat(active.id) || [];
-          ctx = await buildContext(active.id, active.materials, skills, asgn, profile, newMsgs, discussedChunks.current);
+          ctx = await buildContext(active.id, active.materials, skills, asgn, newMsgs, discussedChunks.current);
         }
       }
 
@@ -899,8 +928,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         for (var u of updates) addNotif("skill", u.skillId + ": " + u.rating + (u.context !== 'guided' ? " (" + u.context + ")" : ""));
         if (cachedSessionCtx.current) {
           var updatedSkills = await loadSkillsV2(active.id);
-          var updatedProfile = await DB.getProfile(active.id);
-          var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, updatedSkills, updatedProfile);
+          var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, updatedSkills);
           var recentKw = extractKeywords(newMsgs.slice(-12), 10);
           var skillsSoFar = sessionSkillLog.current.map(s => s.skillId + ":" + s.rating).join(", ");
           if (recentKw.length || skillsSoFar) {
@@ -908,7 +936,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             if (recentKw.length) updatedCtx += "\nTopics discussed: " + recentKw.join(", ");
             if (skillsSoFar) updatedCtx += "\nSkills assessed: " + skillsSoFar;
           }
-          cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, profile: updatedProfile, ctx: updatedCtx };
+          cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, ctx: updatedCtx };
         }
       }
 
@@ -927,7 +955,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
       const finalMsgs = [...newMsgs, { role: "assistant", content: response, ts: asstTs }];
       setMsgs(finalMsgs); setBusy(false);
-      await DB.saveChat(active.id, finalMsgs.slice(-100));
+      await Messages.appendBatch(chatSessionId.current, [{ role: "user", content: userMsg, inputMode: isCode ? 'code' : null }, { role: "assistant", content: response }]);
     } catch (e) {
       console.error("sendMessage error:", e);
       const errorMsgs = [...newMsgs, { role: "assistant", content: "Sorry, something went wrong: " + e.message, ts: Date.now() }];
@@ -941,7 +969,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (globalLock) return;
     setGlobalLock({ message: "Deleting course..." });
     try {
-      await DB.deleteCourse(id);
+      await Courses.delete(id);
       setCourses(p => p.filter(c => c.id !== id));
       if (active?.id === id) { setActive(null); setScreen("home"); }
     } catch (e) {
@@ -973,10 +1001,15 @@ export function StudyProvider({ children, setErrorCtx }) {
 
     const updatedCourse = { ...active, materials: [...active.materials, ...newMeta] };
     const updatedCourses = courses.map(c => c.id === active.id ? updatedCourse : c);
-    await DB.saveCourses(updatedCourses);
+    await saveCoursesNested(updatedCourses);
     for (const mat of newMeta) {
-      for (const pd of (mat._pendingDocs || [])) {
-        await DB.saveDoc(active.id, pd.chunkId, pd.doc);
+      const pendingDocs = mat._pendingDocs || [];
+      for (const pd of pendingDocs) {
+        await Chunks.updateContent(pd.chunkId, typeof pd.doc === 'string' ? pd.doc : JSON.stringify(pd.doc));
+      }
+      // Fingerprint V1 chunks (content now flushed to DB — loads from chunks table)
+      if (pendingDocs.length > 0) {
+        try { await computeAndStoreFingerprints(mat.id); } catch (e) { console.warn('[MinHash] Fingerprint failed:', e); }
       }
       delete mat._pendingDocs;
     }
@@ -1011,18 +1044,34 @@ export function StudyProvider({ children, setErrorCtx }) {
         setStatus("Extracting skills: " + extractable[ei].name + "...");
         setProcessingMatId(extractable[ei].id);
         try {
-          await runExtractionV2(active.id, extractable[ei].id, {
+          var exResult = await runExtractionV2(active.id, extractable[ei].id, {
             onStatus: setStatus,
             onNotif: addNotif,
             onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
           });
+          if (exResult?.needsUserDecision) {
+            const decision = await new Promise(resolve => {
+              setDupPrompt({ materialName: extractable[ei].name, dupSummary: exResult.dupSummary, resolve });
+            });
+            setDupPrompt(null);
+            if (decision === 'extract') {
+              await runExtractionV2(active.id, extractable[ei].id, {
+                onStatus: setStatus, onNotif: addNotif,
+                onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
+              }, { skipNearDedupCheck: true });
+            } else {
+              const skippedIds = [...new Set(exResult.nearDuplicates.map(m => m.newChunkId))];
+              await Chunks.updateStatusBatch(skippedIds, 'extracted');
+              addNotif("info", "Skipped \"" + extractable[ei].name + "\" — matched existing content.");
+            }
+          }
         } catch (e) {
           console.error("Auto-extraction failed for", extractable[ei].name, e);
           addNotif("warn", "Could not extract skills from " + extractable[ei].name + ".");
         }
       }
       setProcessingMatId(null);
-      const refreshed = await DB.getCourses();
+      const refreshed = await loadCoursesNested();
       const rc = refreshed.find(c => c.id === active.id);
       if (rc) { setCourses(refreshed); setActive(rc); }
       await refreshMaterialSkillCounts(active.id);
@@ -1050,13 +1099,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     try {
       if (removedMat?.chunks) {
         for (const ch of removedMat.chunks) {
-          await DB.deleteChunk(active.id, ch.id);
+          await Chunks.delete(ch.id);
         }
       }
       const updatedMats = active.materials.filter(m => m.id !== docId);
       const updatedCourse = { ...active, materials: updatedMats };
       const updatedCourses = courses.map(c => c.id === active.id ? updatedCourse : c);
-      await DB.saveCourses(updatedCourses);
+      await saveCoursesNested(updatedCourses);
       setCourses(updatedCourses);
       setActive(updatedCourse);
       addNotif("success", "Removed: " + (removedMat?.name || "material"));
@@ -1080,7 +1129,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     exporting, setExporting, busy, setBusy, booting, setBooting,
     status, setStatus, processingMatId, setProcessingMatId,
     errorLogModal, setErrorLogModal,
-    globalLock, setGlobalLock, lockElapsed,
+    globalLock, setGlobalLock, lockElapsed, dupPrompt,
     showManage, _setShowManage, showSkills, setShowSkills,
     skillViewData, setSkillViewData, expandedCats, setExpandedCats,
     pendingConfirm, setPendingConfirm,
@@ -1107,8 +1156,8 @@ export function StudyProvider({ children, setErrorCtx }) {
     selectMode, bootWithFocus, sendMessage,
     delCourse, addMats, removeMat,
     // Re-exports from lib (used directly in screen JSX)
-    CLS, getApiKey, setApiKey: setApiKey, getDb, DB, Courses,
-    loadSkillsV2, runExtractionV2, migrateV1ToV2,
+    CLS, getApiKey, setApiKey: setApiKey, getDb, Courses,
+    loadSkillsV2, runExtractionV2,
     generateSubmission, downloadBlob,
     effectiveStrength, nextReviewDate, strengthToTier, masteryConfidence,
     currentRetrievability, TIERS,

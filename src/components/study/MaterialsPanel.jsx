@@ -1,7 +1,7 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
 import { CLS } from "../../lib/classify.js";
-import { DB } from "../../lib/db.js";
+import { loadCoursesNested, saveCoursesNested } from "../../lib/db.js";
 import { runExtractionV2 } from "../../lib/skills.js";
 import { useStudy } from "../../StudyContext.jsx";
 
@@ -111,7 +111,7 @@ export default function MaterialsPanel() {
                           onNotif: addNotif,
                           onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
                         });
-                        var refreshed = await DB.getCourses();
+                        var refreshed = await loadCoursesNested();
                         var updatedCourse = refreshed.find(c => c.id === active.id);
                         if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
                         addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
@@ -150,9 +150,9 @@ export default function MaterialsPanel() {
                             // Re-enable and immediately extract this chunk
                             var updatedMats = active.materials.map(m => m.id !== mat.id ? m : { ...m, chunks: m.chunks.map(c => c.id === ch.id ? { ...c, status: "pending" } : c) });
                             var updatedCourse = { ...active, materials: updatedMats };
-                            var allCourses = await DB.getCourses();
+                            var allCourses = await loadCoursesNested();
                             allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                            await DB.saveCourses(allCourses);
+                            await saveCoursesNested(allCourses);
                             setCourses(allCourses); setActive(updatedCourse);
                             // Trigger extraction
                             setGlobalLock({ message: "Extracting " + ch.label + "..." });
@@ -165,7 +165,7 @@ export default function MaterialsPanel() {
                                 onNotif: addNotif,
                                 onChapterComplete: (ch2, cnt) => setStatus("Chapter " + ch2 + ": " + cnt + " skills"),
                               });
-                              var refreshed = await DB.getCourses();
+                              var refreshed = await loadCoursesNested();
                               var refreshedCourse = refreshed.find(c => c.id === active.id);
                               if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }
                             } catch (e) { addNotif("error", "Extraction failed: " + e.message); }

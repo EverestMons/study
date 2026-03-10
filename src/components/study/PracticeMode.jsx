@@ -1,6 +1,6 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
-import { DB } from "../../lib/db.js";
+import { PracticeSets } from "../../lib/db.js";
 import {
   TIERS, evaluateAnswer, completeTierAttempt,
   loadPracticeMaterialCtx, generateProblems,
@@ -91,7 +91,7 @@ export default function PracticeMode() {
                 try {
                   var matCtx = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
                   var updated = await generateProblems(pset, pm.skill, active.name, matCtx);
-                  await DB.savePractice(active.id, pm.skill.id, updated);
+                  await PracticeSets.upsert(pm.skill.id, updated);
                   setPracticeMode({ set: updated, skill: pm.skill, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
                 } catch (e) {
                   addNotif("error", "Failed to generate next tier: " + e.message);
@@ -103,7 +103,7 @@ export default function PracticeMode() {
                 try {
                   var matCtx2 = await loadPracticeMaterialCtx(active.id, active.materials, pm.skill);
                   var updated2 = await generateProblems(pset, pm.skill, active.name, matCtx2);
-                  await DB.savePractice(active.id, pm.skill.id, updated2);
+                  await PracticeSets.upsert(pm.skill.id, updated2);
                   setPracticeMode({ set: updated2, skill: pm.skill, currentProblemIdx: 0, feedback: null, evaluating: false, generating: false, tierComplete: null });
                 } catch (e) {
                   addNotif("error", "Failed to generate retry problems: " + e.message);
@@ -278,7 +278,7 @@ export default function PracticeMode() {
                         var attempt = updatedSet.tiers[tier].attempts.slice(-1)[0];
                         attempt.problems[curIdx] = { ...attempt.problems[curIdx], passed: result.passed, evaluation: result.feedback, studentAnswer: answer };
                         updatedSet.lastActiveAt = new Date().toISOString();
-                        await DB.savePractice(active.id, pm.skill.id, updatedSet);
+                        await PracticeSets.upsert(pm.skill.id, updatedSet);
 
                         setPracticeMode(prev => ({
                           ...prev, set: updatedSet, evaluating: false,
@@ -289,7 +289,7 @@ export default function PracticeMode() {
                         var allDone = attempt.problems.every(p => p.passed !== null);
                         if (allDone) {
                           var tierResult = completeTierAttempt(updatedSet);
-                          await DB.savePractice(active.id, pm.skill.id, updatedSet);
+                          await PracticeSets.upsert(pm.skill.id, updatedSet);
 
                           // Derive FSRS rating from practice performance
                           var practiceRating;

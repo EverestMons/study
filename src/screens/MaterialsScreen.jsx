@@ -1,7 +1,7 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
-import { DB } from "../lib/db.js";
+import { loadCoursesNested, saveCoursesNested } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import { useStudy } from "../StudyContext.jsx";
@@ -86,12 +86,14 @@ export default function MaterialsScreen() {
           const trust = computeTrustSignals(mat);
           const chunks = mat.chunks || [];
           const failed = chunks.filter(c => c.status === "failed");
-          const retriable = failed.filter(c => (c.failCount || 0) < 2);
-          const permanentlyFailed = failed.filter(c => (c.failCount || 0) >= 2);
+          const errored = chunks.filter(c => c.status === "error");
+          const unfinished = chunks.filter(c => c.status === "pending" || c.status === "error");
+          const extracted = chunks.filter(c => c.status === "extracted");
           const isProcessing = matState === "reading" || matState === "analyzing" || matState === "extracting";
           const isReady = matState === "ready";
-          const isError = matState === "error" || matState === "critical_error";
-          const progress = chunks.length > 0 ? Math.round(chunks.filter(c => c.status === "extracted").length / chunks.length * 100) : 0;
+          const isError = matState === "critical_error";
+          const isIncomplete = matState === "incomplete" || matState === "partial";
+          const progress = chunks.length > 0 ? Math.round(extracted.length / chunks.length * 100) : 0;
           const sectionsExpanded = expandedMaterial === mat.id;
 
           // Status badge config
@@ -100,13 +102,14 @@ export default function MaterialsScreen() {
             analyzing: { bg: T.acS, color: T.ac, label: "Analyzing content...", dot: true },
             extracting: { bg: T.acS, color: T.ac, label: "Finding skills...", dot: true },
             ready: { bg: T.gnS, color: T.gn, label: "Ready to study", icon: "\u2713" },
-            error: { bg: T.amS, color: T.am, label: "Needs attention", icon: "\u26A0" },
+            incomplete: { bg: T.amS, color: T.am, label: "Extraction incomplete", icon: "\u26A0" },
+            partial: { bg: T.amS, color: T.am, label: "Partially extracted", icon: "\u26A0" },
             critical_error: { bg: "rgba(248,113,113,0.1)", color: T.rd, label: "Processing failed", icon: "\u26A0" },
           };
           const badge = badges[matState] || badges.analyzing;
 
           return (
-            <div key={mat.id} style={{ background: T.sf, borderRadius: 14, marginBottom: 12, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : T.bd), transition: "border-color 0.2s ease" }}>
+            <div key={mat.id} style={{ background: T.sf, borderRadius: 14, marginBottom: 12, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : isIncomplete ? T.am + "40" : isError ? T.rd + "40" : T.bd), transition: "border-color 0.2s ease" }}>
               {/* Card Header */}
               <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 14 }}>
                 {/* Type icon */}
@@ -155,35 +158,61 @@ export default function MaterialsScreen() {
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, background: T.bg, fontSize: 11, color: T.txD, animation: "fadeIn 0.3s 0.15s both" }}>{trust.wordLabel} words</span>
                     </div>
                   )}
-                  {/* Actions -- retry/remove if stuck */}
-                  {!processingMatId && (
-                    <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-                      <button onClick={async () => {
-                        if (globalLock) return;
-                        setGlobalLock({ message: "Extracting skills..." });
-                        setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
-                        try {
-                          var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") });
-                          var refreshed = await DB.getCourses(); var uc = refreshed.find(c => c.id === active.id);
-                          if (uc) { setCourses(refreshed); setActive(uc); }
-                          refreshMaterialSkillCounts(active.id);
-                          addNotif(result.success ? "success" : "warn", "Extraction complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
-                        } catch (e) { addNotif("error", "Extraction failed: " + e.message); }
-                        finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
-                      }}
-                        disabled={!!globalLock}
-                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + T.ac, background: T.acS, color: T.ac, fontSize: 11, fontWeight: 600, cursor: globalLock ? "not-allowed" : "pointer", opacity: globalLock ? 0.5 : 1 }}>
-                        Retry Extraction
-                      </button>
-                      <button onClick={() => {
-                          if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
-                          else setPendingConfirm({ type: "removeMat", id: mat.id });
-                        }}
-                        style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txM, fontSize: 11, fontWeight: 500, cursor: "pointer" }}>
-                        {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
-                      </button>
+                </div>
+              )}
+
+              {/* Card Body -- Incomplete / Partial state */}
+              {isIncomplete && (
+                <div style={{ padding: "14px 18px 16px", borderTop: "1px solid " + T.bd }}>
+                  {/* Progress bar (static, not animated) */}
+                  <div style={{ width: "100%", height: 4, borderRadius: 2, background: T.bg, overflow: "hidden", marginBottom: 14 }}>
+                    <div style={{ height: "100%", borderRadius: 2, background: progress > 0 ? T.gn : T.am, width: progress + "%" }} />
+                  </div>
+                  <div style={{ fontSize: 13, color: T.txD, lineHeight: 1.5, marginBottom: 4 }}>
+                    <span style={{ color: T.tx, fontWeight: 600 }}>{extracted.length}/{chunks.length}</span> sections extracted ({progress}%)
+                  </div>
+                  {failed.length > 0 && (
+                    <div style={{ fontSize: 12, color: T.rd, marginBottom: 4 }}>
+                      {failed.length} section{failed.length !== 1 ? "s" : ""} permanently failed
                     </div>
                   )}
+                  {unfinished.length > 0 && (
+                    <div style={{ fontSize: 12, color: T.am, marginBottom: 12 }}>
+                      {unfinished.length} section{unfinished.length !== 1 ? "s" : ""} need{unfinished.length === 1 ? "s" : ""} retry
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button onClick={async () => {
+                      if (globalLock) return;
+                      setGlobalLock({ message: "Retrying extraction..." });
+                      setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
+                      try {
+                        var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") });
+                        var refreshed = await loadCoursesNested(); var uc = refreshed.find(c => c.id === active.id);
+                        if (uc) { setCourses(refreshed); setActive(uc); }
+                        refreshMaterialSkillCounts(active.id);
+                        addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
+                      } catch (e) { addNotif("error", "Retry failed: " + e.message); }
+                      finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
+                    }}
+                      disabled={!!globalLock}
+                      style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.am, background: T.amS, color: T.am, fontSize: 12, fontWeight: 600, cursor: globalLock ? "not-allowed" : "pointer", opacity: globalLock ? 0.5 : 1 }}>
+                      Retry {unfinished.length > 0 ? "(" + unfinished.length + " section" + (unfinished.length !== 1 ? "s" : "") + ")" : "Extraction"}
+                    </button>
+                    {trust.skillCount > 0 && (
+                      <button onClick={() => { setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
+                        style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
+                        Study Available Skills
+                      </button>
+                    )}
+                    <button onClick={() => {
+                        if (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id) { setPendingConfirm(null); removeMat(mat.id); }
+                        else setPendingConfirm({ type: "removeMat", id: mat.id });
+                      }}
+                      style={{ marginLeft: "auto", background: "none", border: "1px solid " + (pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? T.rd : T.bd), borderRadius: 8, padding: "6px 14px", fontSize: 11, color: T.txM, cursor: "pointer" }}>
+                      {pendingConfirm?.type === "removeMat" && pendingConfirm?.id === mat.id ? "Confirm?" : "Remove"}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -245,38 +274,16 @@ export default function MaterialsScreen() {
                 </div>
               )}
 
-              {/* Card Body -- Error states */}
+              {/* Card Body -- Critical error state (all chunks permanently failed) */}
               {isError && (
                 <div style={{ padding: "14px 18px", borderTop: "1px solid " + T.bd }}>
-                  <div style={{ fontSize: 13, color: matState === "critical_error" ? T.txD : T.am, marginBottom: 4, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <div style={{ fontSize: 13, color: T.txD, marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 8 }}>
                     <span>{"\u26A0"}</span>
-                    <span>{matState === "critical_error"
-                      ? "This file couldn't be fully processed. Some content may not be compatible."
-                      : failed.length + " section" + (failed.length !== 1 ? "s" : "") + " couldn't be processed."
-                    }</span>
+                    <span>This file couldn't be processed after multiple attempts. The content may not be compatible.</span>
                   </div>
-                  {matState === "error" && <div style={{ fontSize: 12, color: T.txD, marginBottom: 14, paddingLeft: 22 }}>This usually resolves on retry.</div>}
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    {retriable.length > 0 && (
-                      <button onClick={async () => {
-                        if (globalLock) return;
-                        setGlobalLock({ message: "Retrying..." });
-                        setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
-                        try {
-                          var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills") });
-                          var refreshed = await DB.getCourses(); var uc = refreshed.find(c => c.id === active.id);
-                          if (uc) { setCourses(refreshed); setActive(uc); }
-                          refreshMaterialSkillCounts(active.id);
-                          addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
-                        } catch (e) { addNotif("error", "Retry failed: " + e.message); }
-                        finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
-                      }}
-                        style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.am, background: T.amS, color: T.am, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                        Retry ({retriable.length})
-                      </button>
-                    )}
-                    {permanentlyFailed.length > 0 && (
-                      <button onClick={() => setErrorLogModal({ mat, chunks: permanentlyFailed })}
+                    {failed.length > 0 && (
+                      <button onClick={() => setErrorLogModal({ mat, chunks: failed })}
                         style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
                         View Details
                       </button>
@@ -438,9 +445,9 @@ export default function MaterialsScreen() {
                       chunks: m.chunks.map(c => selectedIds.has(c.id) ? { ...c, status: "extracted" } : c)
                     });
                     var updatedCourse = { ...active, materials: updatedMats };
-                    var allCourses = await DB.getCourses();
+                    var allCourses = await loadCoursesNested();
                     allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                    await DB.saveCourses(allCourses);
+                    await saveCoursesNested(allCourses);
                     setCourses(allCourses); setActive(updatedCourse);
                     setChunkPicker(null);
                     addNotif("success", "Activated " + selectedIds.size + " section(s). Go to Skills to extract.");
@@ -459,9 +466,9 @@ export default function MaterialsScreen() {
                         chunks: m.chunks.map(c => selectedIds.has(c.id) ? { ...c, status: "skipped" } : c)
                       });
                       var updatedCourse = { ...active, materials: updatedMats };
-                      var allCourses = await DB.getCourses();
+                      var allCourses = await loadCoursesNested();
                       allCourses = allCourses.map(c => c.id === active.id ? updatedCourse : c);
-                      await DB.saveCourses(allCourses);
+                      await saveCoursesNested(allCourses);
                       setCourses(allCourses); setActive(updatedCourse);
                       setChunkPicker(null);
                       addNotif("success", "Deactivated " + selectedIds.size + " section(s).");

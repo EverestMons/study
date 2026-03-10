@@ -822,8 +822,8 @@ export async function extractCourse(courseId, materialId, options = {}) {
     }
 
     if (result.skills.length === 0) {
-      // Mark chunks as error
-      await Chunks.updateStatusBatch(group.chunkIds, 'error');
+      // Mark chunks as failed (increments fail_count, transitions to terminal at threshold)
+      await Chunks.markFailedBatch(group.chunkIds);
       onChapterComplete?.(group.chapter, 0);
       continue;
     }
@@ -890,7 +890,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
       onChapterComplete?.(group.chapter, result.skills.length);
     } catch (e) {
       allIssues.push({ type: 'save_failed', chapter: group.chapter, error: e.message });
-      await Chunks.updateStatusBatch(group.chunkIds, 'error');
+      await Chunks.markFailedBatch(group.chunkIds);
       onChapterComplete?.(group.chapter, 0);
     }
 
@@ -927,6 +927,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
     issues: allIssues,
     cipCode,
     parentDisplayName,
+    createdSkillIds: [...conceptKeyToId.values()],
   };
 }
 
@@ -958,16 +959,23 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
     return extractCourse(courseId, materialId, options);
   }
 
-  // Load new material chunks
-  const chunks = await Chunks.getByMaterial(materialId);
-  if (chunks.length === 0) {
+  // Load new material chunks — only unfinished ones
+  const allChunks = await Chunks.getByMaterial(materialId);
+  if (allChunks.length === 0) {
     return { enriched: 0, newSkills: 0, issues: [{ type: 'no_chunks' }] };
   }
+
+  const chunks = allChunks.filter(c => c.status !== 'extracted' && c.status !== 'failed');
+  if (chunks.length === 0) {
+    return { enriched: 0, newSkills: 0, issues: [{ type: 'all_chunks_done' }] };
+  }
+
+  const unfinishedChunkIds = chunks.map(c => c.id);
 
   const material = await Materials.getById(materialId);
   const materialLabel = material?.label || 'Unknown Material';
 
-  // Build content from all chunks
+  // Build content from unfinished chunks only
   const content = chunks.map(c => c.content || '').join('\n\n---\n\n');
 
   // Build enrichment prompt
@@ -984,16 +992,21 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   );
 
   if (typeof response === 'string' && response.startsWith('Error:')) {
+    // Mark unfinished chunks as failed (increments fail_count, transitions to terminal at threshold)
+    await Chunks.markFailedBatch(unfinishedChunkIds);
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_api_error', error: response }] };
   }
 
   const parsed = extractJSON(response);
   if (!parsed || (!parsed.enrichments && !parsed.newSkills)) {
+    // Mark unfinished chunks as failed
+    await Chunks.markFailedBatch(unfinishedChunkIds);
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_parse_failed' }] };
   }
 
   let enrichedCount = 0;
   let newSkillCount = 0;
+  const createdSkillIds = [];
 
   // Process enrichments
   for (const e of (parsed.enrichments || [])) {
@@ -1011,7 +1024,7 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
       materialLabel: e.sourceLabel || materialLabel,
     });
 
-    // Bind to ALL chunks from this material (broad binding)
+    // Bind to the chunks we actually sent
     const bindings = chunks.map(c => ({
       chunkId: c.id,
       subSkillId: existing.id,
@@ -1057,7 +1070,7 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
       schemaVersion: 2,
     });
 
-    // Bind to ALL chunks from this material
+    // Bind to the chunks we actually sent
     const bindings = chunks.map(c => ({
       chunkId: c.id,
       subSkillId: skillId,
@@ -1066,11 +1079,12 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
     }));
     await ChunkSkillBindings.createBatch(bindings);
 
+    createdSkillIds.push(skillId);
     newSkillCount++;
   }
 
-  // Mark chunks as extracted
-  await Chunks.updateStatusBatch(chunks.map(c => c.id), 'extracted');
+  // Mark only the chunks we actually sent as extracted
+  await Chunks.updateStatusBatch(unfinishedChunkIds, 'extracted');
 
   onProgress?.(`Enrichment complete: ${enrichedCount} enriched, ${newSkillCount} new skills.`);
 
@@ -1078,6 +1092,184 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
     enriched: enrichedCount,
     newSkills: newSkillCount,
     issues: allIssues,
+    createdSkillIds,
+  };
+}
+
+// ============================================================
+// Chapter-Level Retry Extraction
+// ============================================================
+
+/**
+ * Run extraction on a subset of chapter groups for retry.
+ * Uses identity matching against existing skills — matched skills are
+ * enriched, genuinely new skills are created.
+ *
+ * @param {string} courseId
+ * @param {string} materialId
+ * @param {Array} chapterGroups - Pre-filtered chapter groups (only unfinished chunks)
+ * @param {Array} existingSkills - Existing SubSkills for this course
+ * @param {object} callbacks
+ * @returns {Promise<{ totalSkills, chapters, issues }>}
+ */
+export async function extractChaptersOnly(courseId, materialId, chapterGroups, existingSkills, callbacks = {}) {
+  const { onProgress, onChapterComplete } = callbacks;
+  const allIssues = [];
+
+  const material = await Materials.getById(materialId);
+  const materialLabel = material?.label || 'Unknown Material';
+
+  // Resolve parent skill from existing skills
+  const parentCounts = {};
+  for (const s of existingSkills) {
+    if (s.parent_skill_id) {
+      parentCounts[s.parent_skill_id] = (parentCounts[s.parent_skill_id] || 0) + 1;
+    }
+  }
+  const parentSkillId = Object.entries(parentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  // Split oversized chapters
+  chapterGroups = splitOversizedChapters(chapterGroups);
+
+  onProgress?.(`Retrying ${chapterGroups.length} chapter(s)...`);
+
+  const allExtractedSkills = [];
+  const allSkillsByChapter = [];
+
+  for (let i = 0; i < chapterGroups.length; i++) {
+    const group = chapterGroups[i];
+    onProgress?.(`Extracting chapter ${group.chapter} (${i + 1}/${chapterGroups.length})...`);
+
+    // A6: isFirstChapter = false always — CIP detection unnecessary for retry
+    const result = await extractChapter(group, false, materialLabel, { onProgress });
+    allIssues.push(...result.issues);
+
+    if (result.skills.length === 0) {
+      // Mark chunks as failed (increments fail_count, transitions to terminal at threshold)
+      await Chunks.markFailedBatch(group.chunkIds);
+      onChapterComplete?.(group.chapter, 0);
+      continue;
+    }
+
+    allExtractedSkills.push(...result.skills);
+    allSkillsByChapter.push({ chapter: group.chapter, skills: result.skills, chunks: group.chunks, chunkIds: group.chunkIds });
+    onChapterComplete?.(group.chapter, result.skills.length);
+
+    // Rate limiting
+    if (i < chapterGroups.length - 1) {
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  if (allExtractedSkills.length === 0) {
+    return { totalSkills: 0, chapters: [], issues: allIssues };
+  }
+
+  // Identity matching against existing skills
+  onProgress?.('Matching skills against existing...');
+  const { matched, newSkills } = matchExtractedSkills(allExtractedSkills, existingSkills);
+  onProgress?.(`${matched.length} matched, ${newSkills.length} new.`);
+
+  const conceptKeyToId = new Map();
+  const createdSkillIds = [];
+  let totalSkills = 0;
+
+  try {
+    await withTransaction(async () => {
+      // 1. Update matched skills (enrich with new criteria/evidence)
+      for (const m of matched) {
+        await SubSkills.updateFromReextraction(m.existingId, {
+          description: m.extracted.description,
+          masteryCriteria: (m.extracted.masteryCriteria || []).map(c => typeof c === 'string' ? c : c.text),
+          evidence: m.extracted.evidence || {},
+          bloomsLevel: m.extracted.bloomsLevel,
+          skillType: m.extracted.skillType,
+          materialLabel,
+        });
+        conceptKeyToId.set(m.extracted.conceptKey, m.existingId);
+      }
+
+      // 2. Create new skills
+      for (const ns of newSkills) {
+        const skillId = await SubSkills.create({
+          parentSkillId,
+          name: ns.name,
+          description: ns.description,
+          skillType: ns.skillType,
+          sourceCourseId: courseId,
+          conceptKey: ns.conceptKey,
+          category: ns.category,
+          bloomsLevel: ns.bloomsLevel,
+          masteryCriteria: ns.masteryCriteria,
+          evidence: ns.evidence || {},
+          extractionModel: 'claude-haiku-4-5',
+          schemaVersion: 2,
+        });
+        createdSkillIds.push(skillId);
+        conceptKeyToId.set(ns.conceptKey, skillId);
+      }
+
+      // 3. Resolve chunk bindings + prerequisites per chapter
+      for (const chGroup of allSkillsByChapter) {
+        const skillIdMap = new Map();
+        for (const s of chGroup.skills) {
+          const id = conceptKeyToId.get(s.conceptKey);
+          if (id) skillIdMap.set(s.conceptKey, id);
+        }
+
+        const bindings = resolveChunkBindings(chGroup.skills, chGroup, skillIdMap);
+        await ChunkSkillBindings.createBatch(bindings, { externalTransaction: true });
+
+        // Within-chapter prerequisites
+        const prereqLinks = [];
+        for (const s of chGroup.skills) {
+          const skillId = skillIdMap.get(s.conceptKey);
+          if (!skillId) continue;
+          for (const prereqKey of (s.prerequisites || [])) {
+            const prereqId = conceptKeyToId.get(prereqKey);
+            if (prereqId && prereqId !== skillId) {
+              prereqLinks.push({ subSkillId: skillId, prerequisiteId: prereqId, source: 'within_chapter' });
+            }
+          }
+        }
+        if (prereqLinks.length > 0) {
+          await SkillPrerequisites.createBatch(prereqLinks, { externalTransaction: true });
+        }
+
+        // Mark chunks as extracted
+        await Chunks.updateStatusBatch(chGroup.chunkIds, 'extracted', { externalTransaction: true });
+      }
+    });
+
+    totalSkills = matched.length + newSkills.length;
+  } catch (e) {
+    allIssues.push({ type: 'retry_save_failed', error: e.message });
+    return { totalSkills: 0, chapters: [], issues: allIssues };
+  }
+
+  // Cross-chapter prerequisite wiring
+  if (allSkillsByChapter.length >= 2) {
+    onProgress?.('Wiring cross-chapter prerequisites...');
+    try {
+      const { links, issues: wireIssues } = await wireCrossChapterPrereqs(
+        allSkillsByChapter, conceptKeyToId
+      );
+      allIssues.push(...wireIssues);
+      if (links.length > 0) {
+        await SkillPrerequisites.createBatch(links);
+      }
+    } catch (e) {
+      allIssues.push({ type: 'cross_chapter_wiring_failed', error: e.message });
+    }
+  }
+
+  onProgress?.(`Retry complete: ${totalSkills} skills (${matched.length} updated, ${newSkills.length} new).`);
+
+  return {
+    totalSkills,
+    chapters: allSkillsByChapter.map(c => ({ chapter: c.chapter, skillCount: c.skills.length })),
+    issues: allIssues,
+    createdSkillIds,
   };
 }
 

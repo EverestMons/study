@@ -1,9 +1,9 @@
 // ============================================================
-// DB Layer v2 — SQLite via @tauri-apps/plugin-sql
+// DB Layer — SQLite via @tauri-apps/plugin-sql
 //
-// Clean API for v2 schema tables. Includes v1 compatibility
-// shims (marked V1_COMPAT) so existing App.jsx keeps working
-// during incremental migration.
+// Normalized modules for all schema tables: Courses, Materials,
+// Chunks, Sessions, Messages, JournalEntries, Mastery,
+// PracticeSets, Assignments, CourseSchedule, etc.
 // ============================================================
 
 import Database from '@tauri-apps/plugin-sql';
@@ -267,7 +267,9 @@ export const Courses = {
 
   async delete(id) {
     const db = await getDb();
-    // CASCADE handles children, but be explicit for safety
+    // Clean up v1 compat keys from settings
+    await db.execute("DELETE FROM settings WHERE key LIKE ?", [`v1_%:${id}%`]);
+    // CASCADE handles children (materials, chunks, sessions, etc.)
     await db.execute('DELETE FROM courses WHERE id = ?', [id]);
   },
 
@@ -754,6 +756,12 @@ export const Chunks = {
     return rows[0]?.content || null;
   },
 
+  async updateContent(id, content) {
+    const db = await getDb();
+    const c = typeof content === 'string' ? content : JSON.stringify(content);
+    await db.execute('UPDATE chunks SET content = ?, updated_at = ? WHERE id = ?', [c, now(), id]);
+  },
+
   async create({ materialId, courseId, label = null, content, contentHash, charCount = null, sourceFormat = null, headingLevel = null, sectionPath = null, structuralMetadata = null, fidelity = 'full', pageStart = null, pageEnd = null, ordering = 0 }) {
     const db = await getDb();
     const id = uuid();
@@ -817,6 +825,39 @@ export const Chunks = {
     };
     if (externalTransaction) { await work(await getDb()); }
     else { await withTransaction(work); }
+  },
+
+  async markFailed(id) {
+    const db = await getDb();
+    await db.execute(
+      `UPDATE chunks SET
+        fail_count = fail_count + 1,
+        status = CASE WHEN fail_count + 1 >= 3 THEN 'failed' ELSE 'error' END,
+        updated_at = ?
+      WHERE id = ?`,
+      [now(), id]
+    );
+  },
+
+  async markFailedBatch(ids) {
+    if (ids.length === 0) return;
+    await withTransaction(async (db) => {
+      for (const id of ids) {
+        await db.execute(
+          `UPDATE chunks SET
+            fail_count = fail_count + 1,
+            status = CASE WHEN fail_count + 1 >= 3 THEN 'failed' ELSE 'error' END,
+            updated_at = ?
+          WHERE id = ?`,
+          [now(), id]
+        );
+      }
+    });
+  },
+
+  async delete(id) {
+    const db = await getDb();
+    await db.execute('DELETE FROM chunks WHERE id = ?', [id]);
   },
 
   async getActiveByCourse(courseId) {
@@ -883,6 +924,90 @@ export const ChunkMedia = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [chunkId, mediaHash, mediaType, sizeBytes, width, height, storageType, inlineBlob, externalPath, caption, altText, positionContext, pageNumber, now()]
     );
+  },
+};
+
+// ============================================================
+// Chunk Fingerprints — MinHash signatures for near-duplicate detection
+// ============================================================
+
+/**
+ * Convert Uint32Array → plain number array for BLOB storage.
+ * Tauri SQL plugin accepts BLOB as Array<number> (byte values).
+ */
+const sigToBlob = (sig) => Array.from(new Uint8Array(sig.buffer));
+
+/**
+ * Convert BLOB (Array<number> from Tauri SQL) → Uint32Array.
+ * Uses DataView to avoid alignment issues with Uint32Array on raw buffers.
+ */
+const blobToSig = (blob) => {
+  const bytes = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
+  const result = new Uint32Array(bytes.length / 4);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = 0; i < result.length; i++) {
+    result[i] = view.getUint32(i * 4, true); // little-endian
+  }
+  return result;
+};
+
+export const ChunkFingerprints = {
+  async create(chunkId, minhashSig, shingleCount) {
+    const db = await getDb();
+    await db.execute(
+      'INSERT OR REPLACE INTO chunk_fingerprints (chunk_id, minhash_sig, shingle_count, created_at) VALUES (?, ?, ?, ?)',
+      [chunkId, sigToBlob(minhashSig), shingleCount || 0, now()]
+    );
+  },
+
+  async createBatch(items) {
+    if (!items.length) return;
+    return withTransaction(async (db) => {
+      for (const { chunkId, minhashSig, shingleCount } of items) {
+        await db.execute(
+          'INSERT OR REPLACE INTO chunk_fingerprints (chunk_id, minhash_sig, shingle_count, created_at) VALUES (?, ?, ?, ?)',
+          [chunkId, sigToBlob(minhashSig), shingleCount || 0, now()]
+        );
+      }
+    });
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT cf.chunk_id, cf.minhash_sig, cf.shingle_count
+       FROM chunk_fingerprints cf
+       JOIN chunks c ON cf.chunk_id = c.id
+       JOIN materials m ON c.material_id = m.id
+       WHERE m.course_id = ?`,
+      [courseId]
+    );
+    return rows.map(r => ({
+      chunk_id: r.chunk_id,
+      minhash_sig: blobToSig(r.minhash_sig),
+      shingle_count: r.shingle_count,
+    }));
+  },
+
+  async getByMaterial(materialId) {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT cf.chunk_id, cf.minhash_sig, cf.shingle_count
+       FROM chunk_fingerprints cf
+       JOIN chunks c ON cf.chunk_id = c.id
+       WHERE c.material_id = ?`,
+      [materialId]
+    );
+    return rows.map(r => ({
+      chunk_id: r.chunk_id,
+      minhash_sig: blobToSig(r.minhash_sig),
+      shingle_count: r.shingle_count,
+    }));
+  },
+
+  async delete(chunkId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM chunk_fingerprints WHERE chunk_id = ?', [chunkId]);
   },
 };
 
@@ -1220,6 +1345,96 @@ export const SkillPrerequisites = {
 };
 
 // ============================================================
+// Concept Links — cross-sub-skill similarity
+// ============================================================
+
+export const ConceptLinks = {
+  async create({ subSkillAId, subSkillBId, similarityScore, linkType }) {
+    const db = await getDb();
+    const [a, b] = subSkillAId < subSkillBId ? [subSkillAId, subSkillBId] : [subSkillBId, subSkillAId];
+    await db.execute(
+      `INSERT OR IGNORE INTO concept_links (sub_skill_a_id, sub_skill_b_id, similarity_score, link_type, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [a, b, similarityScore, linkType, now()]
+    );
+  },
+
+  async createBatch(links) {
+    await withTransaction(async (db) => {
+      for (const { subSkillAId, subSkillBId, similarityScore, linkType } of links) {
+        const [a, b] = subSkillAId < subSkillBId ? [subSkillAId, subSkillBId] : [subSkillBId, subSkillAId];
+        await db.execute(
+          `INSERT OR IGNORE INTO concept_links (sub_skill_a_id, sub_skill_b_id, similarity_score, link_type, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [a, b, similarityScore, linkType, now()]
+        );
+      }
+    });
+  },
+
+  async getBySkill(skillId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cl.*, sa.name AS name_a, sa.concept_key AS key_a, sb.name AS name_b, sb.concept_key AS key_b
+       FROM concept_links cl
+       JOIN sub_skills sa ON cl.sub_skill_a_id = sa.id
+       JOIN sub_skills sb ON cl.sub_skill_b_id = sb.id
+       WHERE cl.sub_skill_a_id = ? OR cl.sub_skill_b_id = ?`,
+      [skillId, skillId]
+    );
+  },
+
+  async getByParent(parentSkillId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cl.*, sa.name AS name_a, sa.concept_key AS key_a, sb.name AS name_b, sb.concept_key AS key_b
+       FROM concept_links cl
+       JOIN sub_skills sa ON cl.sub_skill_a_id = sa.id
+       JOIN sub_skills sb ON cl.sub_skill_b_id = sb.id
+       WHERE sa.parent_skill_id = ? OR sb.parent_skill_id = ?`,
+      [parentSkillId, parentSkillId]
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cl.*, sa.name AS name_a, sa.concept_key AS key_a, sb.name AS name_b, sb.concept_key AS key_b
+       FROM concept_links cl
+       JOIN sub_skills sa ON cl.sub_skill_a_id = sa.id
+       JOIN sub_skills sb ON cl.sub_skill_b_id = sb.id
+       WHERE sa.source_course_id = ? OR sb.source_course_id = ?`,
+      [courseId, courseId]
+    );
+  },
+
+  async delete(linkId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM concept_links WHERE id = ?', [linkId]);
+  },
+
+  async deleteBySkill(skillId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM concept_links WHERE sub_skill_a_id = ? OR sub_skill_b_id = ?', [skillId, skillId]);
+  },
+
+  async getBySkillBatch(skillIds) {
+    if (!skillIds.length) return [];
+    const db = await getDb();
+    const ph = skillIds.map(() => '?').join(',');
+    return db.select(
+      `SELECT cl.*, sa.name AS name_a, sa.concept_key AS key_a, sa.source_course_id AS course_a,
+              sb.name AS name_b, sb.concept_key AS key_b, sb.source_course_id AS course_b
+       FROM concept_links cl
+       JOIN sub_skills sa ON cl.sub_skill_a_id = sa.id
+       JOIN sub_skills sb ON cl.sub_skill_b_id = sb.id
+       WHERE cl.sub_skill_a_id IN (${ph}) OR cl.sub_skill_b_id IN (${ph})`,
+      [...skillIds, ...skillIds]
+    );
+  },
+};
+
+// ============================================================
 // Sub-Skill Mastery (FSRS)
 // ============================================================
 
@@ -1252,11 +1467,11 @@ export const Mastery = {
     );
   },
 
-  async upsert(subSkillId, { difficulty, stability, retrievability, reps, lapses, lastReviewAt, nextReviewAt, totalMasteryPoints }) {
+  async upsert(subSkillId, { difficulty, stability, retrievability, reps, lapses, lastReviewAt, nextReviewAt, totalMasteryPoints, lastRating = null }) {
     const db = await getDb();
     await db.execute(
-      `INSERT INTO sub_skill_mastery (sub_skill_id, difficulty, stability, retrievability, reps, lapses, last_review_at, next_review_at, total_mastery_points, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO sub_skill_mastery (sub_skill_id, difficulty, stability, retrievability, reps, lapses, last_review_at, next_review_at, total_mastery_points, last_rating, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sub_skill_id) DO UPDATE SET
          difficulty = excluded.difficulty,
          stability = excluded.stability,
@@ -1266,8 +1481,9 @@ export const Mastery = {
          last_review_at = excluded.last_review_at,
          next_review_at = excluded.next_review_at,
          total_mastery_points = excluded.total_mastery_points,
+         last_rating = excluded.last_rating,
          updated_at = excluded.updated_at`,
-      [subSkillId, difficulty, stability, retrievability, reps, lapses, lastReviewAt, nextReviewAt, totalMasteryPoints, now()]
+      [subSkillId, difficulty, stability, retrievability, reps, lapses, lastReviewAt, nextReviewAt, totalMasteryPoints, lastRating, now()]
     );
   },
 };
@@ -1280,6 +1496,12 @@ export const Sessions = {
   async getByCourse(courseId) {
     const db = await getDb();
     return db.select('SELECT * FROM sessions WHERE course_id = ? ORDER BY started_at DESC', [courseId]);
+  },
+
+  async countByCourse(courseId) {
+    const db = await getDb();
+    const rows = await db.select('SELECT COUNT(*) as cnt FROM sessions WHERE course_id = ?', [courseId]);
+    return rows[0]?.cnt || 0;
   },
 
   async getById(id) {
@@ -1317,6 +1539,21 @@ export const Sessions = {
 
   async pause(id) {
     return this.end(id, { status: 'paused' });
+  },
+
+  async getOrCreateCompat(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      "SELECT id FROM sessions WHERE course_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
+      [courseId]
+    );
+    if (rows.length > 0) return rows[0].id;
+    const id = uuid();
+    await db.execute(
+      "INSERT INTO sessions (id, course_id, intent, status, started_at) VALUES (?, ?, 'explore', 'active', ?)",
+      [id, courseId, now()]
+    );
+    return id;
   },
 };
 
@@ -1403,6 +1640,19 @@ export const Messages = {
       'INSERT INTO messages (session_id, role, content, input_mode, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       [sessionId, role, content, inputMode, metadata ? JSON.stringify(metadata) : null, now()]
     );
+  },
+
+  async appendBatch(sessionId, messages) {
+    return withTransaction(async (db) => {
+      for (const msg of messages) {
+        await db.execute(
+          'INSERT INTO messages (session_id, role, content, input_mode, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [sessionId, msg.role, msg.content, msg.inputMode || null,
+           msg.metadata ? (typeof msg.metadata === 'string' ? msg.metadata : JSON.stringify(msg.metadata)) : JSON.stringify({ thinking: msg.thinking, skills: msg.skills }),
+           now()]
+        );
+      }
+    });
   },
 
   async getLastN(sessionId, n = 20) {
@@ -1498,6 +1748,86 @@ export const PracticeSets = {
 };
 
 // ============================================================
+// Nested Course Loader / Saver
+// ============================================================
+
+/**
+ * Load all courses with nested materials and chunks.
+ * Materials get v1-compat aliases (name, type, created) so existing consumers work.
+ * Chunk content is NOT loaded (expensive) — use Chunks.getContent(id) on demand.
+ */
+export const loadCoursesNested = async () => {
+  const db = await getDb();
+  const courses = await db.select('SELECT * FROM courses ORDER BY created_at DESC');
+  for (const course of courses) {
+    course.created = course.created_at;
+    const mats = await db.select('SELECT * FROM materials WHERE course_id = ?', [course.id]);
+    for (const mat of mats) {
+      mat.name = mat.label;
+      mat.type = mat.file_type;
+      mat.created = mat.created_at;
+      mat.chunks = await db.select(
+        `SELECT id, label, char_count as charCount, status, error_info as errorInfo, fail_count as failCount
+         FROM chunks WHERE material_id = ? ORDER BY ordering`, [mat.id]
+      );
+      mat.chunks = mat.chunks.map(ch => ({
+        ...ch,
+        errorInfo: jsonParse(ch.errorInfo),
+      }));
+    }
+    course.materials = mats;
+  }
+  return courses;
+};
+
+/**
+ * Upsert courses with nested materials and chunks.
+ * Accepts both v1 field names (name/type/created) and v2 field names (label/file_type/created_at).
+ * Chunk content is NOT written — use Chunks.updateContent(id, content) separately.
+ */
+export const saveCoursesNested = async (courses) => {
+  return withTransaction(async (db) => {
+    for (const course of courses) {
+      await db.execute(
+        `INSERT INTO courses (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+        [course.id, course.name, course.created || course.created_at || now(), now()]
+      );
+      for (const mat of (course.materials || [])) {
+        await db.execute(
+          `INSERT INTO materials (id, course_id, label, classification, file_type, active, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             label = excluded.label, classification = excluded.classification,
+             file_type = excluded.file_type, active = excluded.active, updated_at = ?`,
+          [mat.id, course.id, mat.name || mat.label, mat.classification,
+           mat.type || mat.fileType, mat.active !== false ? 1 : 0,
+           mat.created || mat.created_at || now(), now()]
+        );
+        for (const ch of (mat.chunks || [])) {
+          await db.execute(
+            `INSERT INTO chunks (id, material_id, course_id, label, content_hash, char_count, status, error_info, fail_count, ordering, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               label = excluded.label, char_count = excluded.char_count,
+               status = excluded.status, error_info = excluded.error_info,
+               fail_count = excluded.fail_count`,
+            [ch.id, mat.id, course.id, ch.label,
+             ch.contentHash || ch.content_hash || 'legacy-' + ch.id,
+             ch.charCount || ch.char_count || 0,
+             ch.status || 'pending',
+             ch.errorInfo ? JSON.stringify(ch.errorInfo) : null,
+             ch.failCount || ch.fail_count || 0,
+             ch.ordering || 0, now()]
+          );
+        }
+      }
+    }
+    return true;
+  });
+};
+
+// ============================================================
 // Hard Reset
 // ============================================================
 
@@ -1531,288 +1861,3 @@ export const resetAll = async ({ confirmed = false } = {}) => {
 };
 
 
-// ============================================================
-// V1 COMPAT — Shims so existing App.jsx keeps working
-//
-// These map old v1 method signatures to v2 tables.
-// They're intentionally imperfect — just enough to not crash.
-// Remove as App.jsx is migrated to use v2 APIs directly.
-// ============================================================
-
-export const DB = {
-  // V1_COMPAT: getCourses — returns courses with nested materials and chunks
-  async getCourses() {
-    const db = await getDb();
-    const courses = await db.select('SELECT * FROM courses ORDER BY created_at DESC');
-    for (const course of courses) {
-      // Map v2 column names to v1 shape
-      course.created = course.created_at;
-      const mats = await db.select('SELECT * FROM materials WHERE course_id = ?', [course.id]);
-      for (const mat of mats) {
-        mat.name = mat.label;
-        mat.type = mat.file_type;
-        mat.created = mat.created_at;
-        mat.chunks = await db.select(
-          `SELECT id, label, char_count as charCount, status, error_info as errorInfo, fail_count as failCount
-           FROM chunks WHERE material_id = ? ORDER BY ordering`, [mat.id]
-        );
-        mat.chunks = mat.chunks.map(ch => ({
-          ...ch,
-          errorInfo: jsonParse(ch.errorInfo),
-        }));
-      }
-      course.materials = mats;
-    }
-    return courses;
-  },
-
-  // V1_COMPAT: saveCourses — upserts courses with nested materials and chunks
-  async saveCourses(courses) {
-    return withTransaction(async (db) => {
-      for (const course of courses) {
-        await db.execute(
-          `INSERT INTO courses (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
-          [course.id, course.name, course.created || course.created_at || now(), now()]
-        );
-        for (const mat of (course.materials || [])) {
-          await db.execute(
-            `INSERT INTO materials (id, course_id, label, classification, file_type, active, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-               label = excluded.label, classification = excluded.classification,
-               file_type = excluded.file_type, active = excluded.active, updated_at = ?`,
-            [mat.id, course.id, mat.name || mat.label, mat.classification,
-             mat.type || mat.fileType, mat.active !== false ? 1 : 0,
-             mat.created || mat.created_at || now(), now()]
-          );
-          for (const ch of (mat.chunks || [])) {
-            await db.execute(
-              `INSERT INTO chunks (id, material_id, course_id, label, content_hash, char_count, status, error_info, fail_count, ordering, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 label = excluded.label, char_count = excluded.char_count,
-                 status = excluded.status, error_info = excluded.error_info,
-                 fail_count = excluded.fail_count`,
-              [ch.id, mat.id, course.id, ch.label,
-               ch.contentHash || ch.content_hash || 'legacy-' + ch.id,
-               ch.charCount || ch.char_count || 0,
-               ch.status || 'pending',
-               ch.errorInfo ? JSON.stringify(ch.errorInfo) : null,
-               ch.failCount || ch.fail_count || 0,
-               ch.ordering || 0, now()]
-            );
-          }
-        }
-      }
-      return true;
-    });
-  },
-
-  // V1_COMPAT: saveDoc — stores chunk content
-  async saveDoc(cid, chunkId, doc) {
-    const db = await getDb();
-    const content = typeof doc === 'string' ? doc : JSON.stringify(doc);
-    await db.execute('UPDATE chunks SET content = ? WHERE id = ? AND course_id = ?', [content, chunkId, cid]);
-    return true;
-  },
-
-  // V1_COMPAT: getDoc — retrieves chunk content
-  async getDoc(cid, chunkId) {
-    const db = await getDb();
-    const rows = await db.select('SELECT content FROM chunks WHERE id = ? AND course_id = ?', [chunkId, cid]);
-    if (rows.length > 0 && rows[0].content) {
-      try { return JSON.parse(rows[0].content); } catch { return { content: rows[0].content }; }
-    }
-    return null;
-  },
-
-  // V1_COMPAT: chunk skills — getChunkSkills still used in App.jsx section panel
-  async getChunkSkills(cid, chunkId) {
-    const db = await getDb();
-    const rows = await db.select(
-      "SELECT value FROM settings WHERE key = ?", [`v1_chunk_skills:${cid}:${chunkId}`]
-    );
-    if (rows.length === 0) return null;
-    return jsonParse(rows[0].value);
-  },
-
-  // V1_COMPAT: deleteChunk
-  async deleteChunk(cid, chunkId) {
-    const db = await getDb();
-    await db.execute("DELETE FROM settings WHERE key = ?", [`v1_chunk_skills:${cid}:${chunkId}`]);
-    await db.execute('DELETE FROM chunks WHERE id = ? AND course_id = ?', [chunkId, cid]);
-    return true;
-  },
-
-  // V1_COMPAT: course-level data blobs (skills, taxonomy, validation, assignments)
-  // Stored in settings table as key-value since v2 has no course_data table
-  async _saveCourseData(cid, type, data) {
-    const db = await getDb();
-    await db.execute(
-      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-      [`v1_course_data:${cid}:${type}`, JSON.stringify(data)]
-    );
-    return true;
-  },
-
-  async _getCourseData(cid, type) {
-    const db = await getDb();
-    const rows = await db.select(
-      'SELECT value FROM settings WHERE key = ?', [`v1_course_data:${cid}:${type}`]
-    );
-    if (rows.length === 0) return null;
-    return jsonParse(rows[0].value);
-  },
-
-  // saveSkills removed (v1 dead code)
-  async getSkills(cid) { return this._getCourseData(cid, 'skills'); }, // used by migrate.js
-  // saveRefTaxonomy, saveValidation, getValidation removed (v1 dead code)
-  async getRefTaxonomy(cid) { return this._getCourseData(cid, 'reftax'); }, // used by App.jsx + migrate.js
-  // saveAsgn, getAsgn removed — assignments now use Assignments module + 003 tables
-
-  // V1_COMPAT: profile — mapped to settings blob
-  async saveProfile(cid, p) {
-    const db = await getDb();
-    await db.execute(
-      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-      [`v1_profile:${cid}`, JSON.stringify(p)]
-    );
-    return true;
-  },
-
-  async getProfile(cid) {
-    const db = await getDb();
-    const rows = await db.select('SELECT value FROM settings WHERE key = ?', [`v1_profile:${cid}`]);
-    if (rows.length > 0) return jsonParse(rows[0].value, { skills: {}, sessions: 0 });
-    return { skills: {}, sessions: 0 };
-  },
-
-  // V1_COMPAT: chat — uses sessions under the hood
-  async saveChat(cid, messages) {
-    return withTransaction(async (db) => {
-      // Find or create a compat session for this course
-      let sessionId;
-      const existing = await db.select(
-        "SELECT value FROM settings WHERE key = ?", [`v1_chat_session:${cid}`]
-      );
-      if (existing.length > 0) {
-        sessionId = existing[0].value;
-      } else {
-        sessionId = uuid();
-        await db.execute(
-          'INSERT INTO sessions (id, course_id, intent, status, started_at) VALUES (?, ?, \'explore\', \'active\', ?)',
-          [sessionId, cid, now()]
-        );
-        await db.execute(
-          'INSERT INTO settings (key, value) VALUES (?, ?)',
-          [`v1_chat_session:${cid}`, sessionId]
-        );
-      }
-      // Clear and rewrite messages
-      await db.execute('DELETE FROM messages WHERE session_id = ?', [sessionId]);
-      for (const msg of messages) {
-        await db.execute(
-          'INSERT INTO messages (session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?)',
-          [sessionId, msg.role, msg.content,
-           JSON.stringify({ thinking: msg.thinking, skills: msg.skills }),
-           now()]
-        );
-      }
-      return true;
-    });
-  },
-
-  async getChat(cid) {
-    const db = await getDb();
-    const existing = await db.select(
-      "SELECT value FROM settings WHERE key = ?", [`v1_chat_session:${cid}`]
-    );
-    if (existing.length === 0) return [];
-    const sessionId = existing[0].value;
-    const rows = await db.select(
-      'SELECT role, content, metadata FROM messages WHERE session_id = ? ORDER BY id', [sessionId]
-    );
-    return rows.map(r => {
-      const meta = jsonParse(r.metadata, {});
-      return { role: r.role, content: r.content, ...meta };
-    });
-  },
-
-  // V1_COMPAT: journal — uses journal_entries with compat session
-  async saveJournal(cid, entries) {
-    return withTransaction(async (db) => {
-      // Resolve session_id
-      let sessionId;
-      const existing = await db.select(
-        "SELECT value FROM settings WHERE key = ?", [`v1_chat_session:${cid}`]
-      );
-      if (existing.length > 0) {
-        sessionId = existing[0].value;
-      } else {
-        sessionId = uuid();
-        await db.execute(
-          'INSERT INTO sessions (id, course_id, intent, status, started_at) VALUES (?, ?, \'explore\', \'completed\', ?)',
-          [sessionId, cid, now()]
-        );
-        await db.execute(
-          'INSERT INTO settings (key, value) VALUES (?, ?)',
-          [`v1_chat_session:${cid}`, sessionId]
-        );
-      }
-      await db.execute(
-        "DELETE FROM journal_entries WHERE course_id = ? AND intent = 'v1_compat'", [cid]
-      );
-      for (const entry of entries) {
-        await db.execute(
-          `INSERT INTO journal_entries (session_id, course_id, intent, entry_data, created_at)
-           VALUES (?, ?, 'v1_compat', ?, ?)`,
-          [sessionId, cid, JSON.stringify(entry), entry.timestamp || now()]
-        );
-      }
-      return true;
-    });
-  },
-
-  async getJournal(cid) {
-    const db = await getDb();
-    const rows = await db.select(
-      'SELECT entry_data FROM journal_entries WHERE course_id = ? ORDER BY id', [cid]
-    );
-    return rows.map(r => jsonParse(r.entry_data)).filter(Boolean);
-  },
-
-  // V1_COMPAT: practice sets
-  async savePractice(cid, skillId, data) {
-    const db = await getDb();
-    await db.execute(
-      'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-      [`v1_practice:${cid}:${skillId}`, JSON.stringify(data)]
-    );
-    return true;
-  },
-
-  async getPractice(cid, skillId) {
-    const db = await getDb();
-    const rows = await db.select(
-      'SELECT value FROM settings WHERE key = ?', [`v1_practice:${cid}:${skillId}`]
-    );
-    if (rows.length === 0) return null;
-    return jsonParse(rows[0].value);
-  },
-
-  // V1_COMPAT: deleteCourse
-  async deleteCourse(cid) {
-    const db = await getDb();
-    // Clean up v1 compat keys from settings
-    await db.execute("DELETE FROM settings WHERE key LIKE ?", [`v1_%:${cid}%`]);
-    // CASCADE handles the rest
-    await db.execute('DELETE FROM courses WHERE id = ?', [cid]);
-    return true;
-  },
-
-  // V1_COMPAT: resetAll
-  async resetAll() {
-    return resetAll({ confirmed: true });
-  },
-};

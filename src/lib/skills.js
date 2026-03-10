@@ -1,4 +1,5 @@
-import { DB, Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments } from './db.js';
+import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints } from './db.js';
+import { computeMinHash, findNearDuplicates } from './minhash.js';
 import { callClaude, extractJSON } from './api.js';
 import { chunkDocument } from './chunker.js';
 
@@ -25,6 +26,29 @@ export const splitTextChunks = (text, limit) => {
   return pieces;
 };
 
+// --- Compute and store MinHash fingerprints for near-dedup ---
+// Two calling conventions:
+//   computeAndStoreFingerprints(materialId)         — loads content from DB
+//   computeAndStoreFingerprints(materialId, chunks)  — uses provided [{id, content}]
+export const computeAndStoreFingerprints = async (materialId, chunks) => {
+  // If no chunks provided, load from DB (V1 path — content already flushed)
+  if (!chunks) {
+    chunks = await Chunks.getByMaterial(materialId);
+  }
+  const items = [];
+  for (const ch of chunks) {
+    const content = ch.content || '';
+    if (!content) continue;
+    const result = computeMinHash(content);
+    if (!result) continue; // too short or empty
+    items.push({ chunkId: ch.id, minhashSig: result.signature, shingleCount: result.shingleCount });
+  }
+  if (items.length > 0) {
+    await ChunkFingerprints.createBatch(items);
+  }
+  return items.length;
+};
+
 // --- Store parsed file as chunked material ---
 // Returns material metadata object with chunks array.
 //
@@ -32,7 +56,7 @@ export const splitTextChunks = (text, limit) => {
 //   1. v2 structured (EPUB, DOCX with _structured) → chunkDocument → Chunks.createBatch
 //      Content is stored directly in chunks table. No _pendingDocs.
 //   2. v1 fallback (TXT, PPTX, CSV, etc.) → simple chunk creation with _pendingDocs
-//      Requires caller to flush via DB.saveDoc after saveCourses.
+//      Requires caller to flush via Chunks.updateContent after saveCoursesNested.
 
 export const storeAsChunks = async (courseId, file, docIdPrefix) => {
   // --- V2 path: file has structured parser output ---
@@ -55,6 +79,10 @@ export const storeAsChunks = async (courseId, file, docIdPrefix) => {
 
     // Batch insert to v2 chunks table (content included — no _pendingDocs needed)
     const chunkIds = await Chunks.createBatch(chunks);
+
+    // Compute and store MinHash fingerprints for near-dedup detection
+    const fpChunks = chunks.map((ch, i) => ({ id: chunkIds[i], content: ch.content }));
+    try { await computeAndStoreFingerprints(matId, fpChunks); } catch (e) { console.warn('[MinHash] Fingerprint storage failed:', e); }
 
     // Build v1-compat metadata shape for App.jsx
     const mat = {
@@ -119,7 +147,7 @@ export const getMatContent = async (courseId, mat) => {
     const dbChunks = await Chunks.getByMaterial(mat.id);
     if (dbChunks.length > 0 && dbChunks[0].content) {
       // v2 chunks have content stored inline.
-      // v1 chunks may have JSON-wrapped content from DB.saveDoc — detect and unwrap.
+      // v1 chunks may have JSON-wrapped content — detect and unwrap.
       const allChunks = dbChunks.map(ch => {
         let text = ch.content || '';
         // Unwrap v1 JSON-encoded content: {"content":"..."}
@@ -138,20 +166,25 @@ export const getMatContent = async (courseId, mat) => {
       return { content: fullText, chunks: allChunks };
     }
 
-    // v1 fallback: content stored separately via DB.saveDoc / DB.getDoc
+    // v1 fallback: content stored separately via Chunks.updateContent
     const allChunks = [];
     let fullText = "";
     for (const ch of mat.chunks) {
-      const doc = await DB.getDoc(courseId, ch.id);
-      const text = doc?.content || "";
+      const raw = await Chunks.getContent(ch.id);
+      let text = raw || '';
+      if (text.startsWith('{')) {
+        try { const parsed = JSON.parse(text); if (parsed.content) text = parsed.content; } catch { /* ignored */ }
+      }
       allChunks.push({ id: ch.id, label: ch.label, content: text, charCount: text.length, status: ch.status });
       fullText += text + "\n";
     }
     return { content: fullText.trim(), chunks: allChunks };
   }
   // Legacy: flat doc storage
-  const doc = await DB.getDoc(courseId, mat.id);
-  if (!doc) return { content: "", chunks: [] };
+  const raw = await Chunks.getContent(mat.id);
+  if (!raw) return { content: "", chunks: [] };
+  let doc;
+  try { doc = JSON.parse(raw); } catch { return { content: raw, chunks: [{ id: mat.id, label: mat.name, content: raw, charCount: raw.length, status: "pending" }] }; }
   if (doc.chapters) {
     const legacyChunks = doc.chapters.map((ch, i) => ({
       id: mat.id + "-legacy-" + i, label: ch.title || "Chapter " + (i + 1),
@@ -159,7 +192,7 @@ export const getMatContent = async (courseId, mat) => {
     }));
     return { content: doc.chapters.map(ch => ch.content).join("\n"), chunks: legacyChunks };
   }
-  return { content: doc.content || "", chunks: [{ id: mat.id, label: mat.name, content: doc.content || "", charCount: (doc.content || "").length, status: "pending" }] };
+  return { content: doc.content || raw, chunks: [{ id: mat.id, label: mat.name, content: doc.content || raw, charCount: (doc.content || raw).length, status: "pending" }] };
 };
 
 // --- Document Verification ---
@@ -299,7 +332,7 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
 // V2 Skill Loading & Extraction Integration
 // ============================================================
 
-import { extractCourse, enrichFromMaterial } from './extraction.js';
+import { extractCourse, enrichFromMaterial, extractChaptersOnly, groupChunksByChapter } from './extraction.js';
 
 /**
  * Load skills from v2 tables with resolved prerequisites and mastery.
@@ -370,6 +403,7 @@ export const loadSkillsV2 = async (courseId) => {
         lastReviewAt: mastery.last_review_at,
         nextReviewAt: mastery.next_review_at,
         totalMasteryPoints: mastery.total_mastery_points,
+        lastRating: mastery.last_rating || null,
       } : null,
 
       // Metadata
@@ -390,7 +424,22 @@ export const loadSkillsV2 = async (courseId) => {
  * - No existing skills for this course → extractCourse (full extraction)
  * - Existing skills for this course → enrichFromMaterial (merge by concept key)
  */
-export const runExtractionV2 = async (courseId, materialId, callbacks) => {
+/**
+ * Determine which chapters are already fully processed (all chunks extracted or failed).
+ * Used to build skipChapters set for first-extraction retry.
+ */
+function getAlreadyExtractedChapters(chunks) {
+  const groups = groupChunksByChapter(chunks);
+  const skip = new Set();
+  for (const g of groups) {
+    if (g.chunks.every(c => c.status === 'extracted' || c.status === 'failed')) {
+      skip.add(g.chapter);
+    }
+  }
+  return skip;
+}
+
+export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNearDedupCheck = false } = {}) => {
   const { onStatus, onNotif, onChapterComplete } = callbacks;
 
   try {
@@ -412,35 +461,124 @@ export const runExtractionV2 = async (courseId, materialId, callbacks) => {
       }
     }
 
+    // --- Near-dedup check (MinHash) ---
+    if (!skipNearDedupCheck) {
+      try {
+        const newFingerprints = await ChunkFingerprints.getByMaterial(materialId);
+        if (newFingerprints.length > 0) {
+          const courseFingerprints = await ChunkFingerprints.getByCourse(courseId);
+          const existingFps = courseFingerprints.filter(fp =>
+            !newFingerprints.some(nf => nf.chunk_id === fp.chunk_id)
+          );
+
+          if (existingFps.length > 0) {
+            const dupMatches = findNearDuplicates(newFingerprints, existingFps, 0.7);
+            const dupChunkIds = new Set(dupMatches.map(m => m.newChunkId));
+
+            if (dupChunkIds.size === newFingerprints.length) {
+              // Resolve existing chunk IDs → material names for UI
+              const existingChunkIds = [...new Set(dupMatches.map(m => m.existingChunkId))];
+              const chunkToMat = {};
+              for (const cid of existingChunkIds) {
+                const ch = await Chunks.getById(cid);
+                if (ch) chunkToMat[cid] = ch.material_id;
+              }
+              const matIds = [...new Set(Object.values(chunkToMat))];
+              const matNames = {};
+              for (const mid of matIds) {
+                const mat = await Materials.getById(mid);
+                if (mat) matNames[mid] = mat.label || mat.name || mid;
+              }
+
+              // Group matches by existing material
+              const byMat = {};
+              for (const m of dupMatches) {
+                const mid = chunkToMat[m.existingChunkId] || 'unknown';
+                if (!byMat[mid]) byMat[mid] = { sims: [], chunks: new Set() };
+                byMat[mid].sims.push(m.similarity);
+                byMat[mid].chunks.add(m.newChunkId);
+              }
+
+              const dupSummary = {
+                materials: Object.entries(byMat).map(([mid, data]) => ({
+                  materialId: mid,
+                  materialName: matNames[mid] || 'Unknown material',
+                  matchingChunks: data.chunks.size,
+                  totalNewChunks: newFingerprints.length,
+                  avgSimilarity: Math.round((data.sims.reduce((a, b) => a + b, 0) / data.sims.length) * 100),
+                })),
+                totalMatching: dupChunkIds.size,
+                totalNew: newFingerprints.length,
+              };
+
+              return {
+                success: false,
+                totalSkills: 0,
+                needsUserDecision: true,
+                nearDuplicates: dupMatches,
+                dupSummary,
+                issues: [],
+              };
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[MinHash] Near-dedup check failed, proceeding with extraction:', e);
+      }
+    }
+
+    // Filter to only unfinished chunks
+    const unfinishedChunks = newChunks.filter(c => c.status === 'pending' || c.status === 'error');
+
+    if (unfinishedChunks.length === 0) {
+      onNotif('info', 'All sections already processed.');
+      return { success: true, totalSkills: 0, skipped: true, issues: [] };
+    }
+
     const existingV2 = await SubSkills.getByCourse(courseId);
 
     let result;
 
     if (existingV2.length > 0) {
-      // --- Course already has skills: enrich with identity matching ---
-      // Handles both re-uploading the same material AND uploading a new one.
-      // enrichFromMaterial extracts from the new material then merges by concept
-      // key against this course's existing skills — matching concepts are enhanced,
-      // genuinely new concepts are added as new SubSkills.
-      onStatus('Enriching existing skills with new material...');
-      result = await enrichFromMaterial(courseId, materialId, {
+      // --- Course has skills: chapter-level extraction on ONLY unfinished chunks ---
+      // Uses identity matching against existing skills (merge by conceptKey).
+      onStatus('Retrying unfinished sections...');
+      const chapterGroups = groupChunksByChapter(unfinishedChunks);
+      result = await extractChaptersOnly(courseId, materialId, chapterGroups, existingV2, {
         onProgress: onStatus,
+        onChapterComplete: (chapter, count) => {
+          onNotif('skill', `Chapter ${chapter}: ${count} skills`);
+          onChapterComplete?.(chapter, count);
+        },
       });
-      const totalSkills = result.totalSkills ?? ((result.enriched || 0) + (result.newSkills || 0));
       if (result.issues?.length > 0) {
         const errors = result.issues.filter(i => i.type.includes('fail') || i.type.includes('error'));
         for (const e of errors) {
           onNotif('error', `Extraction issue: ${e.type}${e.error ? ' - ' + e.error : ''}`);
         }
       }
-      onNotif('success', `Enrichment: ${result.enriched || 0} enriched, ${result.newSkills || 0} new.`);
-      return { success: true, totalSkills, issues: result.issues || [] };
+      if (result.totalSkills > 0) {
+        onNotif('success', `Retry: ${result.totalSkills} skills from ${result.chapters?.length || 0} chapters.`);
+      } else {
+        onNotif('warn', 'Retry completed but no new skills extracted.');
+      }
+      // --- Concept link generation (non-blocking) ---
+      if (result.createdSkillIds?.length > 0) {
+        try {
+          const { generateConceptLinks } = await import('./conceptLinks.js');
+          const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
+          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} links created`);
+        } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
+      }
+      return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
 
     } else {
-      // --- First extraction for this course ---
+      // --- First extraction for this course (or retry with no existing skills) ---
       onStatus('Running full skill extraction...');
+      const skipChapters = getAlreadyExtractedChapters(newChunks);
       result = await extractCourse(courseId, materialId, {
         onProgress: onStatus,
+        skipChapters,
         onChapterComplete: (chapter, count) => {
           onNotif('skill', `Chapter ${chapter}: ${count} skills extracted`);
           onChapterComplete?.(chapter, count);
@@ -456,6 +594,14 @@ export const runExtractionV2 = async (courseId, materialId, callbacks) => {
         onNotif('success', `Extracted ${result.totalSkills} skills from ${result.chapters?.length || 0} chapters.`);
       } else {
         onNotif('error', 'No skills extracted. Check material content and try again.');
+      }
+      // --- Concept link generation (non-blocking) ---
+      if (result.createdSkillIds?.length > 0) {
+        try {
+          const { generateConceptLinks } = await import('./conceptLinks.js');
+          const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
+          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} links created`);
+        } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
       }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
     }
