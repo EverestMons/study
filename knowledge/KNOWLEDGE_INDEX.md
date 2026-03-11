@@ -1,6 +1,6 @@
 # study — Knowledge Index
 **Maintained By:** Study Documentation Analyst
-**Last Updated:** 2026-03-10 (post Character Sheet Profile Phases 1-3)
+**Last Updated:** 2026-03-11 (post Materials Grid Redesign + Hardening Pass)
 
 ---
 
@@ -59,6 +59,9 @@ knowledge/
 | `profile-removal-audit-2026-03-08.md` | 2026-03-08 | Study Systems Analyst | Profile blob removal audit — traces all v1 profile read/write paths, confirms safe deletion. |
 | `character-sheet-profile-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Character sheet profile architecture — hero view layout (XP bar, top-3 parents, domain grouping), domain drill-down (parent cards, sub-skill expansion, category headers), data flow from existing FSRS mastery. |
 | `parent-level-ai-context-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Parent-level AI context blueprint — `buildDomainProficiency()` helper spec, 6 integration points in buildContext/buildFocusedContext, cross-course aggregation, top-8 cap, ~80-120 token budget, performance analysis. |
+| `performance-hardening-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Performance hardening blueprint — P1 context value memoization, P2 batch profile queries, P3 request deduplication, P4 extractJSON early exit. |
+| `stability-hardening-v2-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Stability hardening v2 blueprint — T1 isApiError helper + call site audit, T2 DB backup before resetAll, T4 stream truncation marker. |
+| `materials-grid-redesign-2026-03-11.md` | 2026-03-11 | Study Systems Analyst | Materials grid redesign blueprint — grouped 3-col grid with collapsible type sections, compact cards with status dots, expand-in-place detail view. Reuse pattern documented for other screens. |
 
 ## Development
 
@@ -116,6 +119,10 @@ knowledge/
 | `character-sheet-testing-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Character Sheet Phase 1 QA — hero view rendering, domain grouping, drill-down navigation, sub-skill expansion, data accuracy. PASS. |
 | `domain-drilldown-testing-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Character Sheet Phase 2 QA — sort toggle, course attribution, empty domain guard, cross-domain navigation. 12 tests, all PASS. 2 bugs found and fixed (domainSort reset, cross-domain concept link click). |
 | `phase3-parent-ai-context-testing-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Character Sheet Phase 3 QA — buildDomainProficiency helper, early return, cross-course aggregation, level formula, readiness calculation, output format, all 6 insertion points, performance. 13 tests, all PASS. |
+| `security-verification-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | CSP verification — CSP active, no violations during app startup/API calls/OCR/folder import. PASS. |
+| `performance-verification-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Performance verification — context memoization, batch profile queries, request dedup, extractJSON early exit. PASS. |
+| `stability-verification-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Stability verification — isApiError audit, DB backup on reset, stream truncation marker. PASS. |
+| `hardening-sweep-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Full regression sweep post-hardening — 8/8 PASS (upload, study, profile, materials, OCR, practice, settings, build). |
 
 ## Design
 
@@ -128,6 +135,7 @@ knowledge/
 | `near-dedup-ux-2026-03-10.md` | 2026-03-10 | Study UX Designer | MinHash LSH near-dedup UX design — user-facing near-duplicate detection presentation. |
 | `character-sheet-profile-2026-03-10.md` | 2026-03-10 | Study UX Designer | Character sheet profile UX design — hero view layout (XP bar, top-3 parents, domain grouping), domain drill-down (sort toggle, course attribution, sub-skill detail). |
 | `domain-drilldown-2026-03-10.md` | 2026-03-10 | Study UX Designer | Character Sheet Phase 2 domain drill-down design — sort toggle enhancement, course attribution on parent cards, empty domain guard. 3 enhancements specified. |
+| `materials-grid-ux-2026-03-11.md` | 2026-03-11 | Study UX Designer | Materials grid redesign UX direction — progressive disclosure, spatial grouping by type, compact 3-col cards, expand-in-place interaction model. |
 
 ## Design — Validation
 
