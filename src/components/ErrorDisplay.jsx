@@ -4,10 +4,12 @@ import { resetAll } from "../lib/db.js";
 import { useStudy } from "../StudyContext.jsx";
 
 export default function ErrorDisplay() {
+  const ctx = useStudy();
+  if (!ctx) return null;
   const {
     asyncError, setAsyncError, showAsyncNuclear, setShowAsyncNuclear,
     screen, active, sessionMode, addNotif, setScreen,
-  } = useStudy();
+  } = ctx;
 
   const report = [
     "STUDY ASYNC ERROR",

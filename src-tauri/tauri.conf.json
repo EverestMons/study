@@ -22,7 +22,7 @@
     ],
     "withGlobalTauri": true,
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src https://api.anthropic.com https://tessdata.projectnaptha.com https://cdn.jsdelivr.net; img-src 'self' data: blob:; worker-src 'self' blob:; font-src 'self' data:"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src ipc: http://ipc.localhost https://api.anthropic.com https://tessdata.projectnaptha.com https://cdn.jsdelivr.net; img-src 'self' data: blob: asset: https://asset.localhost; worker-src 'self' blob:; font-src 'self' data:"
     }
   },
   "bundle": {
