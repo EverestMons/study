@@ -41,7 +41,7 @@ export default function StudyScreen() {
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <button onClick={async () => {
             if (sessionMode || pickerData || chunkPicker || practiceMode) {
-              setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false);
+              setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false); setMsgs([]); setInput("");
             } else if (msgs.length > 1 && sessionStartTime.current) {
               const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
               const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
