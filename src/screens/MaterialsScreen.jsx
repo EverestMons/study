@@ -31,7 +31,7 @@ export default function MaterialsScreen() {
 
   var [materialFilter, setMaterialFilter] = React.useState("all");
   var [expandedCard, setExpandedCard] = React.useState(null);
-  var [collapsedGroups, setCollapsedGroups] = React.useState(new Set());
+  var [collapsedGroups, setCollapsedGroups] = React.useState("__init__");
 
   // Bucket materials by state
   var tabCounts = { all: 0, ready: 0, attention: 0, failed: 0 };
@@ -55,9 +55,9 @@ export default function MaterialsScreen() {
   });
 
   // Group filtered materials by classification
-  var CLS_ORDER = ["textbook", "slides", "lecture_transcript", "assignment", "notes", "syllabus"];
-  var CLS_LABELS = { textbook: "Textbooks", slides: "Lecture Slides", lecture_transcript: "Transcripts", assignment: "Assignments", notes: "Notes", syllabus: "Syllabi", other: "Other" };
-  var CLS_ABBR = { textbook: "Tb", assignment: "As", notes: "Nt", lecture_transcript: "Tr", slides: "Sl", syllabus: "Sy" };
+  var CLS_ORDER = ["textbook", "slides", "lecture", "assignment", "notes", "syllabus", "reference"];
+  var CLS_LABELS = { textbook: "Textbooks", slides: "Lecture Slides", lecture: "Lectures", assignment: "Assignments", notes: "Notes", syllabus: "Syllabi", reference: "References", other: "Other" };
+  var CLS_ABBR = { textbook: "Tb", assignment: "As", notes: "Nt", lecture: "Lc", slides: "Sl", syllabus: "Sy", reference: "Rf" };
   var groupedMats = {};
   for (var _fm of filteredMats) {
     var _cls = _fm.classification || "other";
@@ -67,6 +67,14 @@ export default function MaterialsScreen() {
   var groupOrder = CLS_ORDER.filter(c => groupedMats[c]?.length > 0);
   var otherKeys = Object.keys(groupedMats).filter(k => !CLS_ORDER.includes(k));
   if (otherKeys.length > 0) groupOrder.push(...otherKeys);
+
+  // Initialize all groups as collapsed on first render
+  if (collapsedGroups === "__init__" && groupOrder.length > 0) {
+    collapsedGroups = new Set(groupOrder);
+    setCollapsedGroups(collapsedGroups);
+  } else if (collapsedGroups === "__init__") {
+    collapsedGroups = new Set();
+  }
 
   React.useEffect(() => {
     if (materialFilter !== "all" && tabCounts[materialFilter] === 0) setMaterialFilter("all");
@@ -338,7 +346,7 @@ export default function MaterialsScreen() {
         <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
 
         {/* Upload area */}
-        <div style={{ marginBottom: 24 }}>
+        <div style={{ marginBottom: 24, maxWidth: 280 }}>
           <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={onDrop} onClick={() => fiRef.current?.click()}
             style={{ border: "2px dashed " + (drag ? T.ac : T.bd), borderRadius: 12, padding: "20px", textAlign: "center", cursor: "pointer", background: drag ? T.acS : "transparent" }}>
             <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.pptx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
