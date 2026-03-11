@@ -140,7 +140,11 @@ export function StudyProvider({ children, setErrorCtx }) {
   // --- Material Processing State ---
   const getMaterialState = (mat) => {
     const chunks = mat.chunks || [];
-    if (chunks.length === 0) return "reading";
+    if (chunks.length === 0) {
+      // Only show "reading" if this material is actively being processed
+      // Otherwise it's just queued/waiting — don't show a fake loading animation
+      return processingMatId === mat.id ? "reading" : "queued";
+    }
 
     const total = chunks.length;
     const extracted = chunks.filter(c => c.status === "extracted").length;

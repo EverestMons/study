@@ -158,6 +158,7 @@ export default function MaterialsScreen() {
           if (hasOcr) { var _cs = chunks.map(c => { try { var m = c.structuralMetadata || c.structural_metadata; if (typeof m === 'string') m = JSON.parse(m); return m?.ocr_confidence; } catch { return null; } }).filter(v => v != null); if (_cs.length) _ocrAvg = _cs.reduce((a, b) => a + b, 0) / _cs.length; }
           const lowOcrConf = hasOcr && _ocrAvg < 50;
           const isProcessing = matState === "reading" || matState === "analyzing" || matState === "extracting";
+          const isQueued = matState === "queued";
           const isReady = matState === "ready";
           const isError = matState === "critical_error";
           const isIncomplete = matState === "incomplete" || matState === "partial";
@@ -166,6 +167,7 @@ export default function MaterialsScreen() {
 
           // Status badge config
           const badges = {
+            queued: { bg: T.bg, color: T.txM, label: "Queued", icon: "◦" },
             reading: { bg: T.acS, color: T.ac, label: "Reading file...", dot: true },
             analyzing: { bg: T.acS, color: T.ac, label: "Analyzing content...", dot: true },
             extracting: { bg: T.acS, color: T.ac, label: "Finding skills...", dot: true },
@@ -177,7 +179,7 @@ export default function MaterialsScreen() {
           const badge = badges[matState] || badges.analyzing;
 
           return (
-            <div key={mat.id} style={{ background: T.sf, borderRadius: 14, marginBottom: 12, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : isIncomplete ? T.am + "40" : isError ? T.rd + "40" : T.bd), transition: "border-color 0.2s ease" }}>
+            <div key={mat.id} style={{ background: T.sf, borderRadius: 14, marginBottom: 12, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : isQueued ? T.bd : isIncomplete ? T.am + "40" : isError ? T.rd + "40" : T.bd), transition: "border-color 0.2s ease" }}>
               {/* Card Header */}
               <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 14 }}>
                 {/* Type icon */}
@@ -204,6 +206,17 @@ export default function MaterialsScreen() {
                 </div>
               </div>
 
+              {/* Card Body -- Queued (waiting, not actively processing) */}
+              {isQueued && (
+                <div style={{ padding: "14px 18px 16px", borderTop: "1px solid " + T.bd }}>
+                  <div style={{ fontSize: 12, color: T.txM, lineHeight: 1.5 }}>Waiting to process — will start after current material finishes.</div>
+                  <button onClick={() => removeMat(mat.id)}
+                    style={{ marginTop: 10, padding: "6px 14px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 11, cursor: "pointer" }}>
+                    Remove
+                  </button>
+                </div>
+              )}
+
               {/* Card Body -- Processing states */}
               {isProcessing && (
                 <div style={{ padding: "14px 18px 16px", borderTop: "1px solid " + T.bd }}>
@@ -215,10 +228,16 @@ export default function MaterialsScreen() {
                       <div style={{ height: "100%", borderRadius: 2, background: T.ac, transition: "width 0.4s ease", width: progress + "%" }} />
                     )}
                   </div>
-                  <div style={{ fontSize: 12, color: T.txD, lineHeight: 1.5 }}>
-                    {matState === "reading" && "Reading and parsing document..."}
-                    {matState === "analyzing" && "Analyzing " + chunks.length + " section" + (chunks.length !== 1 ? "s" : "") + "..."}
-                    {matState === "extracting" && <span>Extracting skills... <span style={{ color: T.ac, fontWeight: 600 }}>{trust.skillCount} found</span></span>}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 12, color: T.txD, lineHeight: 1.5 }}>
+                      {matState === "reading" && "Reading and parsing document..."}
+                      {matState === "analyzing" && "Analyzing " + chunks.length + " section" + (chunks.length !== 1 ? "s" : "") + "..."}
+                      {matState === "extracting" && <span>Extracting skills... <span style={{ color: T.ac, fontWeight: 600 }}>{trust.skillCount} found</span></span>}
+                    </div>
+                    <button onClick={() => { extractionCancelledRef.current = true; setProcessingMatId(null); setStatus(""); addNotif("warn", "Stopped processing " + mat.name); }}
+                      style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid " + T.rd + "60", background: "transparent", color: T.rd, fontSize: 11, fontWeight: 500, cursor: "pointer", flexShrink: 0 }}>
+                      Stop
+                    </button>
                   </div>
                   {/* Emerging stats */}
                   {chunks.length > 0 && (
