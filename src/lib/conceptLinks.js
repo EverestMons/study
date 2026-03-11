@@ -1,5 +1,5 @@
 import { SubSkills, ConceptLinks } from './db.js';
-import { callClaude, extractJSON } from './api.js';
+import { callClaude, extractJSON, isApiError } from './api.js';
 
 // --- Prompt builder ---
 
@@ -81,7 +81,7 @@ export async function generateConceptLinks(courseId, newSkillIds, options = {}) 
       const { system, user } = buildPrompt(parentNewSkills, existingSkills);
       const response = await callClaude(system, [{ role: 'user', content: user }], 4096, true);
 
-      if (typeof response === 'string' && response.startsWith('Error:')) {
+      if (isApiError(response)) {
         stats.issues.push({ parentId, error: response });
         continue;
       }

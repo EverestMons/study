@@ -3,6 +3,7 @@ import { T } from "../../lib/theme.jsx";
 import { CLS } from "../../lib/classify.js";
 import { loadCoursesNested, saveCoursesNested } from "../../lib/db.js";
 import { runExtractionV2 } from "../../lib/skills.js";
+import FolderPickerModal from "../FolderPickerModal.jsx";
 import { useStudy } from "../../StudyContext.jsx";
 
 export default function MaterialsPanel() {
@@ -19,6 +20,7 @@ export default function MaterialsPanel() {
     addNotif,
     onDrop, onSelect, classify, removeF,
     addMats, removeMat,
+    importFromFolder, confirmFolderImport, folderImportData, setFolderImportData,
   } = useStudy();
 
   if (!showManage) return null;
@@ -34,6 +36,12 @@ export default function MaterialsPanel() {
             <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.pptx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
             <div style={{ fontSize: 13, color: T.txD }}>+ Add materials (drop or click)</div>
           </div>
+          <button onClick={importFromFolder}
+            style={{ width: "100%", background: "transparent", border: "1px solid " + T.bd, color: T.txD, borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer", marginTop: 8, transition: "all 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; }}>
+            Import from Folder
+          </button>
           {files.length > 0 && (
             <div style={{ marginTop: 12 }}>
               {files.map(f => (
@@ -181,6 +189,13 @@ export default function MaterialsPanel() {
           );
         })}
       </div>
+      {folderImportData && (
+        <FolderPickerModal
+          folderData={folderImportData}
+          onImport={confirmFolderImport}
+          onClose={() => setFolderImportData(null)}
+        />
+      )}
     </div>
   );
 }

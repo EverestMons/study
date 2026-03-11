@@ -1,6 +1,6 @@
 import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints } from './db.js';
 import { computeMinHash, findNearDuplicates } from './minhash.js';
-import { callClaude, extractJSON } from './api.js';
+import { callClaude, extractJSON, isApiError } from './api.js';
 import { chunkDocument } from './chunker.js';
 
 // --- Character budget per chunk (~25k tokens ~ 100k chars) ---
@@ -232,6 +232,9 @@ export const verifyDocument = async (courseId, mat) => {
   const verifyPrompt = "You are verifying a document uploaded by a student. Read it carefully and produce a verification report.\n\nDOCUMENT:\n" + contentPreview + "\n\nIMPORTANT CONTEXT:\n- Spreadsheet files (.xlsx, .csv) will appear as tab-separated values. This is normal and expected -- not garbled.\n- Subtitle files (.srt, .vtt) will appear as plain text with timestamps stripped. This is normal.\n- Documents with dates as numbers like 46035 have already been converted where possible.\n- Focus on whether the ACADEMIC CONTENT is present and readable, not formatting aesthetics.\n\nRespond with ONLY a JSON object:\n{\n  \"status\": \"verified\" or \"partial\" or \"error\",\n  \"summary\": \"2-3 sentence summary -- be specific about topics, dates, names, structure\",\n  \"keyItems\": [\"key items: assignments, dates, topics, terms\"],\n  \"issues\": [\"actual problems: missing content, unreadable sections, binary garbage\"],\n  \"questions\": [\"clarifying questions about genuinely ambiguous content\"]\n}\n\nRules:\n- verified = content is present and readable enough to teach from\n- partial = most content readable but some sections genuinely missing or corrupted\n- error = content is fundamentally unreadable or empty\n- Tab-separated data from spreadsheets is NOT an issue\n- Be specific in the summary\n- Don't flag formatting differences as issues";
 
   const result = await callClaude(verifyPrompt, [{ role: "user", content: "Verify this document extraction." }], 8192, true);
+  if (isApiError(result)) {
+    console.warn("[verifyDocumentExtraction] API error:", result);
+  }
   const parsed = extractJSON(result);
   if (parsed) return parsed;
   // API failed or returned unparseable response — don't falsely mark as verified
@@ -280,6 +283,10 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
   const asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + skillList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
 
   const result = await callClaude(asgnPrompt, [{ role: "user", content: "Decompose all assignments into skill requirements." }], 16384, true);
+  if (isApiError(result)) {
+    console.warn("[decomposeAssignments] API error:", result);
+    return;
+  }
   const asgn = extractJSON(result);
 
   if (asgn && Array.isArray(asgn)) {

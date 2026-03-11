@@ -9,10 +9,29 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://api.anthropic.com/**" }
+        { "url": "https://api.anthropic.com/**" },
+        { "url": "https://tessdata.projectnaptha.com/**" }
       ]
     },
     "sql:default",
-    "sql:allow-execute"
+    "sql:allow-execute",
+    "dialog:default",
+    "dialog:allow-open",
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "**" }]
+    },
+    {
+      "identifier": "fs:allow-copy-file",
+      "allow": [{ "path": "$APPDATA/*" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$APPDATA/study.db.backup.*" }]
+    }
   ]
 }

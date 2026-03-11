@@ -1,8 +1,21 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
-import { getApiKey, setApiKey, getDb } from "../lib/db.js";
+import { getApiKey, setApiKey, getDb, getSetting, setSetting } from "../lib/db.js";
 import { testApiKey } from "../lib/api.js";
 import { useStudy } from "../StudyContext.jsx";
+
+const OCR_LANGS = [
+  { code: "eng", label: "English", locked: true },
+  { code: "spa", label: "Spanish" },
+  { code: "fra", label: "French" },
+  { code: "deu", label: "German" },
+  { code: "por", label: "Portuguese" },
+  { code: "ita", label: "Italian" },
+  { code: "chi_sim", label: "Chinese (Simplified)" },
+  { code: "jpn", label: "Japanese" },
+  { code: "kor", label: "Korean" },
+  { code: "ara", label: "Arabic" },
+];
 
 export default function SettingsModal() {
   const {
@@ -11,6 +24,16 @@ export default function SettingsModal() {
     showSettings, setShowSettings, setApiKeyLoaded,
     setProfileData, addNotif,
   } = useStudy();
+
+  var [ocrLangs, setOcrLangs] = React.useState(["eng"]);
+  var [ocrLangsLoaded, setOcrLangsLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    getSetting("ocr_languages").then(v => {
+      try { if (v) setOcrLangs(JSON.parse(v)); } catch {}
+      setOcrLangsLoaded(true);
+    });
+  }, []);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
@@ -60,6 +83,29 @@ export default function SettingsModal() {
             style={{ flex: 1, padding: 14, background: !apiKeyInput.trim() || keyVerifying ? T.sfH : T.ac, border: "none", borderRadius: 8, color: !apiKeyInput.trim() || keyVerifying ? T.txD : T.bg, fontWeight: 600, cursor: !apiKeyInput.trim() || keyVerifying ? "default" : "pointer" }}>
             {keyVerifying ? "Verifying..." : "Save"}
           </button>
+        </div>
+        {/* OCR Languages */}
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
+          <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>OCR Languages</div>
+          <div style={{ fontSize: 11, color: T.txM, marginBottom: 10 }}>Select languages for scanned PDF recognition. Additional languages download ~4MB of data on first use.</div>
+          {ocrLangsLoaded && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {OCR_LANGS.map(lang => {
+                var active = ocrLangs.includes(lang.code);
+                return (
+                  <button key={lang.code} onClick={async () => {
+                    if (lang.locked) return;
+                    var next = active ? ocrLangs.filter(c => c !== lang.code) : [...ocrLangs, lang.code];
+                    setOcrLangs(next);
+                    await setSetting("ocr_languages", JSON.stringify(next));
+                  }}
+                    style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid " + (active ? T.ac : T.bd), background: active ? T.acS : "transparent", color: active ? T.ac : T.txD, cursor: lang.locked ? "default" : "pointer", opacity: lang.locked ? 0.7 : 1, fontWeight: active ? 600 : 400 }}>
+                    {lang.label}{lang.locked ? " (required)" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         {/* Dev: Reset skill data */}
         <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid " + T.bd }}>

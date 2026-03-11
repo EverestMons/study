@@ -2,11 +2,13 @@ import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
 import { useStudy } from "../StudyContext.jsx";
+import FolderPickerModal from "../components/FolderPickerModal.jsx";
 
 export default function UploadScreen() {
   const {
     files, setFiles, cName, setCName, drag, setDrag, parsing,
     setScreen, setShowSettings, onDrop, onSelect, classify, removeF, createCourse, fiRef,
+    importFromFolder, confirmFolderImport, folderImportData, setFolderImportData,
   } = useStudy();
 
   const pending = files.filter(f => !f.classification);
@@ -66,6 +68,18 @@ export default function UploadScreen() {
             </div>
           )}
         </div>
+
+        {files.length === 0 && (
+          <>
+            <div style={{ fontSize: 12, color: T.txM, textAlign: "center", margin: "16px 0" }}>&mdash; or &mdash;</div>
+            <button onClick={importFromFolder}
+              style={{ width: "100%", background: "transparent", border: "1px solid " + T.bd, color: T.txD, borderRadius: 10, padding: "14px 24px", fontSize: 14, fontWeight: 500, cursor: "pointer", marginBottom: 24, transition: "all 0.15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; }}>
+              Import from Folder
+            </button>
+          </>
+        )}
 
         {files.length === 0 && (
           <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "16px 20px", marginBottom: 24, fontSize: 12, lineHeight: 1.8, color: T.txD }}>
@@ -164,6 +178,13 @@ export default function UploadScreen() {
         )}
       </div>
       </div>
+      {folderImportData && (
+        <FolderPickerModal
+          folderData={folderImportData}
+          onImport={confirmFolderImport}
+          onClose={() => setFolderImportData(null)}
+        />
+      )}
     </div>
   );
 }

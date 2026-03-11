@@ -83,7 +83,7 @@ export async function chunkDocument(parsed, { materialId, courseId }) {
     headingLevel: sec.heading_level || null,
     sectionPath: sec.section_path || String(i + 1),
     structuralMetadata: sec.structural_metadata || null,
-    fidelity: 'full',
+    fidelity: parsed._ocrUsed ? 'low' : 'full',
     pageStart: sec.source_pages?.start || null,
     pageEnd: sec.source_pages?.end || null,
     ordering: i,

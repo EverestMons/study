@@ -14,6 +14,10 @@ const initTauriFetch = async () => {
   }
 };
 
+// --- Error Detection ---
+export const isApiError = (response) =>
+  typeof response === 'string' && response.startsWith('Error:');
+
 // --- Model Constants ---
 export const MODEL_SONNET = "claude-sonnet-4-20250514";
 export const MODEL_HAIKU = "claude-haiku-4-5-20251001";
@@ -47,10 +51,12 @@ export const callClaude = async (system, messages, maxTokens, useHaiku = false) 
     const d = await r.json();
     if (d.error) throw new Error(d.error.message);
     // Check if response was truncated
+    let text = d.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
     if (d.stop_reason === "max_tokens") {
       console.warn("Response truncated due to max_tokens limit");
+      text += "\n\n[Response may be incomplete — output limit reached]";
     }
-    return d.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
+    return text;
   } catch (e) {
     console.error("API:", e);
     return "Error: " + e.message;
@@ -108,6 +114,7 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
         result = await Promise.race([readPromise, chunkTimeout]);
       } catch {
         console.warn("Stream timeout, returning partial response");
+        full += "\n\n[Response may be incomplete — connection timed out]";
         break;
       }
 
@@ -143,6 +150,7 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
     }
     if (stopReason === "max_tokens") {
       console.warn("Stream response truncated due to max_tokens limit");
+      full += "\n\n[Response may be incomplete — output limit reached]";
     }
     return full || "No response.";
   } catch (e) {
@@ -196,10 +204,11 @@ export const extractJSON = (text) => {
   if (m3) try { return JSON.parse(m3[0]); } catch { /* ignored */ }
 
   // Try to repair truncated JSON arrays by finding last complete object
+  // Cap input to 50KB and max 100 objects to prevent runaway loops
   const arrayMatch = text.match(/\[\s*\{[\s\S]*/);
   if (arrayMatch) {
     let jsonStr = arrayMatch[0];
-    // Find all complete objects (ending with })
+    if (jsonStr.length > 50000) jsonStr = jsonStr.substring(0, 50000);
     const objects = [];
     let depth = 0;
     let start = -1;
@@ -213,6 +222,7 @@ export const extractJSON = (text) => {
           try {
             const obj = JSON.parse(jsonStr.substring(start, i + 1));
             objects.push(obj);
+            if (objects.length >= 100) break;
           } catch { /* ignored */ }
           start = -1;
         }

@@ -1,4 +1,4 @@
-import { callClaude, extractJSON } from './api.js';
+import { callClaude, extractJSON, isApiError } from './api.js';
 import { CourseSchedule, CourseAssessments, Courses, Assignments } from './db.js';
 
 // --- Internal Helpers ---
@@ -194,6 +194,14 @@ export async function parseSyllabus(courseId, materialText, options = {}) {
     16384,
     true  // useHaiku
   );
+
+  if (isApiError(result)) {
+    return {
+      success: false, confidence: 'low', weeksFound: 0, assignmentsCreated: 0,
+      gradingCategories: 0, metadataBackfilled: [],
+      issues: [{ type: 'api_error', message: result, severity: 'error' }],
+    };
+  }
 
   // --- 2. Extract JSON ---
   const parsed = extractJSON(result);

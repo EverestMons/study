@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -76,6 +76,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [cName, setCName] = useState("");
   const [drag, setDrag] = useState(false);
   const [parsing, setParsing] = useState(false);
+  const [folderImportData, setFolderImportData] = useState(null);
 
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
@@ -337,7 +338,9 @@ export function StudyProvider({ children, setErrorCtx }) {
     e.preventDefault(); setDrag(false);
     const fl = Array.from(e.dataTransfer.files);
     setParsing(true);
-    const parsed = await Promise.all(fl.map(readFile));
+    var _ocrL; try { var _v = await getSetting("ocr_languages"); if (_v) _ocrL = JSON.parse(_v); } catch {}
+    const parsed = await Promise.all(fl.map(f => readFile(f, { onProgress: msg => setStatus(msg), ocrLanguages: _ocrL })));
+    for (const p of parsed) { if (p._structured?._ocrWarning) addNotif('warn', p.name + ': ' + p._structured._ocrWarning); }
     const unique = filterDuplicates(parsed);
     if (unique.length) setFiles(p => [...p, ...unique.map(f => ({
       ...f,
@@ -351,7 +354,9 @@ export function StudyProvider({ children, setErrorCtx }) {
   const onSelect = useCallback(async (e) => {
     const fl = Array.from(e.target.files);
     setParsing(true);
-    const parsed = await Promise.all(fl.map(readFile));
+    var _ocrL; try { var _v = await getSetting("ocr_languages"); if (_v) _ocrL = JSON.parse(_v); } catch {}
+    const parsed = await Promise.all(fl.map(f => readFile(f, { onProgress: msg => setStatus(msg), ocrLanguages: _ocrL })));
+    for (const p of parsed) { if (p._structured?._ocrWarning) addNotif('warn', p.name + ': ' + p._structured._ocrWarning); }
     const unique = filterDuplicates(parsed);
     if (unique.length) setFiles(p => [...p, ...unique.map(f => ({
       ...f,
@@ -364,6 +369,50 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   const classify = (id, c) => setFiles(p => p.map(f => f.id === id ? { ...f, classification: c } : f));
   const removeF = (id) => setFiles(p => p.filter(f => f.id !== id));
+
+  // --- Folder Import ---
+  const importFromFolder = useCallback(async () => {
+    try {
+      const { pickFolder, scanFolder } = await import("./lib/folderImport.js");
+      const lastPath = await getSetting("lastFolderPath");
+      const folderPath = await pickFolder(lastPath);
+      if (!folderPath) return;
+      const data = await scanFolder(folderPath);
+      if (data.files.length === 0 && data.unsupported.length === 0) {
+        addNotif("warn", "No files found in selected folder.");
+        return;
+      }
+      await setSetting("lastFolderPath", folderPath);
+      setFolderImportData(data);
+    } catch (e) {
+      console.error("[folderImport] Scan failed:", e);
+      addNotif("error", "Could not read folder: " + (e.message || "unknown error"));
+    }
+  }, []);
+
+  const confirmFolderImport = useCallback(async (selectedFiles) => {
+    setFolderImportData(null);
+    setParsing(true);
+    try {
+      const subfolderByName = new Map(selectedFiles.map(f => [f.name, f.subfolder]));
+      const { readSelectedFiles } = await import("./lib/folderImport.js");
+      const browserFiles = await readSelectedFiles(selectedFiles);
+      var _ocrL; try { var _v = await getSetting("ocr_languages"); if (_v) _ocrL = JSON.parse(_v); } catch {}
+      const parsed = await Promise.all(browserFiles.map(f => readFile(f, { onProgress: msg => setStatus(msg), ocrLanguages: _ocrL })));
+      for (const p of parsed) { if (p._structured?._ocrWarning) addNotif('warn', p.name + ': ' + p._structured._ocrWarning); }
+      const unique = filterDuplicates(parsed);
+      if (unique.length) setFiles(p => [...p, ...unique.map(f => ({
+        ...f,
+        classification: autoClassify(f, subfolderByName.get(f.name)) || (f.type === "epub" ? "textbook" : ""),
+        parseOk: !parseFailed(f.content),
+        id: Date.now() + "-" + Math.random()
+      }))]);
+    } catch (e) {
+      console.error("[folderImport] Import failed:", e);
+      addNotif("error", "Folder import failed: " + e.message);
+    }
+    setParsing(false);
+  }, [files, active]);
 
   // --- Course Creation ---
   const createCourse = async () => {
@@ -414,6 +463,8 @@ export function StudyProvider({ children, setErrorCtx }) {
             const syllResult = await parseSyllabus(courseId, fullText, { onStatus: setStatus });
             if (syllResult.success) {
               addNotif("success", "Syllabus processed — " + syllResult.weeksFound + " weeks, " + syllResult.assignmentsCreated + " assignment(s) found.");
+              var syllChunkIds = (syllMat.chunks || []).map(c => c.id).filter(Boolean);
+              if (syllChunkIds.length) await Chunks.updateStatusBatch(syllChunkIds, "extracted");
             } else {
               addNotif("warn", "Syllabus parsed with issues: " + syllResult.issues.map(i => i.message).join("; "));
             }
@@ -424,7 +475,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         }
       }
 
-      var extractable = mats.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
+      var extractable = mats.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
       if (extractable.length > 0) {
         addNotif("success", "Course created. Processing " + extractable.length + " material(s)...");
         for (var ei = 0; ei < extractable.length; ei++) {
@@ -491,22 +542,27 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   const loadProfile = async () => {
     try {
+      // 4 bulk queries instead of ~1,150 individual queries
       const allParents = await ParentSkills.getAll();
+      const allSubs = await SubSkills.getAllActive();
+      const allMasteryRows = await Mastery.getAll();
+      const allPrereqRows = await SkillPrerequisites.getAllWithNames();
+
+      // Group in JavaScript — O(n) hash map builds
+      const subsByParent = {};
+      for (const s of allSubs) (subsByParent[s.parent_skill_id] ||= []).push(s);
+      const masteryBySkill = {};
+      for (const m of allMasteryRows) masteryBySkill[m.sub_skill_id] = m;
+      const prereqsBySkill = {};
+      for (const p of allPrereqRows) (prereqsBySkill[p.sub_skill_id] ||= []).push(p);
+
       const results = [];
       const now = new Date();
       for (const parent of allParents) {
-        const subs = await SubSkills.getByParent(parent.id);
+        const subs = subsByParent[parent.id] || [];
         if (subs.length === 0) continue;
-        const subIds = subs.map(s => s.id);
-        const masteryRows = await Mastery.getBySkills(subIds);
         const masteryMap = {};
-        for (const m of masteryRows) masteryMap[m.sub_skill_id] = m;
-
-        const prereqMap = {};
-        for (const sub of subs) {
-          const prereqs = await SkillPrerequisites.getForSkill(sub.id);
-          prereqMap[sub.id] = prereqs;
-        }
+        for (const s of subs) { if (masteryBySkill[s.id]) masteryMap[s.id] = masteryBySkill[s.id]; }
 
         let totalPoints = 0;
         let readinessSum = 0;
@@ -516,7 +572,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         let lastActivityDate = null;
 
         const enrichedSubs = subs.map(sub => {
-          const m = masteryMap[sub.id];
+          const m = masteryBySkill[sub.id];
           const fitness = typeof sub.fitness === 'string' ? JSON.parse(sub.fitness || '{}') : (sub.fitness || {});
           if (fitness.lastUsed) {
             var luDate = new Date(fitness.lastUsed);
@@ -525,7 +581,7 @@ export function StudyProvider({ children, setErrorCtx }) {
           const evidence = typeof sub.evidence === 'string' ? JSON.parse(sub.evidence || '{}') : (sub.evidence || {});
           const rawCriteria = typeof sub.mastery_criteria === 'string' ? JSON.parse(sub.mastery_criteria || '[]') : (sub.mastery_criteria || []);
           const masteryCriteria = rawCriteria.map(c => typeof c === 'string' ? { text: c, verified: false } : c);
-          const prereqs = prereqMap[sub.id] || [];
+          const prereqs = prereqsBySkill[sub.id] || [];
 
           let retrievability = 0;
           let stability = 0;
@@ -1026,6 +1082,8 @@ export function StudyProvider({ children, setErrorCtx }) {
             const syllResult = await parseSyllabus(active.id, fullText, { onStatus: setStatus });
             if (syllResult.success) {
               addNotif("success", "Syllabus processed — " + syllResult.weeksFound + " weeks, " + syllResult.assignmentsCreated + " assignment(s) found.");
+              var syllChunkIds2 = (syllMat.chunks || []).map(c => c.id).filter(Boolean);
+              if (syllChunkIds2.length) await Chunks.updateStatusBatch(syllChunkIds2, "extracted");
             } else {
               addNotif("warn", "Syllabus parsed with issues: " + syllResult.issues.map(i => i.message).join("; "));
             }
@@ -1037,7 +1095,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       }
     }
 
-    var extractable = newMeta.filter(m => m.classification !== "assignment" && (m.chunks || []).length > 0);
+    var extractable = newMeta.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
     if (extractable.length > 0) {
       addNotif("success", "Materials added. Processing " + extractable.length + " material(s)...");
       for (var ei = 0; ei < extractable.length; ei++) {
@@ -1117,8 +1175,52 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
   };
 
-  // Expose everything through context
-  const value = {
+  const retryAllFailed = async () => {
+    if (!active || globalLock) return;
+    var retryable = active.materials.filter(mat => {
+      var chunks = mat.chunks || [];
+      if (chunks.length === 0) return false;
+      return chunks.some(c => c.status === "pending" || c.status === "error");
+    });
+    if (retryable.length === 0) { addNotif("info", "No materials need retry."); return; }
+    setGlobalLock({ message: "Retrying extraction..." });
+    setBusy(true);
+    var succeeded = 0;
+    try {
+      for (var ri = 0; ri < retryable.length; ri++) {
+        var mat = retryable[ri];
+        setStatus("Retrying " + (ri + 1) + "/" + retryable.length + ": " + mat.name + "...");
+        setProcessingMatId(mat.id);
+        try {
+          await runExtractionV2(active.id, mat.id, {
+            onStatus: setStatus,
+            onNotif: addNotif,
+            onChapterComplete: (ch, cnt) => setStatus(mat.name + " — " + ch + ": " + cnt + " skills"),
+          });
+          succeeded++;
+        } catch (e) {
+          console.error("[retryAll] Failed:", mat.name, e);
+          addNotif("warn", "Retry failed for " + mat.name + ": " + e.message);
+        }
+      }
+      setProcessingMatId(null);
+      var refreshed = await loadCoursesNested();
+      var rc = refreshed.find(c => c.id === active.id);
+      if (rc) { setCourses(refreshed); setActive(rc); }
+      await refreshMaterialSkillCounts(active.id);
+      addNotif("success", "Retry complete — " + succeeded + "/" + retryable.length + " succeeded.");
+    } catch (e) {
+      console.error("[retryAll] Unexpected error:", e);
+      addNotif("error", "Retry failed: " + e.message);
+    } finally {
+      setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
+    }
+  };
+
+  // Expose everything through context — useMemo prevents re-creating the value object
+  // on every render. Only state variables are dependencies; setters, refs, useCallback
+  // handlers, and lib re-exports have stable identity and are excluded.
+  const value = useMemo(() => ({
     // State
     asyncError, setAsyncError, showAsyncNuclear, setShowAsyncNuclear,
     screen, setScreen, courses, setCourses, active, setActive, ready,
@@ -1145,17 +1247,18 @@ export function StudyProvider({ children, setErrorCtx }) {
     sessionSummary, setSessionSummary,
     sessionElapsed, setSessionElapsed, breakDismissed, setBreakDismissed,
     sidebarCollapsed, setSidebarCollapsed,
-    // Refs
+    // Refs (stable identity)
     endRef, taRef, fiRef, sessionStartIdx, sessionSkillLog,
     cachedSessionCtx, extractionCancelledRef, sessionStartTime, discussedChunks,
     // Handlers
     addNotif, getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
     timeAgo, filterDuplicates, saveSessionToJournal,
-    onDrop, onSelect, classify, removeF,
+    onDrop, onSelect, classify, removeF, importFromFolder, confirmFolderImport,
+    folderImportData, setFolderImportData,
     createCourse, quickCreateCourse, loadProfile, enterStudy,
     selectMode, bootWithFocus, sendMessage,
-    delCourse, addMats, removeMat,
-    // Re-exports from lib (used directly in screen JSX)
+    delCourse, addMats, removeMat, retryAllFailed,
+    // Re-exports from lib (stable identity)
     CLS, getApiKey, setApiKey: setApiKey, getDb, Courses,
     loadSkillsV2, runExtractionV2,
     generateSubmission, downloadBlob,
@@ -1164,7 +1267,23 @@ export function StudyProvider({ children, setErrorCtx }) {
     createPracticeSet, generateProblems, evaluateAnswer, completeTierAttempt,
     loadPracticeMaterialCtx, renderMd: null, // renderMd imported directly by screens from theme.jsx
     testApiKey,
-  };
+  }), [ // eslint-disable-line react-hooks/exhaustive-deps -- setters, refs, callbacks, and lib re-exports are stable
+    asyncError, showAsyncNuclear,
+    screen, courses, active, ready,
+    showSettings, apiKeyLoaded, apiKeyInput, keyVerifying, keyError,
+    files, cName, drag, parsing,
+    msgs, input, codeMode, exporting, busy, booting,
+    status, processingMatId, errorLogModal,
+    globalLock, lockElapsed, dupPrompt,
+    showManage, showSkills, skillViewData, expandedCats,
+    pendingConfirm, notifs, showNotifs, lastSeenNotif,
+    extractionErrors, sessionMode, focusContext,
+    pickerData, chunkPicker, asgnWork, practiceMode,
+    profileData, expandedProfile, expandedSubSkill,
+    materialSkillCounts, expandedMaterial,
+    sessionSummary, sessionElapsed, breakDismissed,
+    sidebarCollapsed, folderImportData,
+  ]);
 
   return <StudyContext.Provider value={value}>{children}</StudyContext.Provider>;
 }

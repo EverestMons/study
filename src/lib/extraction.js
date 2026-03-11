@@ -5,7 +5,7 @@
 // Deterministic post-processing. See docs/skill-extraction-v2-spec.md.
 // ============================================================
 
-import { callClaude, extractJSON } from './api.js';
+import { callClaude, extractJSON, isApiError } from './api.js';
 import {
   Chunks, SubSkills, ChunkSkillBindings, SkillPrerequisites,
   ParentSkills, Materials, withTransaction
@@ -638,6 +638,10 @@ async function wireCrossChapterPrereqs(skillsByChapter, conceptKeyToId) {
 
   // This call only sends skill names/keys, not full chapter content — very cheap
   const response = await callClaude(prompt, [{ role: 'user', content: 'Wire the prerequisites.' }], 4096, true);
+  if (isApiError(response)) {
+    issues.push({ type: 'cross_chapter_api_error', error: response });
+    return { links: [], issues };
+  }
   const parsed = extractJSON(response);
 
   if (!Array.isArray(parsed)) {
@@ -707,8 +711,7 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         true // useHaiku
       );
 
-      // Check for API error strings
-      if (typeof response === 'string' && response.startsWith('Error:')) {
+      if (isApiError(response)) {
         throw new Error(response);
       }
 
@@ -991,7 +994,7 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
     true // useHaiku
   );
 
-  if (typeof response === 'string' && response.startsWith('Error:')) {
+  if (isApiError(response)) {
     // Mark unfinished chunks as failed (increments fail_count, transitions to terminal at threshold)
     await Chunks.markFailedBatch(unfinishedChunkIds);
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_api_error', error: response }] };

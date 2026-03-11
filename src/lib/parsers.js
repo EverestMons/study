@@ -249,7 +249,7 @@ const parseXlsx = async (buf, filename) => {
 // Main entry point — reads a File object, returns parsed result
 // ============================================================
 
-export const readFile = async (file) => {
+export const readFile = async (file, options = {}) => {
   if (file.size > MAX_FILE_SIZE) {
     return {
       type: 'text', name: file.name,
@@ -345,17 +345,73 @@ export const readFile = async (file) => {
     }
   }
 
-  // --- PDF: v2 structured parser (lazy-loaded) ---
+  // --- PDF: v2 structured parser (lazy-loaded) + OCR for scanned PDFs ---
   if (ext === 'pdf') {
     try {
-      const { parsePdf } = await import('./pdfParser.js');
-      const structured = await parsePdf(await file.arrayBuffer(), file.name);
+      const { parsePdf, buildStructured } = await import('./pdfParser.js');
+      const result = await parsePdf(await file.arrayBuffer(), file.name);
 
-      if (structured._errorMessage) {
-        return { type: 'text', name: file.name, content: '[' + structured._errorMessage + ']' };
+      // Scanned PDF — auto-trigger OCR
+      if (result._needsOcr) {
+        var _langs = options.ocrLanguages || ['eng'];
+        if (options.onProgress) options.onProgress('Loading OCR engine' + (_langs.length > 1 ? ' (' + _langs.length + ' languages)' : '') + '...');
+        const { ocrPdfPages } = await import('./ocrEngine.js');
+        const ocrResult = await ocrPdfPages(result.doc, result.emptyPageNums, {
+          onProgress: (i, total, pageNum) => {
+            if (options.onProgress) options.onProgress('OCR processing page ' + pageNum + ' (' + (i + 1) + '/' + total + ')...');
+          },
+          onLangStatus: msg => { if (options.onProgress && msg) options.onProgress(msg); },
+          languages: _langs,
+        });
+
+        // Merge OCR'd text into page data (prefix low-confidence pages)
+        for (const ocrPage of ocrResult.pages) {
+          const idx = result.pageTexts.findIndex(p => p.pageNum === ocrPage.pageNum);
+          if (idx !== -1) {
+            result.pageTexts[idx].text = ocrPage.confidence < 30
+              ? '[Low confidence OCR — text may be inaccurate]\n' + ocrPage.text
+              : ocrPage.text;
+            result.pageTexts[idx].items = []; // No font-size items for OCR'd text
+          }
+        }
+
+        // Re-run heading detection + section building on merged text
+        const structured = await buildStructured(
+          result.pageTexts, result.fontSizeChars, result.numPages, result.filename, result.doc
+        );
+        structured._ocrUsed = true;
+        structured._ocrConfidence = ocrResult.avgConfidence;
+        if (ocrResult.avgConfidence < 50) {
+          structured._ocrWarning = 'OCR quality is low — text may be inaccurate. Consider using a higher-quality scan.';
+        }
+
+        // Store per-section OCR confidence in structural_metadata
+        const confByPage = {};
+        for (const p of ocrResult.pages) confByPage[p.pageNum] = p.confidence;
+        for (const sec of structured.sections) {
+          if (sec.source_pages) {
+            const confs = [];
+            for (let pg = sec.source_pages.start; pg <= sec.source_pages.end; pg++) {
+              if (confByPage[pg] !== undefined) confs.push(confByPage[pg]);
+            }
+            if (confs.length > 0) {
+              sec.structural_metadata = sec.structural_metadata || {};
+              sec.structural_metadata.ocr_confidence = Math.round(confs.reduce((s, c) => s + c, 0) / confs.length);
+            }
+          }
+        }
+
+        if (!structured.markdown.trim()) {
+          return { type: 'text', name: file.name, content: '[OCR completed but could not extract text from ' + file.name + '.]' };
+        }
+        return { type: 'text', name: file.name, content: structured.markdown, _structured: structured };
       }
 
-      if (!structured.markdown.trim()) {
+      if (result._errorMessage) {
+        return { type: 'text', name: file.name, content: '[' + result._errorMessage + ']' };
+      }
+
+      if (!result.markdown.trim()) {
         return {
           type: 'text', name: file.name,
           content: '[Could not extract text from ' + file.name + '. Try copying text manually from a PDF reader.]'
@@ -365,8 +421,8 @@ export const readFile = async (file) => {
       return {
         type: 'text',
         name: file.name,
-        content: structured.markdown,
-        _structured: structured,
+        content: result.markdown,
+        _structured: result,
       };
     } catch (e) {
       console.error('PDF parse failed:', e);

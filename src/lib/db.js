@@ -1023,6 +1023,11 @@ export const SubSkills = {
     );
   },
 
+  async getAllActive() {
+    const db = await getDb();
+    return db.select('SELECT * FROM sub_skills WHERE is_archived = 0 AND parent_skill_id IS NOT NULL');
+  },
+
   async getByCourse(courseId) {
     const db = await getDb();
     return db.select(
@@ -1324,6 +1329,16 @@ export const SkillPrerequisites = {
     );
   },
 
+  async getAllWithNames() {
+    const db = await getDb();
+    return db.select(
+      `SELECT sp.sub_skill_id, sp.prerequisite_id, ss.name, ss.concept_key, sp.source
+       FROM skill_prerequisites sp
+       JOIN sub_skills ss ON sp.prerequisite_id = ss.id
+       WHERE ss.is_archived = 0`
+    );
+  },
+
   async getDependents(prerequisiteId) {
     const db = await getDb();
     return db.select(
@@ -1452,6 +1467,11 @@ export const Mastery = {
     return db.select(
       `SELECT * FROM sub_skill_mastery WHERE sub_skill_id IN (${placeholders})`, subSkillIds
     );
+  },
+
+  async getAll() {
+    const db = await getDb();
+    return db.select('SELECT * FROM sub_skill_mastery');
   },
 
   async getDueForReview(beforeTimestamp = null) {
@@ -1755,8 +1775,16 @@ export const PracticeSets = {
  * Load all courses with nested materials and chunks.
  * Materials get v1-compat aliases (name, type, created) so existing consumers work.
  * Chunk content is NOT loaded (expensive) — use Chunks.getContent(id) on demand.
+ * Deduped: concurrent calls return the same in-flight promise.
  */
-export const loadCoursesNested = async () => {
+let _pendingCoursesLoad = null;
+export const loadCoursesNested = () => {
+  if (_pendingCoursesLoad) return _pendingCoursesLoad;
+  _pendingCoursesLoad = _loadCoursesNestedImpl().finally(() => { _pendingCoursesLoad = null; });
+  return _pendingCoursesLoad;
+};
+
+const _loadCoursesNestedImpl = async () => {
   const db = await getDb();
   const courses = await db.select('SELECT * FROM courses ORDER BY created_at DESC');
   for (const course of courses) {
@@ -1828,11 +1856,43 @@ export const saveCoursesNested = async (courses) => {
 };
 
 // ============================================================
+// Database Backup
+// ============================================================
+
+const backupDatabase = async () => {
+  try {
+    const { appDataDir } = await import('@tauri-apps/api/path');
+    const { copyFile, readDir, remove } = await import('@tauri-apps/plugin-fs');
+    const dataDir = await appDataDir();
+    const dbPath = dataDir + 'study.db';
+    const ts = new Date().toISOString().replace(/[-:]/g, '').replace('T', 'T').slice(0, 15);
+    const backupName = 'study.db.backup.' + ts;
+    await copyFile(dbPath, dataDir + backupName);
+    console.log('[DB] Backup created:', backupName);
+
+    // Keep last 3 backups, delete older ones
+    const entries = await readDir(dataDir);
+    const backups = entries
+      .filter(e => e.name && e.name.startsWith('study.db.backup.'))
+      .map(e => e.name)
+      .sort()
+      .reverse();
+    for (const old of backups.slice(3)) {
+      await remove(dataDir + old);
+      console.log('[DB] Removed old backup:', old);
+    }
+  } catch (e) {
+    console.error('[DB] Backup failed (continuing with reset):', e);
+  }
+};
+
+// ============================================================
 // Hard Reset
 // ============================================================
 
 export const resetAll = async ({ confirmed = false } = {}) => {
   if (!confirmed) throw new Error('resetAll requires explicit confirmation');
+  await backupDatabase();
   const db = await getDb();
 
   // Count what we're about to destroy (for UI confirmation + logging)

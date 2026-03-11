@@ -4,6 +4,7 @@ import { CLS } from "../lib/classify.js";
 import { loadCoursesNested, saveCoursesNested } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
+import FolderPickerModal from "../components/FolderPickerModal.jsx";
 import { useStudy } from "../StudyContext.jsx";
 
 export default function MaterialsScreen() {
@@ -24,7 +25,43 @@ export default function MaterialsScreen() {
     onDrop, onSelect, classify, removeF,
     addMats, removeMat, addNotif,
     getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
+    importFromFolder, confirmFolderImport, folderImportData, setFolderImportData,
+    retryAllFailed,
   } = useStudy();
+
+  var [materialFilter, setMaterialFilter] = React.useState("all");
+
+  // Bucket materials by state (single pass)
+  var tabCounts = { all: 0, ready: 0, attention: 0, failed: 0 };
+  var matStates = new Map();
+  for (var _m of (active?.materials || [])) {
+    var _st = getMaterialState(_m);
+    matStates.set(_m.id, _st);
+    tabCounts.all++;
+    if (_st === "ready") tabCounts.ready++;
+    else if (_st === "incomplete" || _st === "partial") tabCounts.attention++;
+    else if (_st === "critical_error") tabCounts.failed++;
+  }
+  var activeFilter = (materialFilter !== "all" && tabCounts[materialFilter] === 0) ? "all" : materialFilter;
+  var filteredMats = (active?.materials || []).filter(mat => {
+    if (activeFilter === "all") return true;
+    var st = matStates.get(mat.id);
+    if (activeFilter === "ready") return st === "ready";
+    if (activeFilter === "attention") return st === "incomplete" || st === "partial";
+    if (activeFilter === "failed") return st === "critical_error";
+    return true;
+  });
+
+  React.useEffect(() => {
+    if (materialFilter !== "all" && tabCounts[materialFilter] === 0) setMaterialFilter("all");
+  });
+
+  var TABS = [
+    { key: "all", label: "All", color: T.ac },
+    { key: "ready", label: "Ready", color: T.gn },
+    { key: "attention", label: "Needs Attention", color: T.am },
+    { key: "failed", label: "Failed", color: "#ef4444" },
+  ];
 
   return (
     <>
@@ -58,6 +95,12 @@ export default function MaterialsScreen() {
             <input ref={fiRef} type="file" multiple accept=".txt,.md,.pdf,.csv,.doc,.docx,.pptx,.rtf,.srt,.vtt,.epub,.xlsx,.xls,.xlsm,image/*" onChange={onSelect} style={{ display: "none" }} />
             <div style={{ fontSize: 14, color: T.txD }}>{parsing ? "Parsing files..." : drag ? "Drop here" : "+ Drop or click to add materials"}</div>
           </div>
+          <button onClick={importFromFolder}
+            style={{ width: "100%", background: "transparent", border: "1px solid " + T.bd, color: T.txD, borderRadius: 10, padding: "10px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer", marginTop: 8, transition: "all 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; }}>
+            Import from Folder
+          </button>
           {files.length > 0 && (
             <div style={{ marginTop: 12 }}>
               {files.map(f => (
@@ -81,14 +124,39 @@ export default function MaterialsScreen() {
 
         {/* Materials List */}
         <div style={{ fontSize: 12, color: T.txD, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Course Materials ({active.materials.length})</div>
-        {active.materials.map(mat => {
-          const matState = getMaterialState(mat);
+        {active.materials.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+            {TABS.map(tab => {
+              var count = tabCounts[tab.key];
+              var isActive = activeFilter === tab.key;
+              if (tab.key !== "all" && count === 0) return null;
+              return (
+                <button key={tab.key} onClick={() => setMaterialFilter(tab.key)}
+                  style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid " + (isActive ? tab.color : T.bd), background: isActive ? (tab.color + "18") : "transparent", color: isActive ? tab.color : T.txD, cursor: "pointer", transition: "all 0.15s", fontWeight: isActive ? 600 : 400 }}>
+                  {tab.label} ({count})
+                </button>
+              );
+            })}
+            {tabCounts.attention > 0 && (activeFilter === "attention" || activeFilter === "all") && (
+              <button onClick={retryAllFailed} disabled={!!globalLock}
+                style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid " + T.am, background: globalLock ? "transparent" : T.amS, color: globalLock ? T.txM : T.am, cursor: globalLock ? "not-allowed" : "pointer", fontWeight: 600, marginLeft: "auto", opacity: globalLock ? 0.5 : 1, transition: "all 0.15s" }}>
+                Retry All ({tabCounts.attention})
+              </button>
+            )}
+          </div>
+        )}
+        {filteredMats.map(mat => {
+          const matState = matStates.get(mat.id);
           const trust = computeTrustSignals(mat);
           const chunks = mat.chunks || [];
           const failed = chunks.filter(c => c.status === "failed");
           const errored = chunks.filter(c => c.status === "error");
           const unfinished = chunks.filter(c => c.status === "pending" || c.status === "error");
           const extracted = chunks.filter(c => c.status === "extracted");
+          const hasOcr = chunks.some(c => c.fidelity === 'low');
+          var _ocrAvg = 100;
+          if (hasOcr) { var _cs = chunks.map(c => { try { var m = c.structuralMetadata || c.structural_metadata; if (typeof m === 'string') m = JSON.parse(m); return m?.ocr_confidence; } catch { return null; } }).filter(v => v != null); if (_cs.length) _ocrAvg = _cs.reduce((a, b) => a + b, 0) / _cs.length; }
+          const lowOcrConf = hasOcr && _ocrAvg < 50;
           const isProcessing = matState === "reading" || matState === "analyzing" || matState === "extracting";
           const isReady = matState === "ready";
           const isError = matState === "critical_error";
@@ -125,6 +193,7 @@ export default function MaterialsScreen() {
                     <span>{trust.clsLabel}</span>
                     {trust.sectionCount > 0 && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.sectionCount} section{trust.sectionCount !== 1 ? "s" : ""}</span></>}
                     {isReady && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.wordLabel} words</span></>}
+                    {hasOcr && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span style={{ fontSize: 10, fontWeight: 600, color: lowOcrConf ? T.am : T.txD, background: lowOcrConf ? T.amS : T.bg, padding: "1px 6px", borderRadius: 4, border: "1px solid " + (lowOcrConf ? T.am + "40" : T.bd) }}>OCR{lowOcrConf ? " · low quality" : ""}</span></>}
                   </div>
                 </div>
                 {/* Status badge */}
@@ -556,6 +625,13 @@ export default function MaterialsScreen() {
         )}
       </div>
       </div>
+    {folderImportData && (
+      <FolderPickerModal
+        folderData={folderImportData}
+        onImport={confirmFolderImport}
+        onClose={() => setFolderImportData(null)}
+      />
+    )}
     </div>
     </>
   );

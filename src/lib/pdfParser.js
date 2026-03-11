@@ -54,6 +54,7 @@ export async function parsePdf(buf, filename) {
   // --- 1. Extract text items from all pages ---
   const pageTexts = []; // [{items: [{str, fontSize, x, y}], text: string}]
   const fontSizeChars = {}; // fontSize → total char count
+  const emptyPageNums = [];
   let emptyPages = 0;
 
   for (let i = 1; i <= numPages; i++) {
@@ -82,7 +83,10 @@ export async function parsePdf(buf, filename) {
     // Reconstruct page text (reading order: top to bottom, left to right)
     const pageText = reconstructPageText(items);
 
-    if (pageText.trim().length < 20) emptyPages++;
+    if (pageText.trim().length < 20) {
+      emptyPages++;
+      emptyPageNums.push(i);
+    }
 
     // Count chars per font size
     for (const item of items) {
@@ -98,25 +102,50 @@ export async function parsePdf(buf, filename) {
 
   // --- 2. Check for scanned/image-based PDF ---
   if (numPages > 0 && emptyPages / numPages > 0.5) {
-    return makeError(filename,
-      'This PDF appears to be scanned/image-based — most pages have no extractable text. ' +
-      'Try running it through an OCR tool (e.g. Adobe Acrobat OCR, or online OCR services) first, then re-upload.'
-    );
+    return {
+      _needsOcr: true,
+      doc,
+      emptyPageNums,
+      pageTexts,
+      fontSizeChars,
+      numPages,
+      filename,
+    };
   }
 
+  return buildStructured(pageTexts, fontSizeChars, numPages, filename, doc);
+}
+
+
+// ============================================================
+// Build structured output from extracted page data
+// ============================================================
+
+/**
+ * Build structured output from page texts and font data.
+ * Extracted from parsePdf so callers can re-use after merging OCR text.
+ *
+ * @param {Array} pageTexts - [{items, text, pageNum}, ...]
+ * @param {object} fontSizeChars - fontSize → char count map
+ * @param {number} numPages - Total page count
+ * @param {string} filename - Original filename
+ * @param {object} doc - pdfjs document (for metadata/outline)
+ * @returns {Promise<object>} Structured output
+ */
+export async function buildStructured(pageTexts, fontSizeChars, numPages, filename, doc) {
   const allText = pageTexts.map(p => p.text).join('\n\n');
   if (!allText.trim()) {
     return makeError(filename, 'Could not extract any text from this PDF.');
   }
 
-  // --- 3. Font size analysis → heading detection ---
+  // --- Font size analysis → heading detection ---
   const bodySize = detectBodyFontSize(fontSizeChars);
   const headingSizes = detectHeadingSizes(fontSizeChars, bodySize);
 
-  // --- 4. Build sections from heading detection ---
+  // --- Build sections from heading detection ---
   let sections = buildSectionsFromHeadings(pageTexts, headingSizes, bodySize);
 
-  // --- 5. Fallback to page-based sections if no headings detected ---
+  // --- Fallback to page-based sections if no headings detected ---
   if (sections.length <= 1 && numPages > PAGES_PER_FALLBACK_SECTION) {
     sections = buildPageBasedSections(pageTexts);
   }
@@ -134,7 +163,7 @@ export async function parsePdf(buf, filename) {
     });
   }
 
-  // --- 6. Build full markdown ---
+  // --- Build full markdown ---
   const markdown = sections.map(s => {
     if (s.heading) {
       return '#'.repeat(s.heading_level) + ' ' + s.heading + '\n\n' + s.content;
@@ -142,7 +171,7 @@ export async function parsePdf(buf, filename) {
     return s.content;
   }).join('\n\n');
 
-  // --- 7. Extract metadata and outline ---
+  // --- Extract metadata and outline ---
   let title = null;
   let author = null;
   let tocEntries = [];
@@ -166,7 +195,7 @@ export async function parsePdf(buf, filename) {
     source_format: 'pdf',
     markdown,
     sections,
-    images: [], // Image extraction deferred
+    images: [],
     metadata: {
       title,
       author,
