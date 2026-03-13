@@ -23,6 +23,7 @@ export default function SettingsModal() {
     keyVerifying, setKeyVerifying, keyError, setKeyError,
     showSettings, setShowSettings, setApiKeyLoaded,
     setProfileData, addNotif,
+    updateStatus, checkUpdate,
   } = useStudy();
 
   var [ocrLangs, setOcrLangs] = React.useState(["eng"]);
@@ -132,6 +133,19 @@ export default function SettingsModal() {
             Reset Skill Data
           </button>
           <div style={{ fontSize: 11, color: T.txM, marginTop: 6 }}>Removes all skills, mastery, and progress. Keeps courses and materials.</div>
+        </div>
+        {/* App Updates */}
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid " + T.bd }}>
+          <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>App Updates</div>
+          <button
+            onClick={() => checkUpdate()}
+            disabled={!!updateStatus}
+            style={{ padding: "10px 16px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: updateStatus ? T.txD : T.tx, fontSize: 12, cursor: updateStatus ? "default" : "pointer", width: "100%", transition: "all 0.15s ease", opacity: updateStatus ? 0.6 : 1 }}
+            onMouseEnter={e => { if (!updateStatus) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+            {updateStatus === "checking" ? "Checking..." : updateStatus === "downloading" ? "Downloading..." : "Check for Updates"}
+          </button>
+          <div style={{ fontSize: 11, color: T.txM, marginTop: 6 }}>Current version: {typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}</div>
         </div>
       </div>
     </div>

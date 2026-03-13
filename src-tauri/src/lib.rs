@@ -26,14 +26,38 @@ pub fn run() {
             description: "assignment_tables",
             sql: include_str!("../migrations/003_assignments.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "last_rating",
+            sql: include_str!("../migrations/004_last_rating.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 5,
+            description: "facet_architecture",
+            sql: include_str!("../migrations/005_facets.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "assignment_activation",
+            sql: include_str!("../migrations/006_assignment_activation.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            Ok(())
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:study.db", migrations)

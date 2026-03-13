@@ -32,6 +32,8 @@
     {
       "identifier": "fs:allow-remove",
       "allow": [{ "path": "$APPDATA/study.db.backup.*" }]
-    }
+    },
+    "updater:default",
+    "process:allow-restart"
   ]
 }

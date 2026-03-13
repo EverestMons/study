@@ -27,13 +27,22 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["dmg", "updater"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCQjRDQkVFRTlDOTA5MTcKUldRWENjbnA3c3UweTZLQlZFQTBMYzdrS002Qld6VmJmYlNZc3h3NXM4eWgreW9VNVFxS2pPWmIK",
+      "endpoints": [
+        "https://github.com/EverestMons/study/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

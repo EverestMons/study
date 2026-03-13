@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested, migrateFacets, Facets, FacetMastery } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -12,6 +12,7 @@ import {
 import { parseSyllabus } from "./lib/syllabusParser.js";
 import { seedCipTaxonomy } from "./lib/cipSeeder.js";
 import { generateSubmission, downloadBlob } from "./lib/export.js";
+import { checkForUpdate, installUpdate as installAppUpdate } from "./lib/updater.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
@@ -112,6 +113,10 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [materialSkillCounts, setMaterialSkillCounts] = useState({});
   const [expandedMaterial, setExpandedMaterial] = useState(null);
   const [dupPrompt, setDupPrompt] = useState(null);
+
+  // App update state
+  const [updateInfo, setUpdateInfo] = useState(null);      // { version, notes, update } or null
+  const [updateStatus, setUpdateStatus] = useState(null);  // null | "checking" | "downloading" | "installing"
 
   const endRef = useRef(null);
   const taRef = useRef(null);
@@ -261,6 +266,12 @@ export function StudyProvider({ children, setErrorCtx }) {
           if (cipResult.seeded > 0) console.log(`[Init] Seeded ${cipResult.seeded} CIP parent skills, ${cipResult.aliases} aliases`);
         } catch (e) { console.error("CIP taxonomy seeding failed:", e); }
         if (cancelled) return;
+        // Promote existing mastery_criteria to facet rows (idempotent, fast-path skips if done)
+        try {
+          const facetResult = await migrateFacets();
+          if (!facetResult.skipped) console.log(`[Init] Facet migration: ${facetResult.facetsCreated} facets created`);
+        } catch (e) { console.error("Facet migration failed:", e); }
+        if (cancelled) return;
         const loaded = await loadCoursesNested();
         if (cancelled) return;
         setCourses(loaded);
@@ -283,6 +294,15 @@ export function StudyProvider({ children, setErrorCtx }) {
   }, []);
 
   useEffect(() => { if (ready && !globalLock && !asyncError && coursesLoaded.current) { var t = setTimeout(() => saveCoursesNested(courses).catch(e => console.error("Auto-save courses failed:", e)), 500); return () => clearTimeout(t); } }, [courses, ready, globalLock, asyncError]);
+
+  // Silent update check on startup
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(() => {
+      checkForUpdate().then(info => { if (info) setUpdateInfo(info); }).catch(() => {});
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [ready]);
 
   // Prevent browser default of opening dropped files
   useEffect(() => {
@@ -552,6 +572,12 @@ export function StudyProvider({ children, setErrorCtx }) {
       const allMasteryRows = await Mastery.getAll();
       const allPrereqRows = await SkillPrerequisites.getAllWithNames();
 
+      // Bulk-load facets and facet mastery (safe — returns [] if table doesn't exist)
+      var allFacetRows = [];
+      var allFacetMasteryRows = [];
+      try { allFacetRows = await Facets.getAllActive(); } catch { /* facets table may not exist */ }
+      try { allFacetMasteryRows = await FacetMastery.getAll(); } catch { /* facet_mastery table may not exist */ }
+
       // Group in JavaScript — O(n) hash map builds
       const subsByParent = {};
       for (const s of allSubs) (subsByParent[s.parent_skill_id] ||= []).push(s);
@@ -559,6 +585,10 @@ export function StudyProvider({ children, setErrorCtx }) {
       for (const m of allMasteryRows) masteryBySkill[m.sub_skill_id] = m;
       const prereqsBySkill = {};
       for (const p of allPrereqRows) (prereqsBySkill[p.sub_skill_id] ||= []).push(p);
+      const facetsBySkill = {};
+      for (const f of allFacetRows) (facetsBySkill[f.skill_id] ||= []).push(f);
+      const facetMasteryById = {};
+      for (const fm of allFacetMasteryRows) facetMasteryById[fm.facet_id] = fm;
 
       const results = [];
       const now = new Date();
@@ -606,6 +636,34 @@ export function StudyProvider({ children, setErrorCtx }) {
             }
           }
 
+          // Enrich facets for this sub-skill
+          var subFacets = (facetsBySkill[sub.id] || []).map(f => {
+            var fm = facetMasteryById[f.id];
+            var fRetrievability = 0;
+            var fStability = 0;
+            var fNextReview = null;
+            var fIsDue = false;
+            if (fm) {
+              fRetrievability = currentRetrievability({ stability: fm.stability, lastReviewAt: fm.last_review_at });
+              fStability = fm.stability || 0;
+              if (fm.next_review_at) {
+                var fnrMs = fm.next_review_at < 1e11 ? fm.next_review_at * 1000 : fm.next_review_at;
+                fNextReview = new Date(fnrMs);
+                fIsDue = fNextReview <= now;
+              }
+            }
+            return {
+              id: f.id, name: f.name, description: f.description,
+              conceptKey: f.concept_key, bloomsLevel: f.blooms_level,
+              mastery: fm ? {
+                retrievability: fRetrievability, stability: fStability,
+                difficulty: fm.difficulty, reps: fm.reps, lapses: fm.lapses,
+                totalMasteryPoints: fm.total_mastery_points || 0,
+                nextReview: fNextReview, isDue: fIsDue,
+              } : null,
+            };
+          });
+
           return {
             id: sub.id, name: sub.name, description: sub.description,
             conceptKey: sub.concept_key, category: sub.category,
@@ -613,6 +671,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             sourceCourseId: sub.source_course_id, masteryCriteria, evidence, fitness,
             confidence: masteryConfidence(fitness),
             prerequisites: prereqs.map(p => ({ id: p.prerequisite_id, name: p.name, conceptKey: p.concept_key })),
+            facets: subFacets,
             mastery: m ? {
               retrievability, stability, difficulty: m.difficulty,
               reps: m.reps, lapses: m.lapses,
@@ -1221,6 +1280,39 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
   };
 
+  // --- Update handlers ---
+  const checkUpdate = useCallback(async () => {
+    setUpdateStatus("checking");
+    try {
+      const info = await checkForUpdate();
+      if (info) {
+        setUpdateInfo(info);
+      } else {
+        addNotif("info", "You're on the latest version.");
+      }
+    } catch (e) {
+      console.error("Update check failed:", e);
+      addNotif("error", "Update check failed: " + (e.message || e));
+    }
+    setUpdateStatus(null);
+  }, []);
+
+  const doInstallUpdate = useCallback(async () => {
+    if (!updateInfo?.update) return;
+    setUpdateStatus("downloading");
+    try {
+      await installAppUpdate(updateInfo.update, (event) => {
+        if (event.event === "Started") setUpdateStatus("installing");
+      });
+    } catch (e) {
+      console.error("Update install failed:", e);
+      addNotif("error", "Update failed: " + (e.message || e));
+      setUpdateStatus(null);
+    }
+  }, [updateInfo]);
+
+  const dismissUpdate = useCallback(() => { setUpdateInfo(null); }, []);
+
   // Expose everything through context — useMemo prevents re-creating the value object
   // on every render. Only state variables are dependencies; setters, refs, useCallback
   // handlers, and lib re-exports have stable identity and are excluded.
@@ -1251,6 +1343,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     sessionSummary, setSessionSummary,
     sessionElapsed, setSessionElapsed, breakDismissed, setBreakDismissed,
     sidebarCollapsed, setSidebarCollapsed,
+    updateInfo, updateStatus, checkUpdate, doInstallUpdate, dismissUpdate,
     // Refs (stable identity)
     endRef, taRef, fiRef, sessionStartIdx, sessionSkillLog,
     cachedSessionCtx, extractionCancelledRef, sessionStartTime, discussedChunks,
@@ -1287,6 +1380,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     materialSkillCounts, expandedMaterial,
     sessionSummary, sessionElapsed, breakDismissed,
     sidebarCollapsed, folderImportData,
+    updateInfo, updateStatus,
   ]);
 
   return <StudyContext.Provider value={value}>{children}</StudyContext.Provider>;
