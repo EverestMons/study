@@ -156,7 +156,11 @@ info "Generated latest.json"
 # ── Git commit + tag + push ──────────────────────────────────────────
 info "Committing version bump..."
 git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-git commit -m "release: v${VERSION}"
+if git diff --cached --quiet; then
+  info "Version already at $VERSION — no commit needed"
+else
+  git commit -m "release: v${VERSION}"
+fi
 git tag "$TAG"
 
 info "Pushing to origin..."
