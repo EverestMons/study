@@ -87,7 +87,7 @@ info "Bumping version to $VERSION..."
 jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp && mv package.json.tmp package.json
 
 # src-tauri/Cargo.toml — update the first version = "..." under [package]
-sed -i '' -E '0,/^version = "[^"]*"/{s/^version = "[^"]*"/version = "'"$VERSION"'"/;}' src-tauri/Cargo.toml
+sed -i '' -E '1,/^version = "[^"]*"/ s/^version = "[^"]*"/version = "'"$VERSION"'"/' src-tauri/Cargo.toml
 
 # src-tauri/tauri.conf.json
 jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp && mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
