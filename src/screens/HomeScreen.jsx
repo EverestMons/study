@@ -98,7 +98,7 @@ export default function HomeScreen() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
           <div>
             <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, letterSpacing: "-0.03em", margin: 0, marginBottom: 4 }}>Study</h1>
-            <p style={{ fontSize: 14, color: T.txD, margin: 0 }}>Your courses and skill profile</p>
+            <p style={{ fontSize: 14, color: T.txD, margin: 0 }}>Your courses and skill profile <span style={{ fontSize: 11, color: T.txM, marginLeft: 8 }}>v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}</span></p>
           </div>
           <button onClick={async () => { await loadProfile(); setScreen("profile"); }}
             style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: "10px 18px", color: T.ac, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
