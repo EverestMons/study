@@ -1,4 +1,4 @@
-import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills } from './db.js';
+import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills, Facets, FacetMastery, FacetConceptLinks, Chunks, ChunkFacetBindings, AssignmentQuestionFacets } from './db.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { getMatContent } from './skills.js';
 import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
@@ -237,6 +237,10 @@ export const masteryConfidence = (fitness) => {
 // --- Strength Update (FSRS-backed, weighted by context/source/bloom's) ---
 // Applies skill updates using FSRS state transitions with evidence-quality weighting.
 // Tutor-assessed interactions carry less weight than practice/diagnostic verification.
+//
+// Phase 4: FSRS operates at facet level. Each facet gets its own independent FSRS card.
+// Skill-level `sub_skill_mastery` is computed as an aggregate of facet states.
+// Falls back to skill-level FSRS when a skill has no facets.
 export const applySkillUpdates = async (courseId, updates, intentWeight) => {
   if (intentWeight === undefined || intentWeight === null) intentWeight = 1.0;
   if (!updates.length) return;
@@ -251,22 +255,7 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
     var context = u.context || 'guided';
     var source = u.source || 'tutor';
 
-    // Load current mastery state from DB
-    var existing = await Mastery.getBySkill(u.skillId);
-    var card;
-    if (existing) {
-      card = {
-        difficulty: existing.difficulty,
-        stability: existing.stability,
-        reps: existing.reps,
-        lapses: existing.lapses,
-        lastReviewAt: existing.last_review_at ? new Date(existing.last_review_at * 1000).toISOString() : null,
-      };
-    } else {
-      card = initCard();
-    }
-
-    // --- Compute weight multipliers ---
+    // --- Compute weight multipliers (shared across facets) ---
     var contextMult = CONTEXT_MULTIPLIERS[context] || 1.0;
     var sourceWeight = source === 'practice' ? 1.0 : (TUTOR_SOURCE_WEIGHTS[context] || 0.6);
 
@@ -279,6 +268,9 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
         bloomsMult = BLOOMS_MULTIPLIERS[skillRow.blooms_level] || 1.0;
       }
     } catch (e) { /* skill lookup failed, use default */ }
+
+    // Load existing skill-level mastery (for decay check + fallback)
+    var existing = await Mastery.getBySkill(u.skillId);
 
     // --- Check for return-visit decay ---
     var decayBonus = 1.0;
@@ -298,66 +290,216 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
       }
     }
 
-    // --- FSRS state transition ---
-    var result = reviewCard(card, grade, now);
-    var updated = result.card;
+    // --- Look up facets for this skill ---
+    var facets = [];
+    try { facets = await Facets.getBySkill(u.skillId); } catch (e) { /* no facets table yet */ }
 
-    // Modulate stability gain by evidence quality
-    var stabilityModifier = contextMult * sourceWeight;
-    var baseStabilityGain = updated.stability - card.stability;
-    if (baseStabilityGain > 0) {
-      updated.stability = card.stability + (baseStabilityGain * stabilityModifier);
-    }
+    if (facets.length > 0) {
+      // ========================================
+      // FACET-LEVEL FSRS (Phase 4)
+      // ========================================
+      var facetResults = []; // collect updated states for aggregation
 
-    // --- Mastery transfer from same_concept links (first interaction only) ---
-    if (!existing && grade >= 3) {
-      try {
-        var conceptLinks = await ConceptLinks.getBySkill(u.skillId);
-        var sameConceptLinks = conceptLinks.filter(function (l) { return l.link_type === 'same_concept'; });
-        if (sameConceptLinks.length > 0) {
-          var bestStrength = 0;
-          for (var link of sameConceptLinks) {
-            var linkedId = link.sub_skill_a_id === u.skillId ? link.sub_skill_b_id : link.sub_skill_a_id;
-            var linkedMastery = await Mastery.getBySkill(linkedId);
-            if (linkedMastery && linkedMastery.stability) {
-              var linkedStr = currentRetrievability({
-                stability: linkedMastery.stability,
-                lastReviewAt: linkedMastery.last_review_at
-                  ? new Date(linkedMastery.last_review_at * 1000).toISOString() : null,
-              });
-              if (linkedStr > bestStrength) bestStrength = linkedStr;
+      for (var facet of facets) {
+        var fExisting = await FacetMastery.get(facet.id);
+        var fCard;
+        if (fExisting) {
+          fCard = {
+            difficulty: fExisting.difficulty,
+            stability: fExisting.stability,
+            reps: fExisting.reps,
+            lapses: fExisting.lapses,
+            lastReviewAt: fExisting.last_review_at ? new Date(fExisting.last_review_at * 1000).toISOString() : null,
+          };
+        } else {
+          fCard = initCard();
+        }
+
+        // FSRS state transition for this facet
+        var fResult = reviewCard(fCard, grade, now);
+        var fUpdated = fResult.card;
+
+        // Modulate stability gain by evidence quality
+        var stabilityModifier = contextMult * sourceWeight;
+        var fBaseStabilityGain = fUpdated.stability - fCard.stability;
+        if (fBaseStabilityGain > 0) {
+          fUpdated.stability = fCard.stability + (fBaseStabilityGain * stabilityModifier);
+        }
+
+        // --- Mastery transfer from facet-level concept links (first interaction only) ---
+        if (!fExisting && grade >= 3) {
+          try {
+            var fConceptLinks = await FacetConceptLinks.getByFacet(facet.id);
+            var fSameLinks = fConceptLinks.filter(function (l) { return l.link_type === 'same_concept'; });
+            var fBestStrength = 0;
+            for (var fLink of fSameLinks) {
+              var fLinkedId = fLink.facet_a_id === facet.id ? fLink.facet_b_id : fLink.facet_a_id;
+              var fLinkedMastery = await FacetMastery.get(fLinkedId);
+              if (fLinkedMastery && fLinkedMastery.stability) {
+                var fLinkedStr = currentRetrievability({
+                  stability: fLinkedMastery.stability,
+                  lastReviewAt: fLinkedMastery.last_review_at
+                    ? new Date(fLinkedMastery.last_review_at * 1000).toISOString() : null,
+                });
+                if (fLinkedStr > fBestStrength) fBestStrength = fLinkedStr;
+              }
+            }
+            // Fall back to skill-level concept links if no facet-level links found
+            if (fBestStrength === 0) {
+              var skillLinks = await ConceptLinks.getBySkill(u.skillId);
+              var skillSameLinks = skillLinks.filter(function (l) { return l.link_type === 'same_concept'; });
+              for (var sLink of skillSameLinks) {
+                var sLinkedId = sLink.sub_skill_a_id === u.skillId ? sLink.sub_skill_b_id : sLink.sub_skill_a_id;
+                var sLinkedMastery = await Mastery.getBySkill(sLinkedId);
+                if (sLinkedMastery && sLinkedMastery.stability) {
+                  var sLinkedStr = currentRetrievability({
+                    stability: sLinkedMastery.stability,
+                    lastReviewAt: sLinkedMastery.last_review_at
+                      ? new Date(sLinkedMastery.last_review_at * 1000).toISOString() : null,
+                  });
+                  if (sLinkedStr > fBestStrength) fBestStrength = sLinkedStr;
+                }
+              }
+            }
+            // Apply transfer bonus
+            if (fBestStrength > 0.7) {
+              var fTransferScale = (fBestStrength - 0.7) / 0.3;
+              fUpdated.stability = fUpdated.stability * (1 + fTransferScale * 0.4);
+              fUpdated.difficulty = Math.max(1, fUpdated.difficulty - fTransferScale * 1.0);
+            }
+          } catch (e) { /* mastery transfer lookup failed, non-critical */ }
+        }
+
+        // Weighted points for this facet
+        var fBasePts = BASE_POINTS[u.rating] || 2;
+        var fWeightedPts = Math.max(1, Math.round(fBasePts * contextMult * bloomsMult * sourceWeight * decayBonus * intentWeight));
+        var fTotalPts = (fExisting?.total_mastery_points || 0) + fWeightedPts;
+
+        // Write facet mastery
+        await FacetMastery.upsert(facet.id, {
+          difficulty: fUpdated.difficulty,
+          stability: fUpdated.stability,
+          retrievability: fResult.retrievability,
+          reps: fUpdated.reps,
+          lapses: fUpdated.lapses,
+          lastReviewAt: Math.floor(new Date(fUpdated.lastReviewAt).getTime() / 1000),
+          nextReviewAt: Math.floor(new Date(fUpdated.nextReviewAt).getTime() / 1000),
+          totalMasteryPoints: fTotalPts,
+          lastRating: u.rating,
+        });
+
+        // Collect for skill aggregate
+        facetResults.push({
+          retrievability: fResult.retrievability,
+          stability: fUpdated.stability,
+          difficulty: fUpdated.difficulty,
+          reps: fUpdated.reps,
+          lapses: fUpdated.lapses,
+          lastReviewAt: Math.floor(new Date(fUpdated.lastReviewAt).getTime() / 1000),
+          nextReviewAt: Math.floor(new Date(fUpdated.nextReviewAt).getTime() / 1000),
+          totalMasteryPoints: fTotalPts,
+        });
+      }
+
+      // --- Compute skill-level aggregate from facets ---
+      var aggRetrievability = facetResults.reduce(function (s, f) { return s + f.retrievability; }, 0) / facetResults.length;
+      var aggStability = Math.min.apply(null, facetResults.map(function (f) { return f.stability; }));
+      var aggDifficulty = facetResults.reduce(function (s, f) { return s + f.difficulty; }, 0) / facetResults.length;
+      var aggReps = Math.max.apply(null, facetResults.map(function (f) { return f.reps; }));
+      var aggLapses = Math.max.apply(null, facetResults.map(function (f) { return f.lapses; }));
+      var aggLastReviewAt = Math.max.apply(null, facetResults.map(function (f) { return f.lastReviewAt; }));
+      var aggNextReviewAt = Math.min.apply(null, facetResults.map(function (f) { return f.nextReviewAt; }));
+      var aggTotalPts = facetResults.reduce(function (s, f) { return s + f.totalMasteryPoints; }, 0);
+
+      // Write computed aggregate to skill-level mastery (backward compat)
+      await Mastery.upsert(u.skillId, {
+        difficulty: aggDifficulty,
+        stability: aggStability,
+        retrievability: aggRetrievability,
+        reps: aggReps,
+        lapses: aggLapses,
+        lastReviewAt: aggLastReviewAt,
+        nextReviewAt: aggNextReviewAt,
+        totalMasteryPoints: aggTotalPts,
+        lastRating: u.rating,
+      });
+
+    } else {
+      // ========================================
+      // SKILL-LEVEL FALLBACK (no facets)
+      // ========================================
+      var card;
+      if (existing) {
+        card = {
+          difficulty: existing.difficulty,
+          stability: existing.stability,
+          reps: existing.reps,
+          lapses: existing.lapses,
+          lastReviewAt: existing.last_review_at ? new Date(existing.last_review_at * 1000).toISOString() : null,
+        };
+      } else {
+        card = initCard();
+      }
+
+      // FSRS state transition
+      var result = reviewCard(card, grade, now);
+      var updated = result.card;
+
+      // Modulate stability gain by evidence quality
+      var stabilityModifier = contextMult * sourceWeight;
+      var baseStabilityGain = updated.stability - card.stability;
+      if (baseStabilityGain > 0) {
+        updated.stability = card.stability + (baseStabilityGain * stabilityModifier);
+      }
+
+      // --- Mastery transfer from same_concept links (first interaction only) ---
+      if (!existing && grade >= 3) {
+        try {
+          var conceptLinks = await ConceptLinks.getBySkill(u.skillId);
+          var sameConceptLinks = conceptLinks.filter(function (l) { return l.link_type === 'same_concept'; });
+          if (sameConceptLinks.length > 0) {
+            var bestStrength = 0;
+            for (var link of sameConceptLinks) {
+              var linkedId = link.sub_skill_a_id === u.skillId ? link.sub_skill_b_id : link.sub_skill_a_id;
+              var linkedMastery = await Mastery.getBySkill(linkedId);
+              if (linkedMastery && linkedMastery.stability) {
+                var linkedStr = currentRetrievability({
+                  stability: linkedMastery.stability,
+                  lastReviewAt: linkedMastery.last_review_at
+                    ? new Date(linkedMastery.last_review_at * 1000).toISOString() : null,
+                });
+                if (linkedStr > bestStrength) bestStrength = linkedStr;
+              }
+            }
+            if (bestStrength > 0.7) {
+              var transferScale = (bestStrength - 0.7) / 0.3;
+              updated.stability = updated.stability * (1 + transferScale * 0.4);
+              updated.difficulty = Math.max(1, updated.difficulty - transferScale * 1.0);
             }
           }
-          // Apply transfer bonus: stability boost + difficulty ease
-          // Scales linearly from threshold (0.7) to full mastery (1.0)
-          if (bestStrength > 0.7) {
-            var transferScale = (bestStrength - 0.7) / 0.3; // 0.0 at 70%, 1.0 at 100%
-            updated.stability = updated.stability * (1 + transferScale * 0.4); // up to 1.4x
-            updated.difficulty = Math.max(1, updated.difficulty - transferScale * 1.0); // up to -1.0
-          }
-        }
-      } catch (e) { /* mastery transfer lookup failed, non-critical */ }
+        } catch (e) { /* mastery transfer lookup failed, non-critical */ }
+      }
+
+      // Weighted points
+      var basePts = BASE_POINTS[u.rating] || 2;
+      var weightedPts = Math.max(1, Math.round(basePts * contextMult * bloomsMult * sourceWeight * decayBonus * intentWeight));
+      var totalPts = (existing?.total_mastery_points || 0) + weightedPts;
+
+      // Write to mastery table
+      await Mastery.upsert(u.skillId, {
+        difficulty: updated.difficulty,
+        stability: updated.stability,
+        retrievability: result.retrievability,
+        reps: updated.reps,
+        lapses: updated.lapses,
+        lastReviewAt: Math.floor(new Date(updated.lastReviewAt).getTime() / 1000),
+        nextReviewAt: Math.floor(new Date(updated.nextReviewAt).getTime() / 1000),
+        totalMasteryPoints: totalPts,
+        lastRating: u.rating,
+      });
     }
 
-    // --- Weighted points ---
-    var basePts = BASE_POINTS[u.rating] || 2;
-    var weightedPts = Math.max(1, Math.round(basePts * contextMult * bloomsMult * sourceWeight * decayBonus * intentWeight));
-    var totalPts = (existing?.total_mastery_points || 0) + weightedPts;
-
-    // Write to mastery table
-    await Mastery.upsert(u.skillId, {
-      difficulty: updated.difficulty,
-      stability: updated.stability,
-      retrievability: result.retrievability,
-      reps: updated.reps,
-      lapses: updated.lapses,
-      lastReviewAt: Math.floor(new Date(updated.lastReviewAt).getTime() / 1000),
-      nextReviewAt: Math.floor(new Date(updated.nextReviewAt).getTime() / 1000),
-      totalMasteryPoints: totalPts,
-      lastRating: u.rating,
-    });
-
-    // --- Fitness counter updates ---
+    // --- Fitness counter updates (skill-level, regardless of facets) ---
     try {
       if (source === 'tutor') {
         await SubSkills.incrementTutoringReferences(u.skillId);
@@ -370,7 +512,7 @@ export const applySkillUpdates = async (courseId, updates, intentWeight) => {
       }
     } catch (e) { /* fitness update failed, non-critical */ }
 
-    // --- Mastery criteria verification ---
+    // --- Mastery criteria verification (skill-level, regardless of facets) ---
     if (u.criteria && (context === 'diagnostic' || context === 'transfer' || source === 'practice') &&
         (u.rating === 'good' || u.rating === 'easy')) {
       try {
@@ -414,6 +556,50 @@ const STOP_WORDS = new Set([
   "i'm","i've","i'll","we're","you're","they're","wasn","isn't","aren","doesn","won't","let's",
 ]);
 
+// --- Facet-Level Readiness for UI ---
+// Computes readiness per skill using facet mastery when available.
+// Returns Map<skillId, number> where number is 0-1 readiness.
+// Skills without facets are omitted from the map (caller should use effectiveStrength as fallback).
+export const computeFacetReadiness = async (skillIds) => {
+  if (!skillIds.length) return new Map();
+  var result = new Map();
+  try {
+    // Batch load facets for all skills
+    var facetRows = [];
+    for (var sid of skillIds) {
+      try {
+        var sf = await Facets.getBySkill(sid);
+        for (var f of sf) facetRows.push({ ...f, _skillId: sid });
+      } catch { /* facets table may not exist */ }
+    }
+    if (!facetRows.length) return result;
+
+    var facetIds = facetRows.map(f => f.id);
+    var fmRows = await FacetMastery.getByFacets(facetIds);
+    var fmMap = new Map(fmRows.map(fm => [fm.facet_id, fm]));
+
+    // Group facets by skill and compute readiness
+    var bySkill = {};
+    for (var fr of facetRows) (bySkill[fr._skillId] ||= []).push(fr);
+
+    for (var [sid2, facets] of Object.entries(bySkill)) {
+      var rSum = 0;
+      var rCount = 0;
+      for (var f2 of facets) {
+        var fm = fmMap.get(f2.id);
+        if (fm && fm.stability) {
+          rSum += currentRetrievability({ stability: fm.stability, lastReviewAt: fm.last_review_at });
+          rCount++;
+        }
+      }
+      if (rCount > 0) {
+        result.set(sid2, rSum / rCount);
+      }
+    }
+  } catch { /* facet tables may not exist */ }
+  return result;
+};
+
 export const extractKeywords = (messages, count = 20) => {
   const text = messages.map(m => m.content).join(" ").toLowerCase();
   const words = text.match(/[a-z]{4,}/g) || [];
@@ -423,6 +609,232 @@ export const extractKeywords = (messages, count = 20) => {
     freq[w] = (freq[w] || 0) + 1;
   }
   return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, count).map(([w]) => w);
+};
+
+// --- Facet-Based Context Helpers ---
+
+/** Extract specific paragraphs from chunk content using content_range metadata. */
+const extractContentRange = (fullContent, contentRange) => {
+  if (!contentRange || !fullContent) return fullContent || '';
+  try {
+    var range = typeof contentRange === 'string' ? JSON.parse(contentRange) : contentRange;
+    if (!range.paragraphs || !Array.isArray(range.paragraphs)) return fullContent;
+    var paragraphs = fullContent.split(/\n{2,}/);
+    var selected = range.paragraphs
+      .filter(idx => idx >= 1 && idx <= paragraphs.length)
+      .map(idx => paragraphs[idx - 1]);
+    return selected.length > 0 ? selected.join('\n\n') : fullContent;
+  } catch { return fullContent; }
+};
+
+/** Load chunk content for pre-filtered, pre-ordered binding rows. Deduplicates by chunk_id. */
+const loadChunksForBindings = async (bindings, { charLimit = 24000 } = {}) => {
+  if (!bindings.length) return [];
+  // Deduplicate by chunk_id, keeping first occurrence (highest priority)
+  var seen = new Set();
+  var uniqueBindings = [];
+  for (var b of bindings) {
+    if (seen.has(b.chunk_id)) continue;
+    seen.add(b.chunk_id);
+    uniqueBindings.push(b);
+  }
+  // Batch-load content
+  var chunkIds = uniqueBindings.map(b => b.chunk_id);
+  var contentRows = await Chunks.getContentBatch(chunkIds);
+  var contentMap = new Map(contentRows.map(r => [r.id, r.content]));
+
+  var results = [];
+  var totalChars = 0;
+  for (var ub of uniqueBindings) {
+    var raw = contentMap.get(ub.chunk_id);
+    if (!raw) continue;
+    // Unwrap v1 JSON-wrapped content
+    if (raw.startsWith('{')) {
+      try { var parsed = JSON.parse(raw); if (parsed.content) raw = parsed.content; } catch { /* ignore */ }
+    }
+    var content = extractContentRange(raw, ub.content_range);
+    if (totalChars + content.length > charLimit) {
+      // Truncate last chunk to fit
+      var remaining = charLimit - totalChars;
+      if (remaining > 200) {
+        results.push({
+          chunkId: ub.chunk_id,
+          label: ub.chunk_label || '',
+          content: content.substring(0, remaining),
+          bindingType: ub.binding_type,
+          facetId: ub.facet_id,
+        });
+      }
+      break;
+    }
+    results.push({
+      chunkId: ub.chunk_id,
+      label: ub.chunk_label || '',
+      content,
+      bindingType: ub.binding_type,
+      facetId: ub.facet_id,
+    });
+    totalChars += content.length;
+  }
+  return results;
+};
+
+/** Collect and filter bindings for a set of facet IDs based on type rules. */
+const collectFacetBindings = async (facetIds, { mode = 'standard' } = {}) => {
+  var allBindings = [];
+  for (var fid of facetIds) {
+    var bindings;
+    try { bindings = await ChunkFacetBindings.getByFacetRanked(fid); } catch { continue; }
+    for (var b of bindings) {
+      // Type filtering
+      if (b.binding_type === 'teaches') {
+        allBindings.push(b);
+      } else if (b.binding_type === 'prerequisite_for') {
+        // Only include when facet retrievability < 0.5
+        try {
+          var fm = await FacetMastery.get(fid);
+          if (!fm || (fm.retrievability != null && fm.retrievability < 0.5)) {
+            allBindings.push(b);
+          }
+        } catch { allBindings.push(b); } // Include on error (safe default)
+      } else if (b.binding_type === 'references') {
+        if (mode === 'explore' || mode === 'exam') {
+          allBindings.push(b);
+        }
+      }
+    }
+  }
+  return allBindings;
+};
+
+/** Load cross-domain content for facets via FacetConceptLinks. */
+const loadCrossDomainChunks = async (facetIds, { charLimit = 6000 } = {}) => {
+  if (!facetIds.length) return [];
+  var links;
+  try { links = await FacetConceptLinks.getByFacetBatch(facetIds); } catch { return []; }
+  if (!links.length) return [];
+
+  var facetIdSet = new Set(facetIds);
+  var linkedFacetIds = new Set();
+  var linkedFacetInfo = new Map(); // linkedFacetId → { name, linkType }
+  for (var l of links) {
+    var isAOurs = facetIdSet.has(l.facet_a_id);
+    var linkedId = isAOurs ? l.facet_b_id : l.facet_a_id;
+    var linkedName = isAOurs ? l.name_b : l.name_a;
+    if (facetIdSet.has(linkedId)) continue; // Same-set link
+    linkedFacetIds.add(linkedId);
+    if (!linkedFacetInfo.has(linkedId)) {
+      linkedFacetInfo.set(linkedId, { name: linkedName, linkType: l.link_type });
+    }
+  }
+  if (!linkedFacetIds.size) return [];
+
+  // Load only high-confidence teaches bindings for linked facets
+  var crossBindings = [];
+  for (var lfId of linkedFacetIds) {
+    try {
+      var bRows = await ChunkFacetBindings.getByFacet(lfId, { type: 'teaches', minConfidence: 0.7 });
+      for (var br of bRows) crossBindings.push({ ...br, _linkedFacetId: lfId });
+    } catch { /* skip */ }
+  }
+  if (!crossBindings.length) return [];
+
+  // Deduplicate by chunk_id
+  var seen = new Set();
+  var unique = [];
+  for (var cb of crossBindings) {
+    if (seen.has(cb.chunk_id)) continue;
+    seen.add(cb.chunk_id);
+    unique.push(cb);
+  }
+
+  // Batch-load content
+  var chunkIds = unique.map(b => b.chunk_id);
+  var contentRows = await Chunks.getContentBatch(chunkIds);
+  var contentMap = new Map(contentRows.map(r => [r.id, r.content]));
+
+  var results = [];
+  var totalChars = 0;
+  for (var ub of unique) {
+    var raw = contentMap.get(ub.chunk_id);
+    if (!raw) continue;
+    if (raw.startsWith('{')) {
+      try { var p2 = JSON.parse(raw); if (p2.content) raw = p2.content; } catch { /* ignore */ }
+    }
+    var content = extractContentRange(raw, ub.content_range);
+    if (totalChars + content.length > charLimit) break;
+    var info = linkedFacetInfo.get(ub._linkedFacetId) || {};
+    results.push({
+      chunkId: ub.chunk_id,
+      content,
+      linkedFacetName: info.name || '',
+      linkType: info.linkType || 'related',
+    });
+    totalChars += content.length;
+  }
+  return results;
+};
+
+/** Get facets for a skill with graceful fallback. Returns [] if table doesn't exist or skill has no facets. */
+const facetsForSkill = async (skill) => {
+  if (!skill || !skill.id) return [];
+  try { return await Facets.getBySkill(skill.id); } catch { return []; }
+};
+
+/** Main orchestrator: load facet-based content with optional cross-domain chunks. */
+const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 24000, includeCrossDomain = true } = {}) => {
+  if (!facetIds.length) return '';
+  // 1. Collect filtered bindings
+  var bindings = await collectFacetBindings(facetIds, { mode });
+  if (!bindings.length) return '';
+  // 2. Load primary chunks
+  var primary = await loadChunksForBindings(bindings, { charLimit });
+  if (!primary.length) return '';
+  // 3. Format primary content
+  var ctx = '';
+  for (var ch of primary) {
+    ctx += '\n--- ' + ch.label + ' ---\n' + ch.content + '\n';
+  }
+  // 4. Cross-domain content
+  if (includeCrossDomain) {
+    var loadedChunkIds = new Set(primary.map(c => c.chunkId));
+    var cross = await loadCrossDomainChunks(facetIds);
+    var crossFiltered = cross.filter(c => !loadedChunkIds.has(c.chunkId));
+    if (crossFiltered.length) {
+      ctx += '\nCROSS-DOMAIN REFERENCES:\n';
+      for (var xc of crossFiltered) {
+        ctx += '\n--- ' + xc.linkedFacetName + ' (' + xc.linkType + ') ---\n' + xc.content + '\n';
+      }
+    }
+  }
+  return ctx;
+};
+
+/** Extracted keyword fallback: source-name fuzzy-matching (existing logic). */
+const _keywordFallbackLoad = async (materials, courseId, neededSources) => {
+  var ctx = '';
+  for (var mat of materials) {
+    var loaded = await getMatContent(courseId, mat);
+    var activeChunks = loaded.chunks.filter(function(ch) { return ch.status !== 'skipped'; });
+    if (!activeChunks.length) continue;
+    var nameLower = mat.name.toLowerCase();
+    var isNeeded = neededSources.has(nameLower) ||
+      mat.classification === 'assignment' ||
+      [...neededSources].some(function(src) { return nameLower.includes(src) || src.includes(nameLower.substring(0, 15)); });
+    if (!isNeeded) continue;
+
+    if (activeChunks.length > 1) {
+      for (var ch of activeChunks) {
+        var tl = ch.label.toLowerCase();
+        if ([...neededSources].some(function(src) { return tl.includes(src) || src.includes(tl.substring(0, 15)); })) {
+          ctx += '\n--- ' + ch.label + ' ---\n' + ch.content + '\n';
+        }
+      }
+    } else if (activeChunks[0]?.content) {
+      ctx += '\n--- ' + mat.name + ' ---\n' + activeChunks[0].content + '\n';
+    }
+  }
+  return ctx;
 };
 
 // --- Domain Proficiency for AI Context ---
@@ -540,21 +952,45 @@ export const buildContext = async (courseId, materials, skills, assignments, rec
     }
   }
 
+  // SECURITY: User-uploaded chunk content injected below. Prompt injection risk mitigated
+  // by system prompt CONTENT SAFETY directive instructing the model to treat this as teaching material.
+  ctx += "\nLOADED SOURCE MATERIAL:\n";
+
+  // Partition relevant skills into faceted vs non-faceted
+  var facetedSkillFacetIds = [];
+  var nonFacetedSkillIds = [];
+  if (Array.isArray(skills)) {
+    for (var rsid of relevantSkillIds) {
+      var rSkill = skills.find(function(s) { return s.id === rsid; });
+      if (!rSkill) continue;
+      var rsFacets = await facetsForSkill(rSkill);
+      if (rsFacets.length > 0) {
+        for (var rsf of rsFacets) facetedSkillFacetIds.push(rsf.id);
+      } else {
+        nonFacetedSkillIds.push(rsid);
+      }
+    }
+  }
+  facetedSkillFacetIds = [...new Set(facetedSkillFacetIds)];
+
+  // Load facet-based content first
+  if (facetedSkillFacetIds.length > 0) {
+    var facetCtx = await loadFacetBasedContent(facetedSkillFacetIds, { mode: 'standard', charLimit: 16000 });
+    if (facetCtx) ctx += facetCtx;
+  }
+
+  // Keyword-matching path for non-faceted skills (fills gaps)
   const neededDocs = new Set();
   if (Array.isArray(skills)) {
-    for (const sid of relevantSkillIds) {
-      const skill = skills.find(s => s.id === sid);
-      if (skill?.sources) skill.sources.forEach(src => neededDocs.add(src.toLowerCase()));
+    for (var nfsid of nonFacetedSkillIds) {
+      var nfSkill = skills.find(function(s) { return s.id === nfsid; });
+      if (nfSkill?.sources) nfSkill.sources.forEach(function(src) { neededDocs.add(src.toLowerCase()); });
     }
   }
 
   const asgnRelated = ["assignment", "homework", "due", "question", "problem", "exercise", "submit"].some(w => recentText.includes(w));
 
-  // SECURITY: User-uploaded chunk content injected below. Prompt injection risk mitigated
-  // by system prompt CONTENT SAFETY directive instructing the model to treat this as teaching material.
-  ctx += "\nLOADED SOURCE MATERIAL:\n";
   let loadedCount = 0;
-
   for (const mat of materials) {
     const loaded = await getMatContent(courseId, mat);
     const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
@@ -627,29 +1063,37 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
       }
     }
 
-    // Load only source materials referenced by required skills
+    // Load source material via facet bindings (with keyword fallback)
     // SECURITY: User-uploaded chunk content injected here — see CONTENT SAFETY directive in system prompt.
     ctx += "\nSOURCE MATERIAL:\n";
-    for (const mat of materials) {
-      const loaded = await getMatContent(courseId, mat);
-      const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
-      if (!activeChunks.length) continue;
-      const nameLower = mat.name.toLowerCase();
-      const isNeeded = neededSources.has(nameLower) ||
-        mat.classification === "assignment" ||
-        [...neededSources].some(src => nameLower.includes(src) || src.includes(nameLower.substring(0, 15)));
-      if (!isNeeded) continue;
-
-      if (activeChunks.length > 1) {
-        for (const ch of activeChunks) {
-          const tl = ch.label.toLowerCase();
-          if ([...neededSources].some(src => tl.includes(src) || src.includes(tl.substring(0, 15)))) {
-            ctx += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
-          }
-        }
-      } else if (activeChunks[0]?.content) {
-        ctx += "\n--- " + mat.name + " ---\n" + activeChunks[0].content + "\n";
+    var asgnFacetIds = [];
+    // Collect facets from assignment questions (re-query for raw DB question IDs)
+    try {
+      var dbQuestions = await Assignments.getQuestions(asgn.id);
+      for (var dbQ of dbQuestions) {
+        var qFacets = await AssignmentQuestionFacets.getByQuestion(dbQ.id);
+        for (var qf of qFacets) asgnFacetIds.push(qf.facet_id);
       }
+    } catch { /* assignment_question_facets table may not exist */ }
+    // Also collect facets from required skills
+    for (var rsid of requiredSkillIds) {
+      var rSkill = allSkills.find(function(s) { return s.id === rsid || s.conceptKey === rsid; });
+      if (rSkill) {
+        var rFacets = await facetsForSkill(rSkill);
+        for (var rf of rFacets) asgnFacetIds.push(rf.id);
+      }
+    }
+    // Deduplicate facet IDs
+    asgnFacetIds = [...new Set(asgnFacetIds)];
+    var asgnFacetContent = '';
+    if (asgnFacetIds.length > 0) {
+      asgnFacetContent = await loadFacetBasedContent(asgnFacetIds, { mode: 'standard' });
+    }
+    if (asgnFacetContent) {
+      ctx += asgnFacetContent;
+    } else {
+      // Keyword fallback
+      ctx += await _keywordFallbackLoad(materials, courseId, neededSources);
     }
 
     var dlCtx1 = await buildDeadlineContext(courseId, allSkills);
@@ -691,31 +1135,23 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
       }
     }
 
-    // Load only source materials this skill references
-    const neededSources = new Set();
-    if (skill.sources) skill.sources.forEach(src => neededSources.add(src.toLowerCase()));
-
-    if (neededSources.size > 0) {
+    // Load source material via facet bindings (with keyword fallback)
+    var skillFacets = await facetsForSkill(skill);
+    var skillFacetContent = '';
+    if (skillFacets.length > 0) {
+      var skillFacetIds = skillFacets.map(function(f) { return f.id; });
+      skillFacetContent = await loadFacetBasedContent(skillFacetIds, { mode: 'standard' });
+    }
+    if (skillFacetContent) {
       ctx += "\nSOURCE MATERIAL:\n";
-      for (const mat of materials) {
-        const loaded = await getMatContent(courseId, mat);
-        const activeChunks = loaded.chunks.filter(ch => ch.status !== "skipped");
-        if (!activeChunks.length) continue;
-        const nameLower = mat.name.toLowerCase();
-        const isNeeded = neededSources.has(nameLower) ||
-          [...neededSources].some(src => nameLower.includes(src) || src.includes(nameLower.substring(0, 15)));
-        if (!isNeeded) continue;
-
-        if (activeChunks.length > 1) {
-          for (const ch of activeChunks) {
-            const tl = ch.label.toLowerCase();
-            if ([...neededSources].some(src => tl.includes(src) || src.includes(tl.substring(0, 15)))) {
-              ctx += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
-            }
-          }
-        } else if (activeChunks[0]?.content) {
-          ctx += "\n--- " + mat.name + " ---\n" + activeChunks[0].content + "\n";
-        }
+      ctx += skillFacetContent;
+    } else {
+      // Keyword fallback
+      var neededSources = new Set();
+      if (skill.sources) skill.sources.forEach(function(src) { neededSources.add(src.toLowerCase()); });
+      if (neededSources.size > 0) {
+        ctx += "\nSOURCE MATERIAL:\n";
+        ctx += await _keywordFallbackLoad(materials, courseId, neededSources);
       }
     }
 
@@ -813,6 +1249,26 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
       }
     }
 
+    // Augment with cross-domain references from facets
+    var examFacetIds = [];
+    for (var examSid of examSkillIds) {
+      var examSkill = allSkills.find(function(s) { return s.id === examSid; });
+      if (examSkill) {
+        var eFacets = await facetsForSkill(examSkill);
+        for (var ef of eFacets) examFacetIds.push(ef.id);
+      }
+    }
+    examFacetIds = [...new Set(examFacetIds)];
+    if (examFacetIds.length > 0) {
+      var crossDomainChunks = await loadCrossDomainChunks(examFacetIds, { charLimit: 4000 });
+      if (crossDomainChunks.length > 0) {
+        ctx += "\nCROSS-DOMAIN REFERENCES:\n";
+        for (var xdc of crossDomainChunks) {
+          ctx += "\n--- " + xdc.linkedFacetName + " (" + xdc.linkType + ") ---\n" + xdc.content + "\n";
+        }
+      }
+    }
+
     var dlCtx4 = await buildDeadlineContext(courseId, allSkills);
     if (dlCtx4) ctx += "\n" + dlCtx4 + "\n";
 
@@ -838,38 +1294,60 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
       ctx += "  " + (s3.conceptKey || s3.id) + ": " + s3.name + " [strength: " + strPct3 + "%] -- " + s3.description + "\n";
     }
 
-    // Load chunks matching the topic, prioritized
+    // Try facet-based loading: match topic words against skill names → get facets
     ctx += "\nSOURCE MATERIAL:\n";
-    var loadedCount = 0;
-    for (var mat2 of materials) {
-      var loaded2 = await getMatContent(courseId, mat2);
-      var activeChunks2 = loaded2.chunks.filter(function(ch) { return ch.status !== "skipped"; });
-      if (!activeChunks2.length) continue;
-
-      // Prioritize chunks whose label or content matches topic words
-      var relevant = activeChunks2.filter(function(ch) {
-        var tl = ch.label.toLowerCase();
-        var preview = ch.content.substring(0, 1000).toLowerCase();
-        return topicWords.some(function(kw) { return tl.includes(kw) || preview.includes(kw); });
+    var exploreFacetContent = '';
+    if (topicWords.length > 0) {
+      var matchedSkills = allSkills.filter(function(sk) {
+        var skName = sk.name.toLowerCase();
+        return topicWords.some(function(kw) { return skName.includes(kw); });
       });
-
-      for (var ch2 of relevant.slice(0, 3)) {
-        ctx += "\n--- " + ch2.label + " ---\n" + ch2.content + "\n";
-        loadedCount++;
+      if (matchedSkills.length > 0) {
+        var exploreFacetIds = [];
+        for (var ms of matchedSkills) {
+          var msFacets = await facetsForSkill(ms);
+          for (var msf of msFacets) exploreFacetIds.push(msf.id);
+        }
+        exploreFacetIds = [...new Set(exploreFacetIds)];
+        if (exploreFacetIds.length > 0) {
+          exploreFacetContent = await loadFacetBasedContent(exploreFacetIds, { mode: 'explore' });
+        }
       }
-      if (loadedCount >= 5) break;
     }
 
-    if (loadedCount === 0) {
-      // No topic matches — load first few chunks as general context
-      for (var mat3 of materials) {
-        var loaded3 = await getMatContent(courseId, mat3);
-        var activeChunks3 = loaded3.chunks.filter(function(ch) { return ch.status !== "skipped"; });
-        for (var ch3 of activeChunks3.slice(0, 2)) {
-          ctx += "\n--- " + ch3.label + " ---\n" + ch3.content + "\n";
+    if (exploreFacetContent) {
+      ctx += exploreFacetContent;
+    } else {
+      // Keyword fallback: existing topic-matching chunk loading
+      var loadedCount = 0;
+      for (var mat2 of materials) {
+        var loaded2 = await getMatContent(courseId, mat2);
+        var activeChunks2 = loaded2.chunks.filter(function(ch) { return ch.status !== "skipped"; });
+        if (!activeChunks2.length) continue;
+
+        var relevant = activeChunks2.filter(function(ch) {
+          var tl = ch.label.toLowerCase();
+          var preview = ch.content.substring(0, 1000).toLowerCase();
+          return topicWords.some(function(kw) { return tl.includes(kw) || preview.includes(kw); });
+        });
+
+        for (var ch2 of relevant.slice(0, 3)) {
+          ctx += "\n--- " + ch2.label + " ---\n" + ch2.content + "\n";
           loadedCount++;
         }
-        if (loadedCount >= 3) break;
+        if (loadedCount >= 5) break;
+      }
+
+      if (loadedCount === 0) {
+        for (var mat3 of materials) {
+          var loaded3 = await getMatContent(courseId, mat3);
+          var activeChunks3 = loaded3.chunks.filter(function(ch) { return ch.status !== "skipped"; });
+          for (var ch3 of activeChunks3.slice(0, 2)) {
+            ctx += "\n--- " + ch3.label + " ---\n" + ch3.content + "\n";
+            loadedCount++;
+          }
+          if (loadedCount >= 3) break;
+        }
       }
     }
 
@@ -1194,6 +1672,15 @@ export const completeTierAttempt = (practiceSet) => {
 
 // Load relevant material context for a skill's practice problems
 export const loadPracticeMaterialCtx = async (courseId, materials, skill) => {
+  // Try facet-based loading first
+  var pracFacets = await facetsForSkill(skill);
+  if (pracFacets.length > 0) {
+    var pracFacetIds = pracFacets.map(function(f) { return f.id; });
+    var facetCtx = await loadFacetBasedContent(pracFacetIds, { mode: 'standard', charLimit: 12000, includeCrossDomain: false });
+    if (facetCtx) return facetCtx;
+  }
+
+  // Keyword fallback
   var neededSources = new Set();
   if (skill.sources) skill.sources.forEach(src => neededSources.add(src.toLowerCase()));
   if (neededSources.size === 0) return "";

@@ -35,7 +35,7 @@ function formatNudgeDate(epoch) {
 import {
   strengthToTier, effectiveStrength, nextReviewDate,
   TIERS, createPracticeSet, generateProblems,
-  loadPracticeMaterialCtx,
+  loadPracticeMaterialCtx, computeFacetReadiness,
 } from "../../lib/study.js";
 import { useStudy } from "../../StudyContext.jsx";
 
@@ -72,6 +72,10 @@ export default function ModePicker() {
       var asgn = await Assignments.getByCourse(active.id);
       var sk = await loadSkillsV2(active.id);
 
+      // Precompute facet readiness for all skills (single batch)
+      var allSkillIds = (sk || []).map(function (s) { return s.id; });
+      var facetReadinessMap = await computeFacetReadiness(allSkillIds);
+
       for (var a of asgn) {
         if (a.status === "completed") continue;
         if (a.source === "syllabus" && !a.materialId) continue;
@@ -84,7 +88,8 @@ export default function ModePicker() {
         var skillList = [...reqIds].map(function (sid) {
           var s = (sk || []).find(function (x) { return x.id === sid || x.conceptKey === sid; });
           if (!s) s = (sk || []).find(function (x) { return x.name && x.name.toLowerCase() === sid.toLowerCase(); });
-          return { id: s?.id || sid, name: s?.name || sid, strength: s ? effectiveStrength(s) : 0 };
+          var str = s ? (facetReadinessMap.has(s.id) ? facetReadinessMap.get(s.id) : effectiveStrength(s)) : 0;
+          return { id: s?.id || sid, name: s?.name || sid, strength: str };
         });
         var avg = skillList.length > 0 ? skillList.reduce(function (sum, x) { return sum + x.strength; }, 0) / skillList.length : 0;
 
@@ -116,7 +121,7 @@ export default function ModePicker() {
       // Exams
       var schedule = await CourseSchedule.getByCourse(active.id);
       var allSkillAvg = (sk || []).length > 0
-        ? sk.reduce(function (s, x) { return s + effectiveStrength(x); }, 0) / sk.length : 0;
+        ? sk.reduce(function (s, x) { return s + (facetReadinessMap.has(x.id) ? facetReadinessMap.get(x.id) : effectiveStrength(x)); }, 0) / sk.length : 0;
 
       for (var week of schedule) {
         try {

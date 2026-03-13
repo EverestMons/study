@@ -8,7 +8,8 @@
 import { callClaude, extractJSON, isApiError } from './api.js';
 import {
   Chunks, SubSkills, ChunkSkillBindings, SkillPrerequisites,
-  ParentSkills, Materials, withTransaction
+  ParentSkills, Materials, Facets, FacetMastery, ChunkFacetBindings,
+  withTransaction, getDb
 } from './db.js';
 import { CIP_TAXONOMY } from './cipData.js';
 
@@ -241,16 +242,41 @@ export function buildChapterProfile(chapterGroup) {
 // ============================================================
 
 /**
- * Build the system prompt for initial extraction.
+ * Build a chunk index for the LLM — gives it chunk IDs, labels, previews.
  */
-function buildInitialExtractionPrompt(profile, isFirstChapter) {
+function buildChunkIndex(chunks) {
+  return chunks.map(c => {
+    const label = c.label || `Section ${c.section_path || c.sectionPath || '?'}`;
+    const preview = (c.content || '').substring(0, 200).replace(/\n+/g, ' ');
+    const pCount = (c.content || '').split(/\n{2,}/).filter(p => p.trim()).length;
+    return `  [${c.id}] "${label}" (${pCount} paragraphs) — ${preview}...`;
+  }).join('\n');
+}
+
+/**
+ * Format chapter content with [CHUNK] markers and [P#] paragraph numbering.
+ */
+function formatChapterContentWithIds(chunks) {
+  return chunks.map(c => {
+    const label = c.label || `Section ${c.section_path || c.sectionPath || '?'}`;
+    const header = `[CHUNK id="${c.id}" label="${label}"]`;
+    const paragraphs = (c.content || '').split(/\n{2,}/).filter(p => p.trim());
+    const numbered = paragraphs.map((p, i) => `[P${i + 1}] ${p}`).join('\n\n');
+    return `${header}\n${numbered}\n[/CHUNK]`;
+  }).join('\n\n');
+}
+
+/**
+ * Build the system prompt for initial extraction (faceted output).
+ */
+function buildInitialExtractionPrompt(profile, isFirstChapter, chapterGroup) {
   const { sectionHeadings, estimatedSkillRange, candidates } = profile;
   const [min, max] = estimatedSkillRange;
 
   const boldTermList = candidates
     .filter(c => c.source === 'bold_term' || c.confidence === 'high')
     .map(c => c.term)
-    .slice(0, 50); // cap to avoid prompt bloat
+    .slice(0, 50);
 
   const defList = candidates
     .filter(c => c.definition)
@@ -261,11 +287,16 @@ function buildInitialExtractionPrompt(profile, isFirstChapter) {
     : (profile.contentSignals?.procedural) ? 'moderate'
     : (candidates.some(c => c.definition)) ? 'light' : 'none';
 
-  let prompt = `You are a curriculum analyst extracting skills from a textbook chapter.
+  const chunkIndex = buildChunkIndex(chapterGroup.chunks);
+
+  let prompt = `You are a curriculum analyst extracting skills with fine-grained facets from a textbook chapter.
 
 CHAPTER STRUCTURE:
 - Sections: ${sectionHeadings.length}
 ${sectionHeadings.map(h => `  - ${h}`).join('\n')}
+
+CHUNK INDEX (use these exact IDs in your sourceChunks references):
+${chunkIndex}
 
 STRUCTURAL ANALYSIS (from document parsing):
 - Bold terms identified (${boldTermList.length}): ${boldTermList.join(', ')}
@@ -275,18 +306,19 @@ STRUCTURAL ANALYSIS (from document parsing):
 - Tables: ${profile.contentSignals?.referenceHeavy ? 'many' : 'few/none'}
 - Code blocks: ${profile.contentSignals?.codeHeavy ? 'yes' : 'few/none'}
 
-TARGET: Extract ${min}-${max} skills from this chapter.
+TARGET: Extract ${min}-${max} skills, each with 2-6 facets.
 
 INSTRUCTIONS:
 1. Each bold term is a candidate concept. Confirm it as a skill, merge it with related terms, or reject it (not a standalone learnable concept).
 2. Each definition anchors at least one skill.
-3. Every skill must pass these tests:
+3. Every SKILL must pass these tests:
    - DIAGNOSTIC TEST: Can you ask ONE question to check if a student knows this? If not, it's too vague.
    - PRACTICE TEST: Can you generate 5 different problems at varying difficulty? If not, it's too narrow.
    - DECAY TEST: Can a student forget THIS skill independently of other skills? If not, merge it.
-4. Classify each skill:
-   - skillType: procedural (has steps/calculations) | conceptual (understanding/explanation) | recall (definitions/facts) | synthesis (combining multiple concepts)
-   - bloomsLevel: remember | understand | apply | analyze | evaluate | create`;
+4. Break each skill into 2-6 FACETS — independently-testable, independently-forgettable capabilities.
+   Each FACET must also pass the decay test: can a student forget THIS FACET while retaining other facets of the same skill?
+   If not, merge it into a neighboring facet.
+5. For each facet, reference the exact chunk IDs and paragraph numbers where that facet is taught.`;
 
   if (isFirstChapter) {
     const cipList = CIP_TAXONOMY.map(e => e.code + ' ' + e.name).join('\n');
@@ -318,10 +350,6 @@ Skill schema:
   "name": "Skill Name",
   "conceptKey": "category/kebab-skill-name",
   "description": "One sentence describing what the student can do",
-  "masteryCriteria": [
-    "Testable statement 1",
-    "Testable statement 2"
-  ],
   "category": "Chapter Topic",
   "skillType": "procedural",
   "bloomsLevel": "apply",
@@ -333,71 +361,120 @@ Skill schema:
     "equationPresence": true,
     "figureReferences": ["Figure 3.15"]
   },
-  "sourceChunkLabels": ["Section heading that contains this skill"]
+  "facets": [
+    {
+      "name": "Facet Name",
+      "conceptKey": "category/facet-kebab-name",
+      "description": "What the student can specifically do",
+      "skillType": "procedural",
+      "bloomsLevel": "apply",
+      "masteryCriteria": ["Specific testable statement about this facet"],
+      "evidence": { "anchorTerms": ["specific term"], "definitionsFound": ["specific definition"] },
+      "sourceChunks": [
+        {
+          "chunkId": "exact-chunk-id-from-index",
+          "bindingType": "teaches",
+          "paragraphs": [3, 4, 5],
+          "confidence": 0.95
+        }
+      ]
+    }
+  ]
 }]
 
 RULES:
 - Prerequisites reference concept keys of OTHER skills in this chapter (cross-chapter wired later).
-- conceptKey format: kebab-case "{category}/{skill-name}". Must be deterministic — same content should always produce the same key.
-- masteryCriteria: 2-4 testable statements per skill.
-- DO NOT extract skills for front matter, table of contents, or index entries.
-- DO NOT create skills for individual vocabulary words unless they represent a distinct learnable concept.`;
+- conceptKey format: kebab-case "{category}/{skill-name}". Must be deterministic.
+- Each skill MUST have 2-6 facets. Each facet is independently testable and independently forgettable.
+- masteryCriteria on facets: 1-3 testable statements per facet.
+- sourceChunks: Use EXACT chunk IDs from the CHUNK INDEX above.
+  - bindingType: "teaches" (chunk explains/demonstrates this facet), "references" (chunk mentions it), "prerequisite_for" (chunk teaches prerequisite knowledge)
+  - paragraphs: Array of paragraph numbers [P1]=1, [P2]=2, etc. that are most relevant to this facet
+  - confidence: 0.0-1.0 how strongly this chunk teaches this facet
+- A facet may have ZERO sourceChunks if the concept is implied but not explicitly taught (rare).
+- A facet may reference MULTIPLE chunks if the concept spans sections.
+- DO NOT extract skills/facets for front matter, table of contents, or index entries.
+- DO NOT create facets for individual vocabulary words unless they represent a distinct learnable concept.`;
 
   return prompt;
 }
 
 /**
- * Build the system prompt for incremental enrichment.
+ * Build the system prompt for incremental enrichment (facet-level).
  */
-function buildEnrichmentPrompt(existingSkills, materialLabel) {
+function buildEnrichmentPrompt(existingSkills, existingFacets, materialLabel, chunkIndex) {
+  const facetsBySkill = new Map();
+  for (const f of existingFacets) {
+    if (!facetsBySkill.has(f.skill_id)) facetsBySkill.set(f.skill_id, []);
+    facetsBySkill.get(f.skill_id).push(f);
+  }
+
   const skillsSummary = existingSkills.map(s => {
-    const criteria = typeof s.mastery_criteria === 'string'
-      ? JSON.parse(s.mastery_criteria || '[]') : (s.mastery_criteria || []);
-    const evidence = typeof s.evidence === 'string'
-      ? JSON.parse(s.evidence || '{}') : (s.evidence || {});
-    return `  - ${s.concept_key}: "${s.name}" [${s.category || 'uncategorized'}]
-    criteria: ${criteria.map(c => typeof c === 'string' ? c : c.text).join('; ')}
-    anchors: ${(evidence.anchorTerms || []).join(', ')}`;
+    const facets = facetsBySkill.get(s.id) || [];
+    const facetLines = facets.map(f => {
+      const criteria = typeof f.mastery_criteria === 'string'
+        ? JSON.parse(f.mastery_criteria || '[]') : (f.mastery_criteria || []);
+      return `    - ${f.concept_key || '?'}: "${f.name}" criteria: ${criteria.map(c => typeof c === 'string' ? c : c.text).slice(0, 3).join('; ')}`;
+    }).join('\n');
+    return `  - ${s.concept_key}: "${s.name}" [${s.category || 'uncategorized'}]\n${facetLines}`;
   }).join('\n');
 
-  return `You are a curriculum analyst. A student has uploaded new material for a course that already has extracted skills.
+  return `You are a curriculum analyst. A student has uploaded new material for a course that already has extracted skills and facets.
 
-EXISTING SKILLS (${existingSkills.length} total):
+EXISTING SKILLS AND FACETS (${existingSkills.length} skills, ${existingFacets.length} facets):
 ${skillsSummary}
+
+CHUNK INDEX (use these exact IDs in sourceChunks references):
+${chunkIndex}
 
 NEW MATERIAL — ${materialLabel}:
 
 YOUR JOB:
-1. For each concept in the new material, check if it matches an existing skill.
-   Match by CONCEPT, not by exact wording. "K-map reduction" and "Karnaugh Map Simplification" are the same concept.
-2. For MATCHING concepts:
+1. For each concept in the new material, check if it matches an existing skill/facet.
+   Match by CONCEPT, not by exact wording.
+2. For MATCHING skills:
    - Return the existing skill's conceptKey
-   - Add any NEW mastery criteria the new material reveals
-   - Add any new anchor terms or definitions
-   - Do NOT duplicate existing criteria
+   - For each existing facet that the new material covers, add new sourceChunks bindings
+   - If the new material reveals a NEW facet under an existing skill, add it
 3. For GENUINELY NEW concepts (not covered by any existing skill):
-   - Create a new skill with full schema
+   - Create a new skill with full faceted schema
 4. Apply the same quality tests: diagnostic, practice, decay.
-5. For each NEW skill, include a cipCode and parentDisplayName.
 
 RESPOND WITH ONLY a JSON object:
 {
   "enrichments": [
     {
       "existingConceptKey": "category/skill-name",
-      "newCriteria": ["New testable statement"],
-      "newAnchorTerms": ["new term"],
-      "newDefinitions": [],
-      "sourceLabel": "${materialLabel}"
+      "facetUpdates": [
+        {
+          "existingFacetConceptKey": "category/facet-name",
+          "newCriteria": ["New testable statement"],
+          "newAnchorTerms": ["new term"],
+          "sourceChunks": [
+            { "chunkId": "exact-chunk-id", "bindingType": "teaches", "paragraphs": [2, 3], "confidence": 0.9 }
+          ]
+        }
+      ],
+      "newFacets": [
+        {
+          "name": "New Facet", "conceptKey": "category/new-facet",
+          "description": "...", "skillType": "procedural", "bloomsLevel": "apply",
+          "masteryCriteria": ["..."],
+          "evidence": { "anchorTerms": [], "definitionsFound": [] },
+          "sourceChunks": [
+            { "chunkId": "exact-chunk-id", "bindingType": "teaches", "paragraphs": [1, 2], "confidence": 0.9 }
+          ]
+        }
+      ]
     }
   ],
   "newSkills": [
     {
-      "name": "...", "conceptKey": "...", "description": "...",
-      "masteryCriteria": ["..."], "category": "...",
+      "name": "...", "conceptKey": "...", "description": "...", "category": "...",
       "skillType": "...", "bloomsLevel": "...",
-      "prerequisites": [], "evidence": {...},
-      "sourceChunkLabels": ["..."],
+      "prerequisites": [],
+      "evidence": { "anchorTerms": [], "definitionsFound": [] },
+      "facets": [ { "name": "...", "conceptKey": "...", "description": "...", "skillType": "...", "bloomsLevel": "...", "masteryCriteria": ["..."], "evidence": {}, "sourceChunks": [{ "chunkId": "...", "bindingType": "teaches", "paragraphs": [1], "confidence": 0.9 }] } ],
       "cipCode": "XX.XX", "parentDisplayName": "..."
     }
   ],
@@ -547,10 +624,70 @@ export function postProcessChapterSkills(skills, chapterProfile, materialLabel) 
     }
   }
 
-  // 7. MasteryCriteria minimum
+  // 7. MasteryCriteria minimum (skill-level — for backward compat on sub_skills table)
   for (const s of deduped) {
     if (!s.masteryCriteria || s.masteryCriteria.length < 2) {
       issues.push({ type: 'insufficient_criteria', skill: s.conceptKey, count: s.masteryCriteria?.length || 0 });
+    }
+  }
+
+  // 8. Facet auto-generation if missing
+  for (const s of deduped) {
+    if (!s.facets || s.facets.length === 0) {
+      // LLM didn't produce facets — auto-generate a single facet from skill criteria
+      s.facets = [{
+        name: s.name,
+        conceptKey: s.conceptKey ? s.conceptKey + '/core' : null,
+        description: s.description,
+        skillType: s.skillType,
+        bloomsLevel: s.bloomsLevel,
+        masteryCriteria: (s.masteryCriteria || []).map(c => typeof c === 'string' ? c : c.text),
+        evidence: s.evidence || {},
+        sourceChunks: [],
+      }];
+      issues.push({ type: 'auto_facet_created', skill: s.conceptKey });
+    }
+    if (s.facets.length > 8) {
+      issues.push({ type: 'excessive_facets', skill: s.conceptKey, count: s.facets.length });
+    }
+  }
+
+  // 9. Facet conceptKey uniqueness
+  const allFacetKeys = new Set();
+  for (const s of deduped) {
+    for (const f of (s.facets || [])) {
+      if (!f.conceptKey) continue;
+      if (allFacetKeys.has(f.conceptKey)) {
+        let counter = 2;
+        while (allFacetKeys.has(f.conceptKey + '-' + counter)) counter++;
+        issues.push({ type: 'duplicate_facet_key', facet: f.conceptKey });
+        f.conceptKey = f.conceptKey + '-' + counter;
+      }
+      allFacetKeys.add(f.conceptKey);
+    }
+  }
+
+  // 10. Facet mastery criteria wrapping
+  for (const s of deduped) {
+    for (const f of (s.facets || [])) {
+      if (Array.isArray(f.masteryCriteria)) {
+        f.masteryCriteria = f.masteryCriteria.map(text =>
+          typeof text === 'string'
+            ? { text, source: materialLabel, addedAt: new Date().toISOString() }
+            : text
+        );
+      } else {
+        f.masteryCriteria = [];
+      }
+    }
+  }
+
+  // 11. Facet criteria minimum
+  for (const s of deduped) {
+    for (const f of (s.facets || [])) {
+      if (!f.masteryCriteria || f.masteryCriteria.length < 1) {
+        issues.push({ type: 'facet_no_criteria', facet: f.conceptKey });
+      }
     }
   }
 
@@ -558,63 +695,118 @@ export function postProcessChapterSkills(skills, chapterProfile, materialLabel) 
 }
 
 /**
- * Resolve sourceChunkLabels to chunk IDs for binding.
- * Falls back to binding to ALL chapter chunks if unresolved.
+ * Resolve chunk bindings directly from LLM facet output.
+ * Reads chunk IDs from facet.sourceChunks, validates against valid chunk set.
+ * Falls back to heading-label matching at lower confidence for invalid IDs.
  *
- * @param {Array} skills - Post-processed skills with sourceChunkLabels
- * @param {object} chapterGroup - Chapter group with sectionHeadings and chunkIds
- * @returns {Array<{ subSkillId, chunkId, extractionContext, confidence }>}
+ * @param {Array} skills - Post-processed skills with facets[].sourceChunks
+ * @param {object} chapterGroup - Chapter group with chunks
+ * @param {Map<string, number>} facetKeyToId - Maps facet conceptKey to facet DB ID
+ * @returns {{ facetBindings: Array, skillBindings: Array, issues: Array }}
  */
-export function resolveChunkBindings(skills, chapterGroup, skillIdMap) {
-  const bindings = [];
-  const { chunkIds, chunks } = chapterGroup;
+export function resolveChunkBindingsDirect(skills, chapterGroup, facetKeyToId) {
+  const facetBindings = [];
+  const skillBindings = []; // backward-compat chunk_skill_bindings
+  const issues = [];
+  const validChunkIds = new Set(chapterGroup.chunkIds);
 
-  // Build heading → chunkId lookup
+  // Build paragraph count map for validation
+  const chunkParagraphCounts = new Map();
+  for (const chunk of chapterGroup.chunks) {
+    const pCount = (chunk.content || '').split(/\n{2,}/).filter(p => p.trim()).length;
+    chunkParagraphCounts.set(chunk.id, pCount);
+  }
+
+  // Build heading → chunkId lookup for fallback
   const headingToChunks = new Map();
-  for (const chunk of chunks) {
+  for (const chunk of chapterGroup.chunks) {
     const heading = chunk.label || `Section ${chunk.section_path || chunk.sectionPath}`;
     if (!headingToChunks.has(heading)) headingToChunks.set(heading, []);
     headingToChunks.get(heading).push(chunk.id);
   }
 
+  const validBindingTypes = new Set(['teaches', 'references', 'prerequisite_for']);
+
   for (const skill of skills) {
-    const subSkillId = skillIdMap.get(skill.conceptKey);
-    if (!subSkillId) continue;
+    // Track chunk IDs bound at the skill level for backward-compat bindings
+    const skillChunkIds = new Set();
 
-    const labels = skill.sourceChunkLabels || [];
-    let resolved = false;
+    for (const facet of (skill.facets || [])) {
+      const facetId = facetKeyToId.get(facet.conceptKey);
+      if (!facetId) continue;
 
-    for (const label of labels) {
-      // Try exact match
-      if (headingToChunks.has(label)) {
-        for (const cid of headingToChunks.get(label)) {
-          bindings.push({ chunkId: cid, subSkillId, extractionContext: label, confidence: 1.0 });
-        }
-        resolved = true;
-        continue;
-      }
-      // Try substring match
-      for (const [heading, cids] of headingToChunks) {
-        if (heading.toLowerCase().includes(label.toLowerCase()) ||
-            label.toLowerCase().includes(heading.toLowerCase())) {
-          for (const cid of cids) {
-            bindings.push({ chunkId: cid, subSkillId, extractionContext: heading, confidence: 0.9 });
+      let teachRank = 1;
+      const sourceChunks = facet.sourceChunks || [];
+
+      for (const sc of sourceChunks) {
+        const bindingType = validBindingTypes.has(sc.bindingType) ? sc.bindingType : 'teaches';
+
+        if (validChunkIds.has(sc.chunkId)) {
+          // Direct ID match — best case
+          const maxP = chunkParagraphCounts.get(sc.chunkId) || 999;
+          const validParagraphs = (sc.paragraphs || []).filter(p => p > 0 && p <= maxP);
+
+          facetBindings.push({
+            chunkId: sc.chunkId,
+            facetId,
+            extractionContext: null,
+            confidence: sc.confidence || 1.0,
+            bindingType,
+            qualityRank: bindingType === 'teaches' ? teachRank++ : 0,
+            contentRange: validParagraphs.length > 0
+              ? JSON.stringify({ paragraphs: validParagraphs })
+              : null,
+          });
+          skillChunkIds.add(sc.chunkId);
+        } else {
+          // Invalid chunk ID — try heading-label fallback
+          issues.push({ type: 'invalid_chunk_id', facet: facet.conceptKey, chunkId: sc.chunkId });
+
+          // Attempt to match by treating chunkId as a partial label
+          let fallbackResolved = false;
+          for (const [heading, cids] of headingToChunks) {
+            if (heading.toLowerCase().includes((sc.chunkId || '').toLowerCase()) ||
+                (sc.chunkId || '').toLowerCase().includes(heading.toLowerCase())) {
+              for (const cid of cids) {
+                facetBindings.push({
+                  chunkId: cid,
+                  facetId,
+                  extractionContext: heading,
+                  confidence: 0.6,
+                  bindingType,
+                  qualityRank: 0,
+                  contentRange: null,
+                });
+                skillChunkIds.add(cid);
+              }
+              fallbackResolved = true;
+              break;
+            }
           }
-          resolved = true;
-          break;
+          if (!fallbackResolved) {
+            issues.push({ type: 'unresolvable_chunk_ref', facet: facet.conceptKey, chunkId: sc.chunkId });
+          }
         }
+      }
+
+      // Log unbound facets (no sourceChunks at all)
+      if (sourceChunks.length === 0) {
+        issues.push({ type: 'unbound_facet', facet: facet.conceptKey });
       }
     }
 
-    // Fallback: bind to ALL chunks in the chapter
-    if (!resolved) {
-      for (const cid of chunkIds) {
-        bindings.push({ chunkId: cid, subSkillId, extractionContext: null, confidence: 0.5 });
-      }
+    // Build backward-compat skill-level bindings from deduplicated chunk IDs
+    for (const cid of skillChunkIds) {
+      skillBindings.push({
+        chunkId: cid,
+        subSkillId: null, // filled in by caller
+        extractionContext: null,
+        confidence: 1.0,
+      });
     }
   }
 
-  return bindings;
+  return { facetBindings, skillBindings, issues };
 }
 
 // ============================================================
@@ -687,12 +879,10 @@ async function wireCrossChapterPrereqs(skillsByChapter, conceptKeyToId) {
  */
 async function extractChapter(chapterGroup, isFirstChapter, materialLabel, options = {}) {
   const profile = buildChapterProfile(chapterGroup);
-  const systemPrompt = buildInitialExtractionPrompt(profile, isFirstChapter);
+  const systemPrompt = buildInitialExtractionPrompt(profile, isFirstChapter, chapterGroup);
 
-  // Build chapter content from chunks
-  const chapterContent = chapterGroup.chunks
-    .map(c => c.content || '')
-    .join('\n\n---\n\n');
+  // Build chapter content with [CHUNK id="..."] markers and [P#] paragraph numbering
+  const chapterContent = formatChapterContentWithIds(chapterGroup.chunks);
 
   let response = null;
 
@@ -707,7 +897,7 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
       response = await callClaude(
         systemPrompt,
         [{ role: 'user', content: `CHAPTER CONTENT:\n\n${chapterContent}` }],
-        8192,
+        12288, // Increased for faceted output
         true // useHaiku
       );
 
@@ -808,6 +998,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
   const allSkillsByChapter = [];
   const conceptKeyToId = new Map();
   let totalSkills = 0;
+  const allFacetIds = [];
 
   for (let i = 0; i < chapterGroups.length; i++) {
     const group = chapterGroups[i];
@@ -834,25 +1025,29 @@ export async function extractCourse(courseId, materialId, options = {}) {
     // --- Save to DB in a single transaction ---
     try {
       await withTransaction(async () => {
-        // Prepare skill records
-        const skillRecords = result.skills.map(s => ({
-          parentSkillId: parentSkillId,
-          name: s.name,
-          description: s.description || null,
-          skillType: s.skillType || null,
-          sourceCourseId: courseId,
-          conceptKey: s.conceptKey,
-          category: s.category || null,
-          bloomsLevel: s.bloomsLevel || null,
-          masteryCriteria: s.masteryCriteria,
-          evidence: s.evidence || {},
-          extractionModel: 'claude-haiku-4-5',
-          schemaVersion: 2,
-        }));
+        // Prepare skill records — masteryCriteria aggregated from facets for backward compat
+        const skillRecords = result.skills.map(s => {
+          // Aggregate mastery criteria from all facets for the sub_skills.mastery_criteria column
+          const allCriteria = (s.facets || []).flatMap(f => f.masteryCriteria || []);
+          return {
+            parentSkillId: parentSkillId,
+            name: s.name,
+            description: s.description || null,
+            skillType: s.skillType || null,
+            sourceCourseId: courseId,
+            conceptKey: s.conceptKey,
+            category: s.category || null,
+            bloomsLevel: s.bloomsLevel || null,
+            masteryCriteria: allCriteria.length > 0 ? allCriteria : (s.masteryCriteria || []),
+            evidence: s.evidence || {},
+            extractionModel: 'claude-haiku-4-5',
+            schemaVersion: 2,
+          };
+        });
 
         const skillIds = await SubSkills.createBatch(skillRecords, { externalTransaction: true });
 
-        // Map conceptKey → id for binding resolution and cross-chapter wiring
+        // Map conceptKey → id for cross-chapter wiring
         const skillIdMap = new Map();
         for (let j = 0; j < result.skills.length; j++) {
           const key = result.skills[j].conceptKey;
@@ -860,9 +1055,73 @@ export async function extractCourse(courseId, materialId, options = {}) {
           conceptKeyToId.set(key, skillIds[j]);
         }
 
-        // Resolve chunk bindings
-        const bindings = resolveChunkBindings(result.skills, group, skillIdMap);
-        await ChunkSkillBindings.createBatch(bindings, { externalTransaction: true });
+        // Create facets under each skill
+        const facetKeyToId = new Map();
+        for (let j = 0; j < result.skills.length; j++) {
+          const skill = result.skills[j];
+          const skillId = skillIds[j];
+          const facetRecords = (skill.facets || []).map(f => ({
+            skillId,
+            name: f.name,
+            description: f.description || null,
+            conceptKey: f.conceptKey || null,
+            skillType: f.skillType || skill.skillType || null,
+            bloomsLevel: f.bloomsLevel || skill.bloomsLevel || null,
+            masteryCriteria: f.masteryCriteria || [],
+            evidence: f.evidence || {},
+          }));
+          if (facetRecords.length > 0) {
+            const facetIds = await Facets.createBatch(facetRecords, { externalTransaction: true });
+            for (let k = 0; k < facetIds.length; k++) {
+              const fKey = skill.facets[k].conceptKey;
+              if (fKey) facetKeyToId.set(fKey, facetIds[k]);
+              allFacetIds.push(facetIds[k]);
+            }
+            // Create facet_mastery records with FSRS defaults
+            for (const fid of facetIds) {
+              await FacetMastery.upsert(fid, {
+                difficulty: 0.3, stability: 1.0, retrievability: 1.0,
+                reps: 0, lapses: 0, lastReviewAt: null, nextReviewAt: null,
+                totalMasteryPoints: 0.0,
+              });
+            }
+          }
+        }
+
+        // Resolve chunk bindings from facet sourceChunks (direct ID resolution)
+        const { facetBindings, skillBindings: rawSkillBindings, issues: bindIssues } =
+          resolveChunkBindingsDirect(result.skills, group, facetKeyToId);
+        allIssues.push(...bindIssues);
+
+        // Save facet-level bindings
+        if (facetBindings.length > 0) {
+          await ChunkFacetBindings.createBatch(facetBindings, { externalTransaction: true });
+        }
+
+        // Save backward-compat skill-level bindings
+        const skillLevelBindings = [];
+        const seenSkillChunks = new Set();
+        for (const skill of result.skills) {
+          const skillId = skillIdMap.get(skill.conceptKey);
+          if (!skillId) continue;
+          for (const f of (skill.facets || [])) {
+            for (const sc of (f.sourceChunks || [])) {
+              const key = `${skillId}:${sc.chunkId}`;
+              if (!seenSkillChunks.has(key) && group.chunkIds.includes(sc.chunkId)) {
+                seenSkillChunks.add(key);
+                skillLevelBindings.push({
+                  chunkId: sc.chunkId,
+                  subSkillId: skillId,
+                  extractionContext: null,
+                  confidence: sc.confidence || 1.0,
+                });
+              }
+            }
+          }
+        }
+        if (skillLevelBindings.length > 0) {
+          await ChunkSkillBindings.createBatch(skillLevelBindings, { externalTransaction: true });
+        }
 
         // Save within-chapter prerequisites
         const prereqLinks = [];
@@ -924,13 +1183,20 @@ export async function extractCourse(courseId, materialId, options = {}) {
 
   onProgress?.(`Extraction complete: ${totalSkills} skills from ${allSkillsByChapter.length} chapters.`);
 
+  // Count facets for reporting
+  const totalFacets = allSkillsByChapter.reduce((sum, ch) =>
+    sum + ch.skills.reduce((s2, sk) => s2 + (sk.facets?.length || 0), 0), 0);
+  onProgress?.(`Total facets created: ${totalFacets}`);
+
   return {
     totalSkills,
+    totalFacets,
     chapters: allSkillsByChapter.map(c => ({ chapter: c.chapter, skillCount: c.skills.length })),
     issues: allIssues,
     cipCode,
     parentDisplayName,
     createdSkillIds: [...conceptKeyToId.values()],
+    createdFacetIds: allFacetIds,
   };
 }
 
@@ -952,15 +1218,13 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   const { onProgress } = options;
   const allIssues = [];
 
-  // Load existing skills scoped to THIS course only.
-  // Using getAllConceptKeys() was wrong — it matched against skills from other
-  // courses, causing enrichment to update the wrong course's skills.
+  // Load existing skills and facets scoped to THIS course only.
   const existingSkills = await SubSkills.getByCourse(courseId);
   if (existingSkills.length === 0) {
-    // No existing skills in this course — run full extraction instead
     onProgress?.('No existing skills found for this course. Running full extraction.');
     return extractCourse(courseId, materialId, options);
   }
+  const existingFacets = await Facets.getByCourse(courseId);
 
   // Load new material chunks — only unfinished ones
   const allChunks = await Chunks.getByMaterial(materialId);
@@ -978,31 +1242,29 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   const material = await Materials.getById(materialId);
   const materialLabel = material?.label || 'Unknown Material';
 
-  // Build content from unfinished chunks only
-  const content = chunks.map(c => c.content || '').join('\n\n---\n\n');
+  // Build content with chunk ID markers
+  const content = formatChapterContentWithIds(chunks);
+  const chunkIndex = buildChunkIndex(chunks);
 
-  // Build enrichment prompt
-  const systemPrompt = buildEnrichmentPrompt(existingSkills, materialLabel);
+  // Build enrichment prompt with facets
+  const systemPrompt = buildEnrichmentPrompt(existingSkills, existingFacets, materialLabel, chunkIndex);
 
   onProgress?.(`Enriching from ${materialLabel} (${chunks.length} chunks)...`);
 
-  // LLM call
   const response = await callClaude(
     systemPrompt,
     [{ role: 'user', content: `NEW MATERIAL CONTENT:\n\n${content}` }],
-    8192,
-    true // useHaiku
+    12288,
+    true
   );
 
   if (isApiError(response)) {
-    // Mark unfinished chunks as failed (increments fail_count, transitions to terminal at threshold)
     await Chunks.markFailedBatch(unfinishedChunkIds);
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_api_error', error: response }] };
   }
 
   const parsed = extractJSON(response);
   if (!parsed || (!parsed.enrichments && !parsed.newSkills)) {
-    // Mark unfinished chunks as failed
     await Chunks.markFailedBatch(unfinishedChunkIds);
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_parse_failed' }] };
   }
@@ -1010,8 +1272,10 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   let enrichedCount = 0;
   let newSkillCount = 0;
   const createdSkillIds = [];
+  const createdFacetIds = [];
+  const validChunkIds = new Set(chunks.map(c => c.id));
 
-  // Process enrichments
+  // Process enrichments (facet-level)
   for (const e of (parsed.enrichments || [])) {
     const existing = await SubSkills.findByConceptKey(e.existingConceptKey);
     if (!existing) {
@@ -1019,36 +1283,107 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
       continue;
     }
 
-    // Update skill with new criteria/evidence
-    await SubSkills.updateFromReextraction(existing.id, {
-      description: existing.description, // keep existing
-      masteryCriteria: e.newCriteria || [],
-      evidence: { anchorTerms: e.newAnchorTerms || [], definitionsFound: e.newDefinitions || [] },
-      materialLabel: e.sourceLabel || materialLabel,
-    });
+    // Process facet updates
+    for (const fu of (e.facetUpdates || [])) {
+      const existingFacet = await Facets.findByConceptKey(fu.existingFacetConceptKey);
+      if (!existingFacet) {
+        allIssues.push({ type: 'facet_update_unresolved', key: fu.existingFacetConceptKey });
+        continue;
+      }
 
-    // Bind to the chunks we actually sent
-    const bindings = chunks.map(c => ({
-      chunkId: c.id,
-      subSkillId: existing.id,
-      extractionContext: null,
-      confidence: 0.8,
-    }));
-    await ChunkSkillBindings.createBatch(bindings);
+      // Add new criteria to existing facet
+      if (fu.newCriteria?.length) {
+        const oldCriteria = typeof existingFacet.mastery_criteria === 'string'
+          ? JSON.parse(existingFacet.mastery_criteria || '[]') : (existingFacet.mastery_criteria || []);
+        const oldTexts = new Set(oldCriteria.map(c => typeof c === 'string' ? c : c.text));
+        const newWrapped = fu.newCriteria.filter(t => !oldTexts.has(t))
+          .map(text => ({ text, source: materialLabel, addedAt: new Date().toISOString() }));
+        if (newWrapped.length > 0) {
+          await Facets.update(existingFacet.id, {
+            mastery_criteria: [...oldCriteria, ...newWrapped],
+          });
+        }
+      }
+
+      // Add new chunk bindings for this facet
+      for (const sc of (fu.sourceChunks || [])) {
+        if (!validChunkIds.has(sc.chunkId)) continue;
+        await ChunkFacetBindings.create({
+          chunkId: sc.chunkId,
+          facetId: existingFacet.id,
+          extractionContext: null,
+          confidence: sc.confidence || 0.9,
+          bindingType: sc.bindingType || 'teaches',
+          qualityRank: 0,
+          contentRange: sc.paragraphs?.length
+            ? JSON.stringify({ paragraphs: sc.paragraphs })
+            : null,
+        });
+      }
+    }
+
+    // Process new facets under existing skill
+    for (const nf of (e.newFacets || [])) {
+      const wrappedCriteria = (nf.masteryCriteria || []).map(text =>
+        typeof text === 'string'
+          ? { text, source: materialLabel, addedAt: new Date().toISOString() }
+          : text
+      );
+      const facetId = await Facets.create({
+        skillId: existing.id,
+        name: nf.name,
+        description: nf.description,
+        conceptKey: nf.conceptKey,
+        skillType: nf.skillType || existing.skill_type,
+        bloomsLevel: nf.bloomsLevel || existing.blooms_level,
+        masteryCriteria: wrappedCriteria,
+        evidence: nf.evidence || {},
+      });
+      createdFacetIds.push(facetId);
+      await FacetMastery.upsert(facetId, {
+        difficulty: 0.3, stability: 1.0, retrievability: 1.0,
+        reps: 0, lapses: 0, lastReviewAt: null, nextReviewAt: null,
+        totalMasteryPoints: 0.0,
+      });
+
+      // Create chunk bindings for new facet
+      for (const sc of (nf.sourceChunks || [])) {
+        if (!validChunkIds.has(sc.chunkId)) continue;
+        await ChunkFacetBindings.create({
+          chunkId: sc.chunkId,
+          facetId,
+          extractionContext: null,
+          confidence: sc.confidence || 0.9,
+          bindingType: sc.bindingType || 'teaches',
+          qualityRank: 0,
+          contentRange: sc.paragraphs?.length
+            ? JSON.stringify({ paragraphs: sc.paragraphs })
+            : null,
+        });
+      }
+    }
+
+    // Update skill-level criteria (aggregate from all facets)
+    await SubSkills.updateFromReextraction(existing.id, {
+      description: existing.description,
+      masteryCriteria: (e.facetUpdates || []).flatMap(fu => fu.newCriteria || []),
+      evidence: { anchorTerms: [], definitionsFound: [] },
+      materialLabel,
+    });
 
     enrichedCount++;
   }
 
-  // Process new skills
+  // Process new skills (full faceted schema)
   for (const ns of (parsed.newSkills || [])) {
-    // Wrap criteria
-    const wrappedCriteria = (ns.masteryCriteria || []).map(text =>
-      typeof text === 'string'
-        ? { text, source: materialLabel, addedAt: new Date().toISOString() }
-        : text
+    const allCriteria = (ns.facets || []).flatMap(f =>
+      (f.masteryCriteria || []).map(text =>
+        typeof text === 'string'
+          ? { text, source: materialLabel, addedAt: new Date().toISOString() }
+          : text
+      )
     );
 
-    // Find or create parent skill
     const parentId = ns.cipCode
       ? await ParentSkills.findOrCreateByCip(ns.cipCode, ns.parentDisplayName || ns.cipCode)
       : (existingSkills[0]?.parent_skill_id || null);
@@ -1067,26 +1402,56 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
       conceptKey: ns.conceptKey,
       category: ns.category,
       bloomsLevel: ns.bloomsLevel,
-      masteryCriteria: wrappedCriteria,
+      masteryCriteria: allCriteria,
       evidence: ns.evidence || {},
       extractionModel: 'claude-haiku-4-5',
       schemaVersion: 2,
     });
 
-    // Bind to the chunks we actually sent
-    const bindings = chunks.map(c => ({
-      chunkId: c.id,
-      subSkillId: skillId,
-      extractionContext: null,
-      confidence: 0.8,
-    }));
-    await ChunkSkillBindings.createBatch(bindings);
+    // Create facets
+    for (const f of (ns.facets || [])) {
+      const wrappedCriteria = (f.masteryCriteria || []).map(text =>
+        typeof text === 'string'
+          ? { text, source: materialLabel, addedAt: new Date().toISOString() }
+          : text
+      );
+      const facetId = await Facets.create({
+        skillId,
+        name: f.name,
+        description: f.description,
+        conceptKey: f.conceptKey,
+        skillType: f.skillType || ns.skillType,
+        bloomsLevel: f.bloomsLevel || ns.bloomsLevel,
+        masteryCriteria: wrappedCriteria,
+        evidence: f.evidence || {},
+      });
+      createdFacetIds.push(facetId);
+      await FacetMastery.upsert(facetId, {
+        difficulty: 0.3, stability: 1.0, retrievability: 1.0,
+        reps: 0, lapses: 0, lastReviewAt: null, nextReviewAt: null,
+        totalMasteryPoints: 0.0,
+      });
+
+      for (const sc of (f.sourceChunks || [])) {
+        if (!validChunkIds.has(sc.chunkId)) continue;
+        await ChunkFacetBindings.create({
+          chunkId: sc.chunkId,
+          facetId,
+          extractionContext: null,
+          confidence: sc.confidence || 0.9,
+          bindingType: sc.bindingType || 'teaches',
+          qualityRank: 0,
+          contentRange: sc.paragraphs?.length
+            ? JSON.stringify({ paragraphs: sc.paragraphs })
+            : null,
+        });
+      }
+    }
 
     createdSkillIds.push(skillId);
     newSkillCount++;
   }
 
-  // Mark only the chunks we actually sent as extracted
   await Chunks.updateStatusBatch(unfinishedChunkIds, 'extracted');
 
   onProgress?.(`Enrichment complete: ${enrichedCount} enriched, ${newSkillCount} new skills.`);
@@ -1096,6 +1461,7 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
     newSkills: newSkillCount,
     issues: allIssues,
     createdSkillIds,
+    createdFacetIds,
   };
 }
 
@@ -1175,6 +1541,7 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
 
   const conceptKeyToId = new Map();
   const createdSkillIds = [];
+  const createdFacetIds = [];
   let totalSkills = 0;
 
   try {
@@ -1192,8 +1559,9 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
         conceptKeyToId.set(m.extracted.conceptKey, m.existingId);
       }
 
-      // 2. Create new skills
+      // 2. Create new skills with facets
       for (const ns of newSkills) {
+        const allCriteria = (ns.facets || []).flatMap(f => f.masteryCriteria || []);
         const skillId = await SubSkills.create({
           parentSkillId,
           name: ns.name,
@@ -1203,30 +1571,79 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
           conceptKey: ns.conceptKey,
           category: ns.category,
           bloomsLevel: ns.bloomsLevel,
-          masteryCriteria: ns.masteryCriteria,
+          masteryCriteria: allCriteria.length > 0 ? allCriteria : (ns.masteryCriteria || []),
           evidence: ns.evidence || {},
           extractionModel: 'claude-haiku-4-5',
           schemaVersion: 2,
         });
         createdSkillIds.push(skillId);
         conceptKeyToId.set(ns.conceptKey, skillId);
+
+        // Create facets for new skills
+        for (const f of (ns.facets || [])) {
+          const facetId = await Facets.create({
+            skillId,
+            name: f.name, description: f.description,
+            conceptKey: f.conceptKey,
+            skillType: f.skillType || ns.skillType,
+            bloomsLevel: f.bloomsLevel || ns.bloomsLevel,
+            masteryCriteria: f.masteryCriteria || [],
+            evidence: f.evidence || {},
+          });
+          createdFacetIds.push(facetId);
+          await FacetMastery.upsert(facetId, {
+            difficulty: 0.3, stability: 1.0, retrievability: 1.0,
+            reps: 0, lapses: 0, lastReviewAt: null, nextReviewAt: null,
+            totalMasteryPoints: 0.0,
+          });
+        }
       }
 
       // 3. Resolve chunk bindings + prerequisites per chapter
       for (const chGroup of allSkillsByChapter) {
-        const skillIdMap = new Map();
+        // Build facetKeyToId for this chapter's skills
+        const facetKeyToId = new Map();
         for (const s of chGroup.skills) {
-          const id = conceptKeyToId.get(s.conceptKey);
-          if (id) skillIdMap.set(s.conceptKey, id);
+          const skillId = conceptKeyToId.get(s.conceptKey);
+          if (!skillId) continue;
+          const skillFacets = await Facets.getBySkill(skillId);
+          for (const f of skillFacets) {
+            if (f.concept_key) facetKeyToId.set(f.concept_key, f.id);
+          }
         }
 
-        const bindings = resolveChunkBindings(chGroup.skills, chGroup, skillIdMap);
-        await ChunkSkillBindings.createBatch(bindings, { externalTransaction: true });
+        // Resolve facet-level bindings
+        const { facetBindings, issues: bindIssues } =
+          resolveChunkBindingsDirect(chGroup.skills, chGroup, facetKeyToId);
+        allIssues.push(...bindIssues);
+        if (facetBindings.length > 0) {
+          await ChunkFacetBindings.createBatch(facetBindings, { externalTransaction: true });
+        }
+
+        // Backward-compat skill-level bindings
+        const seenSkillChunks = new Set();
+        const skillLevelBindings = [];
+        for (const s of chGroup.skills) {
+          const skillId = conceptKeyToId.get(s.conceptKey);
+          if (!skillId) continue;
+          for (const f of (s.facets || [])) {
+            for (const sc of (f.sourceChunks || [])) {
+              const key = `${skillId}:${sc.chunkId}`;
+              if (!seenSkillChunks.has(key) && chGroup.chunkIds.includes(sc.chunkId)) {
+                seenSkillChunks.add(key);
+                skillLevelBindings.push({ chunkId: sc.chunkId, subSkillId: skillId, extractionContext: null, confidence: sc.confidence || 1.0 });
+              }
+            }
+          }
+        }
+        if (skillLevelBindings.length > 0) {
+          await ChunkSkillBindings.createBatch(skillLevelBindings, { externalTransaction: true });
+        }
 
         // Within-chapter prerequisites
         const prereqLinks = [];
         for (const s of chGroup.skills) {
-          const skillId = skillIdMap.get(s.conceptKey);
+          const skillId = conceptKeyToId.get(s.conceptKey);
           if (!skillId) continue;
           for (const prereqKey of (s.prerequisites || [])) {
             const prereqId = conceptKeyToId.get(prereqKey);
@@ -1273,6 +1690,7 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
     chapters: allSkillsByChapter.map(c => ({ chapter: c.chapter, skillCount: c.skills.length })),
     issues: allIssues,
     createdSkillIds,
+    createdFacetIds,
   };
 }
 
@@ -1435,6 +1853,7 @@ export async function reExtractCourse(courseId, materialId, options = {}) {
 
   // --- Save in single transaction ---
   const conceptKeyToId = new Map();
+  const reextractFacetIds = [];
 
   try {
     await withTransaction(async () => {
@@ -1475,14 +1894,75 @@ export async function reExtractCourse(courseId, materialId, options = {}) {
       await ChunkSkillBindings.deleteByChunkIds(allChunkIds, { externalTransaction: true });
 
       for (const chGroup of allSkillsByChapter) {
-        const chapterSkills = chGroup.skills;
-        const skillIdMap = new Map();
-        for (const s of chapterSkills) {
-          const id = conceptKeyToId.get(s.conceptKey);
-          if (id) skillIdMap.set(s.conceptKey, id);
+        // Build facetKeyToId for this chapter
+        const facetKeyToId = new Map();
+        for (const s of chGroup.skills) {
+          const skillId = conceptKeyToId.get(s.conceptKey);
+          if (!skillId) continue;
+
+          // Create facets for new skills; load existing facets for matched skills
+          for (const f of (s.facets || [])) {
+            const existingFacet = f.conceptKey ? await Facets.findByConceptKey(f.conceptKey) : null;
+            if (existingFacet) {
+              facetKeyToId.set(f.conceptKey, existingFacet.id);
+            } else {
+              const facetId = await Facets.create({
+                skillId,
+                name: f.name, description: f.description,
+                conceptKey: f.conceptKey,
+                skillType: f.skillType || s.skillType,
+                bloomsLevel: f.bloomsLevel || s.bloomsLevel,
+                masteryCriteria: f.masteryCriteria || [],
+                evidence: f.evidence || {},
+              });
+              reextractFacetIds.push(facetId);
+              await FacetMastery.upsert(facetId, {
+                difficulty: 0.3, stability: 1.0, retrievability: 1.0,
+                reps: 0, lapses: 0, lastReviewAt: null, nextReviewAt: null,
+                totalMasteryPoints: 0.0,
+              });
+              if (f.conceptKey) facetKeyToId.set(f.conceptKey, facetId);
+            }
+          }
         }
-        const bindings = resolveChunkBindings(chapterSkills, chGroup, skillIdMap);
-        await ChunkSkillBindings.createBatch(bindings, { externalTransaction: true });
+
+        // Delete old facet bindings for these chunks
+        // (facet bindings referencing chunks in this chapter)
+        for (const cid of chGroup.chunkIds) {
+          const oldBindings = await ChunkFacetBindings.getByChunk(cid);
+          const facetIds = [...new Set(oldBindings.map(b => b.facet_id))];
+          if (facetIds.length > 0) {
+            await ChunkFacetBindings.deleteByFacetIds(facetIds, { externalTransaction: true });
+          }
+        }
+
+        // Resolve new facet-level bindings
+        const { facetBindings, issues: bindIssues } =
+          resolveChunkBindingsDirect(chGroup.skills, chGroup, facetKeyToId);
+        allIssues.push(...bindIssues);
+        if (facetBindings.length > 0) {
+          await ChunkFacetBindings.createBatch(facetBindings, { externalTransaction: true });
+        }
+
+        // Backward-compat skill-level bindings
+        const seenSkillChunks = new Set();
+        const skillLevelBindings = [];
+        for (const s of chGroup.skills) {
+          const skillId = conceptKeyToId.get(s.conceptKey);
+          if (!skillId) continue;
+          for (const f of (s.facets || [])) {
+            for (const sc of (f.sourceChunks || [])) {
+              const key = `${skillId}:${sc.chunkId}`;
+              if (!seenSkillChunks.has(key) && chGroup.chunkIds.includes(sc.chunkId)) {
+                seenSkillChunks.add(key);
+                skillLevelBindings.push({ chunkId: sc.chunkId, subSkillId: skillId, extractionContext: null, confidence: sc.confidence || 1.0 });
+              }
+            }
+          }
+        }
+        if (skillLevelBindings.length > 0) {
+          await ChunkSkillBindings.createBatch(skillLevelBindings, { externalTransaction: true });
+        }
       }
 
       // 4. Clear and rebuild prerequisites for ALL matched + new skills
@@ -1541,5 +2021,191 @@ export async function reExtractCourse(courseId, materialId, options = {}) {
     created: newSkills.length,
     unmatchedExisting: unmatched.map(s => ({ id: s.id, conceptKey: s.concept_key, name: s.name })),
     issues: allIssues,
+    createdSkillIds: newSkills.map(ns => conceptKeyToId.get(ns.conceptKey)).filter(Boolean),
+    createdFacetIds: reextractFacetIds,
   };
+}
+
+// ============================================================
+// Deterministic Pre-Merge (accuracy improvement #5)
+// ============================================================
+
+/**
+ * Merge duplicate facets by concept_key before running LLM concept link comparison.
+ * Reduces the number of facets the concept link LLM needs to compare.
+ *
+ * @param {Array<number>} newFacetIds - IDs of newly created facets
+ * @returns {Promise<{ merged: number, actions: Array }>}
+ */
+export async function preMergeDuplicateFacets(newFacetIds) {
+  if (newFacetIds.length === 0) return { merged: 0, actions: [] };
+
+  const actions = [];
+
+  // Load all new facets
+  const newFacets = [];
+  for (const id of newFacetIds) {
+    const f = await Facets.getById(id);
+    if (f && !f.is_archived) newFacets.push(f);
+  }
+
+  // Check each new facet against existing facets with the same concept_key
+  for (const newFacet of newFacets) {
+    if (!newFacet.concept_key) continue;
+
+    const existing = await Facets.findByConceptKey(newFacet.concept_key);
+    if (!existing || existing.id === newFacet.id) continue;
+
+    // Found a duplicate — merge new into existing
+    // 1. Union mastery_criteria
+    const existingCriteria = typeof existing.mastery_criteria === 'string'
+      ? JSON.parse(existing.mastery_criteria || '[]') : (existing.mastery_criteria || []);
+    const newCriteria = typeof newFacet.mastery_criteria === 'string'
+      ? JSON.parse(newFacet.mastery_criteria || '[]') : (newFacet.mastery_criteria || []);
+    const existingTexts = new Set(existingCriteria.map(c => typeof c === 'string' ? c : c.text));
+    const addedCriteria = newCriteria.filter(c => {
+      const text = typeof c === 'string' ? c : c.text;
+      return !existingTexts.has(text);
+    });
+    if (addedCriteria.length > 0) {
+      await Facets.update(existing.id, { mastery_criteria: [...existingCriteria, ...addedCriteria] });
+    }
+
+    // 2. Move chunk_facet_bindings from new to existing
+    const newBindings = await ChunkFacetBindings.getByFacet(newFacet.id);
+    for (const b of newBindings) {
+      await ChunkFacetBindings.create({
+        chunkId: b.chunk_id,
+        facetId: existing.id,
+        extractionContext: b.extraction_context,
+        confidence: b.confidence,
+        bindingType: b.binding_type || 'teaches',
+        qualityRank: 0,
+        contentRange: b.content_range,
+      });
+    }
+
+    // 3. Archive the duplicate
+    await Facets.archive(newFacet.id);
+
+    actions.push({
+      keptId: existing.id,
+      mergedId: newFacet.id,
+      conceptKey: newFacet.concept_key,
+      reason: 'identical_concept_key',
+    });
+  }
+
+  return { merged: actions.length, actions };
+}
+
+// ============================================================
+// Binding Quality Scoring
+// ============================================================
+
+/** Material classification → score (0–15) */
+const CLASS_SCORES = {
+  textbook: 15, lecture: 12, notes: 9, slides: 6,
+  reference: 3, assignment: 3,
+};
+
+/** Binding type → score (0–40) */
+const TYPE_SCORES = { teaches: 40, prerequisite_for: 20, references: 10 };
+
+/**
+ * Compute composite quality score (0–100) for a single binding row.
+ *
+ * | Factor          | Weight | Scoring                                             |
+ * |-----------------|--------|-----------------------------------------------------|
+ * | Binding type    | 0–40   | teaches=40, prerequisite_for=20, references=10      |
+ * | Confidence      | 0–30   | confidence * 30                                     |
+ * | Content range   | 0–15   | Has paragraphs: 15 - min(numParagraphs, 10). Else 0 |
+ * | Material class  | 0–15   | textbook=15 … other=0                               |
+ */
+function computeBindingScore(binding) {
+  const typeScore = TYPE_SCORES[binding.binding_type] || 0;
+  const confScore = (binding.confidence || 0) * 30;
+
+  let rangeScore = 0;
+  if (binding.content_range) {
+    try {
+      const range = typeof binding.content_range === 'string'
+        ? JSON.parse(binding.content_range) : binding.content_range;
+      const numP = Array.isArray(range.paragraphs) ? range.paragraphs.length : 0;
+      if (numP > 0) rangeScore = 15 - Math.min(numP, 10);
+    } catch { /* malformed — leave at 0 */ }
+  }
+
+  const classScore = CLASS_SCORES[binding.classification] || 0;
+
+  return typeScore + confScore + rangeScore + classScore;
+}
+
+/**
+ * Rank all bindings for a single facet by composite quality score.
+ * Updates quality_rank in DB (1 = best).
+ *
+ * @param {number} facetId
+ * @returns {Promise<{ ranked: number, topScore: number, topBindingId: number|null }>}
+ */
+export async function rankBindingsForFacet(facetId) {
+  const db = await getDb();
+  const bindings = await db.select(
+    `SELECT cfb.*, m.classification
+     FROM chunk_facet_bindings cfb
+     JOIN chunks c ON cfb.chunk_id = c.id
+     JOIN materials m ON c.material_id = m.id
+     WHERE cfb.facet_id = ?`,
+    [facetId]
+  );
+
+  if (bindings.length === 0) return { ranked: 0, topScore: 0, topBindingId: null };
+
+  // Score each binding
+  const scored = bindings.map(b => ({
+    bindingId: b.id,
+    score: computeBindingScore(b),
+    extractedAt: b.extracted_at,
+  }));
+
+  // Sort: descending score, then ascending extracted_at (earlier = higher rank)
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return (a.extractedAt || '').localeCompare(b.extractedAt || '');
+  });
+
+  // Assign ranks 1, 2, 3, ...
+  const rankings = scored.map((s, i) => ({
+    bindingId: s.bindingId,
+    qualityRank: i + 1,
+  }));
+
+  await ChunkFacetBindings.updateQualityRanks(facetId, rankings);
+
+  return {
+    ranked: rankings.length,
+    topScore: scored[0].score,
+    topBindingId: scored[0].bindingId,
+  };
+}
+
+/**
+ * Rank bindings for multiple facets. Simple loop wrapper.
+ *
+ * @param {Array<number>} facetIds
+ * @returns {Promise<{ totalRanked: number, facetsProcessed: number }>}
+ */
+export async function rankBindingsForFacets(facetIds) {
+  if (!facetIds || facetIds.length === 0) return { totalRanked: 0, facetsProcessed: 0 };
+
+  let totalRanked = 0;
+  let facetsProcessed = 0;
+
+  for (const fid of facetIds) {
+    const result = await rankBindingsForFacet(fid);
+    totalRanked += result.ranked;
+    if (result.ranked > 0) facetsProcessed++;
+  }
+
+  return { totalRanked, facetsProcessed };
 }

@@ -383,7 +383,7 @@ export const Assignments = {
       title: r.title, titleNormalized: r.title_normalized,
       dueDate: r.due_date, status: r.status, source: r.source,
       createdAt: r.created_at, updatedAt: r.updated_at,
-      questionCount: r.question_count,
+      questionCount: r.question_count, studyActive: r.study_active || 0,
     }));
   },
 
@@ -420,11 +420,31 @@ export const Assignments = {
         });
       }
 
+      // Load facet mappings (if table exists)
+      let facetsByQ = {};
+      try {
+        const facetRows = await db.select(
+          `SELECT aqf.question_id, aqf.facet_id, f.name, f.concept_key, f.skill_id, f.blooms_level
+           FROM assignment_question_facets aqf
+           JOIN facets f ON aqf.facet_id = f.id
+           WHERE aqf.question_id IN (${placeholders}) AND f.is_archived = 0`,
+          qIds
+        );
+        for (const fr of facetRows) {
+          if (!facetsByQ[fr.question_id]) facetsByQ[fr.question_id] = [];
+          facetsByQ[fr.question_id].push({
+            facetId: fr.facet_id, name: fr.name, conceptKey: fr.concept_key,
+            skillId: fr.skill_id, bloomsLevel: fr.blooms_level,
+          });
+        }
+      } catch { /* facet table may not exist */ }
+
       for (const q of qRows) {
         questions.push({
           id: q.id, questionRef: q.question_ref, description: q.description,
           difficulty: q.difficulty, ordering: q.ordering,
           requiredSkills: skillsByQ[q.id] || [],
+          requiredFacets: facetsByQ[q.id] || [],
         });
       }
     }
@@ -464,6 +484,327 @@ export const Assignments = {
       'UPDATE assignments SET status = ?, updated_at = ? WHERE id = ?',
       [status, now(), id]
     );
+  },
+
+  async setStudyActive(id, active) {
+    const db = await getDb();
+    await db.execute(
+      'UPDATE assignments SET study_active = ?, updated_at = ? WHERE id = ?',
+      [active ? 1 : 0, now(), id]
+    );
+  },
+
+  async bulkSetStudyActive(ids, active) {
+    if (!ids.length) return;
+    return withTransaction(async (db) => {
+      const ts = now();
+      const val = active ? 1 : 0;
+      for (const id of ids) {
+        await db.execute(
+          'UPDATE assignments SET study_active = ?, updated_at = ? WHERE id = ?',
+          [val, ts, id]
+        );
+      }
+    });
+  },
+
+  async markSubmitted(id) {
+    return withTransaction(async (db) => {
+      const ts = now();
+      await db.execute(
+        "UPDATE assignments SET status = 'submitted', study_active = 0, updated_at = ? WHERE id = ?",
+        [ts, id]
+      );
+    });
+  },
+
+  // --- Curriculum Queries ---
+
+  async getCurriculum(courseId) {
+    const db = await getDb();
+
+    // Step 1: Active assignments
+    const assignments = await db.select(
+      `SELECT * FROM assignments WHERE course_id = ? AND study_active = 1
+       ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC`,
+      [courseId]
+    );
+    if (assignments.length === 0) return [];
+
+    const result = [];
+    for (const a of assignments) {
+      // Step 2: Questions
+      const qRows = await db.select(
+        'SELECT * FROM assignment_questions WHERE assignment_id = ? ORDER BY ordering, id',
+        [a.id]
+      );
+
+      const enrichedQs = [];
+      if (qRows.length > 0) {
+        const qIds = qRows.map(q => q.id);
+        const ph = qIds.map(() => '?').join(',');
+
+        // Step 3: Skills per question
+        const skillRows = await db.select(
+          `SELECT aqs.question_id, aqs.sub_skill_id, ss.name, ss.concept_key
+           FROM assignment_question_skills aqs
+           JOIN sub_skills ss ON ss.id = aqs.sub_skill_id
+           WHERE aqs.question_id IN (${ph})`,
+          qIds
+        );
+        const skillsByQ = {};
+        const allSkillIds = new Set();
+        for (const sr of skillRows) {
+          if (!skillsByQ[sr.question_id]) skillsByQ[sr.question_id] = [];
+          skillsByQ[sr.question_id].push({
+            subSkillId: sr.sub_skill_id, name: sr.name, conceptKey: sr.concept_key,
+          });
+          allSkillIds.add(sr.sub_skill_id);
+        }
+
+        // Step 4: Skill mastery (batched)
+        const sIds = [...allSkillIds];
+        let masteryMap = {};
+        if (sIds.length > 0) {
+          const mph = sIds.map(() => '?').join(',');
+          const mRows = await db.select(
+            `SELECT * FROM sub_skill_mastery WHERE sub_skill_id IN (${mph})`, sIds
+          );
+          for (const m of mRows) {
+            masteryMap[m.sub_skill_id] = {
+              stability: m.stability, lastReviewAt: m.last_review_at,
+              difficulty: m.difficulty, reps: m.reps, nextReviewAt: m.next_review_at,
+            };
+          }
+        }
+
+        // Step 5: Facets per question (optional)
+        let facetsByQ = {};
+        let facetMasteryMap = {};
+        try {
+          const fRows = await db.select(
+            `SELECT aqf.question_id, aqf.facet_id, f.name, f.concept_key, f.skill_id, f.blooms_level
+             FROM assignment_question_facets aqf
+             JOIN facets f ON aqf.facet_id = f.id
+             WHERE aqf.question_id IN (${ph}) AND f.is_archived = 0`,
+            qIds
+          );
+          const allFacetIds = new Set();
+          for (const fr of fRows) {
+            if (!facetsByQ[fr.question_id]) facetsByQ[fr.question_id] = [];
+            facetsByQ[fr.question_id].push({
+              facetId: fr.facet_id, name: fr.name, conceptKey: fr.concept_key,
+              skillId: fr.skill_id, bloomsLevel: fr.blooms_level,
+            });
+            allFacetIds.add(fr.facet_id);
+          }
+
+          // Step 6: Facet mastery (batched)
+          const fIds = [...allFacetIds];
+          if (fIds.length > 0) {
+            const fph = fIds.map(() => '?').join(',');
+            const fmRows = await db.select(
+              `SELECT * FROM facet_mastery WHERE facet_id IN (${fph})`, fIds
+            );
+            for (const fm of fmRows) {
+              facetMasteryMap[fm.facet_id] = {
+                stability: fm.stability, lastReviewAt: fm.last_review_at,
+                difficulty: fm.difficulty, reps: fm.reps, nextReviewAt: fm.next_review_at,
+              };
+            }
+          }
+        } catch { /* facet tables may not exist */ }
+
+        // Assemble questions
+        for (const q of qRows) {
+          const qSkills = (skillsByQ[q.id] || []).map(s => ({
+            ...s, mastery: masteryMap[s.subSkillId] || null,
+          }));
+          const qFacets = (facetsByQ[q.id] || []).map(f => ({
+            ...f, mastery: facetMasteryMap[f.facetId] || null,
+          }));
+          enrichedQs.push({
+            id: q.id, questionRef: q.question_ref, description: q.description,
+            difficulty: q.difficulty, skills: qSkills, facets: qFacets,
+          });
+        }
+      }
+
+      result.push({
+        id: a.id, title: a.title, dueDate: a.due_date, status: a.status, source: a.source,
+        questions: enrichedQs,
+      });
+    }
+    return result;
+  },
+
+  async getChunksForSkill(subSkillId) {
+    const db = await getDb();
+    // Primary: via facet bindings
+    let chunks = [];
+    try {
+      const facets = await db.select(
+        'SELECT id FROM facets WHERE skill_id = ? AND is_archived = 0', [subSkillId]
+      );
+      if (facets.length > 0) {
+        const fIds = facets.map(f => f.id);
+        const fph = fIds.map(() => '?').join(',');
+        const rows = await db.select(
+          `SELECT cfb.chunk_id, cfb.binding_type, cfb.confidence, cfb.quality_rank,
+                  c.label AS chunk_label, c.char_count,
+                  m.classification AS material_name
+           FROM chunk_facet_bindings cfb
+           JOIN chunks c ON cfb.chunk_id = c.id
+           JOIN materials m ON c.material_id = m.id
+           WHERE cfb.facet_id IN (${fph})
+           ORDER BY
+             CASE cfb.binding_type WHEN 'teaches' THEN 0 WHEN 'prerequisite_for' THEN 1 ELSE 2 END,
+             cfb.quality_rank, cfb.confidence DESC`,
+          fIds
+        );
+        // Deduplicate by chunk_id
+        const seen = new Set();
+        for (const r of rows) {
+          if (!seen.has(r.chunk_id)) {
+            seen.add(r.chunk_id);
+            chunks.push({
+              chunkId: r.chunk_id, label: r.chunk_label || 'Chunk',
+              materialName: r.material_name || '', bindingType: r.binding_type || 'teaches',
+              confidence: r.confidence, qualityRank: r.quality_rank,
+            });
+          }
+        }
+      }
+    } catch { /* facet tables may not exist */ }
+
+    // Fallback: direct skill bindings
+    if (chunks.length === 0) {
+      const rows = await db.select(
+        `SELECT csb.chunk_id, c.label AS chunk_label
+         FROM chunk_skill_bindings csb
+         JOIN chunks c ON csb.chunk_id = c.id
+         WHERE csb.sub_skill_id = ?`,
+        [subSkillId]
+      );
+      chunks = rows.map(r => ({
+        chunkId: r.chunk_id, label: r.chunk_label || 'Chunk ' + r.chunk_id.slice(0, 6),
+        materialName: '', bindingType: 'teaches', confidence: null, qualityRank: null,
+      }));
+    }
+    return chunks;
+  },
+
+  async getCompletedSkills(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT DISTINCT ss.id AS sub_skill_id, ss.name, ss.concept_key,
+              a.id AS assignment_id, a.title AS assignment_title,
+              ssm.stability, ssm.last_review_at, ssm.difficulty, ssm.reps, ssm.next_review_at
+       FROM assignments a
+       JOIN assignment_questions aq ON aq.assignment_id = a.id
+       JOIN assignment_question_skills aqs ON aqs.question_id = aq.id
+       JOIN sub_skills ss ON ss.id = aqs.sub_skill_id
+       LEFT JOIN sub_skill_mastery ssm ON ssm.sub_skill_id = ss.id
+       WHERE a.course_id = ? AND a.status IN ('submitted', 'graded')
+         AND ss.is_archived = 0
+       ORDER BY ss.name`,
+      [courseId]
+    );
+    return rows.map(r => ({
+      subSkillId: r.sub_skill_id, name: r.name, conceptKey: r.concept_key,
+      assignmentId: r.assignment_id, assignmentTitle: r.assignment_title,
+      mastery: r.stability ? {
+        stability: r.stability, lastReviewAt: r.last_review_at,
+        difficulty: r.difficulty, reps: r.reps, nextReviewAt: r.next_review_at,
+      } : null,
+    }));
+  },
+
+  async getReviewDueSkills(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      `SELECT DISTINCT ss.id AS sub_skill_id, ss.name, ss.concept_key,
+              a.id AS assignment_id, a.title AS assignment_title,
+              ssm.next_review_at, ssm.stability, ssm.last_review_at
+       FROM assignments a
+       JOIN assignment_questions aq ON aq.assignment_id = a.id
+       JOIN assignment_question_skills aqs ON aqs.question_id = aq.id
+       JOIN sub_skills ss ON ss.id = aqs.sub_skill_id
+       JOIN sub_skill_mastery ssm ON ssm.sub_skill_id = ss.id
+       WHERE a.course_id = ? AND a.status IN ('submitted', 'graded')
+         AND ssm.next_review_at IS NOT NULL AND ssm.next_review_at <= ?
+         AND ss.is_archived = 0
+       ORDER BY ssm.next_review_at`,
+      [courseId, now()]
+    );
+    return rows.map(r => ({
+      subSkillId: r.sub_skill_id, name: r.name, conceptKey: r.concept_key,
+      assignmentId: r.assignment_id, assignmentTitle: r.assignment_title,
+      nextReviewAt: r.next_review_at, stability: r.stability, lastReviewAt: r.last_review_at,
+    }));
+  },
+
+  async getCurriculumSummary(courseId) {
+    const db = await getDb();
+
+    // Active count
+    const activeRows = await db.select(
+      'SELECT COUNT(*) AS cnt FROM assignments WHERE course_id = ? AND study_active = 1',
+      [courseId]
+    );
+    const activeCount = activeRows[0]?.cnt || 0;
+
+    // Total distinct skills across active assignments
+    let totalSkills = 0;
+    let avgMastery = 0;
+    if (activeCount > 0) {
+      const skillRows = await db.select(
+        `SELECT COUNT(DISTINCT aqs.sub_skill_id) AS cnt
+         FROM assignments a
+         JOIN assignment_questions aq ON aq.assignment_id = a.id
+         JOIN assignment_question_skills aqs ON aqs.question_id = aq.id
+         WHERE a.course_id = ? AND a.study_active = 1`,
+        [courseId]
+      );
+      totalSkills = skillRows[0]?.cnt || 0;
+
+      // Average mastery of those skills
+      const masteryRows = await db.select(
+        `SELECT AVG(ssm.stability) AS avg_stab
+         FROM sub_skill_mastery ssm
+         WHERE ssm.sub_skill_id IN (
+           SELECT DISTINCT aqs.sub_skill_id
+           FROM assignments a
+           JOIN assignment_questions aq ON aq.assignment_id = a.id
+           JOIN assignment_question_skills aqs ON aqs.question_id = aq.id
+           WHERE a.course_id = ? AND a.study_active = 1
+         ) AND ssm.stability > 0`,
+        [courseId]
+      );
+      avgMastery = masteryRows[0]?.avg_stab || 0;
+    }
+
+    // Due review count from completed assignments
+    const dueRows = await db.select(
+      `SELECT COUNT(DISTINCT aqs.sub_skill_id) AS cnt
+       FROM assignments a
+       JOIN assignment_questions aq ON aq.assignment_id = a.id
+       JOIN assignment_question_skills aqs ON aqs.question_id = aq.id
+       JOIN sub_skill_mastery ssm ON ssm.sub_skill_id = aqs.sub_skill_id
+       WHERE a.course_id = ? AND a.status IN ('submitted', 'graded')
+         AND ssm.next_review_at IS NOT NULL AND ssm.next_review_at <= ?`,
+      [courseId, now()]
+    );
+    const dueReviewCount = dueRows[0]?.cnt || 0;
+
+    // Completed assignment count
+    const compRows = await db.select(
+      "SELECT COUNT(*) AS cnt FROM assignments WHERE course_id = ? AND status IN ('submitted', 'graded')",
+      [courseId]
+    );
+    const completedCount = compRows[0]?.cnt || 0;
+
+    return { activeCount, totalSkills, avgMastery, dueReviewCount, completedCount };
   },
 
   async linkMaterial(id, materialId) {
@@ -541,6 +882,8 @@ export const Assignments = {
 
     const qIds = qRows.map(q => q.id);
     const placeholders = qIds.map(() => '?').join(',');
+
+    // Load skill mappings (backward compat)
     const skillRows = await db.select(
       `SELECT aqs.question_id, aqs.sub_skill_id, ss.name, ss.concept_key
        FROM assignment_question_skills aqs
@@ -557,25 +900,52 @@ export const Assignments = {
       });
     }
 
+    // Load facet mappings (if table exists)
+    let facetsByQ = {};
+    try {
+      const facetRows = await db.select(
+        `SELECT aqf.question_id, aqf.facet_id, f.name, f.concept_key, f.skill_id, f.blooms_level
+         FROM assignment_question_facets aqf
+         JOIN facets f ON aqf.facet_id = f.id
+         WHERE aqf.question_id IN (${placeholders}) AND f.is_archived = 0`,
+        qIds
+      );
+      for (const fr of facetRows) {
+        if (!facetsByQ[fr.question_id]) facetsByQ[fr.question_id] = [];
+        facetsByQ[fr.question_id].push({
+          facetId: fr.facet_id, name: fr.name, conceptKey: fr.concept_key,
+          skillId: fr.skill_id, bloomsLevel: fr.blooms_level,
+        });
+      }
+    } catch { /* facet table may not exist */ }
+
     return qRows.map(q => ({
       id: q.id, questionRef: q.question_ref, description: q.description,
       difficulty: q.difficulty, ordering: q.ordering,
       requiredSkills: skillsByQ[q.id] || [],
+      requiredFacets: facetsByQ[q.id] || [],
     }));
   },
 
-  async saveQuestions(assignmentId, courseId, questions) {
+  async saveQuestions(assignmentId, courseId, questions, { useFacets = false, courseFacets = [] } = {}) {
     return withTransaction(async (db) => {
-      // Delete existing questions (CASCADE removes skill mappings)
+      // Delete existing questions (CASCADE removes skill mappings and facet mappings)
       await db.execute('DELETE FROM assignment_questions WHERE assignment_id = ?', [assignmentId]);
 
       if (!Array.isArray(questions) || questions.length === 0) return;
 
-      // Load course skills for ID resolution
+      // Load course skills for ID resolution (always needed for backward compat)
       const courseSkills = await db.select(
         'SELECT id, name, concept_key FROM sub_skills WHERE source_course_id = ? AND is_archived = 0',
         [courseId]
       );
+
+      // Check if facet tables exist (for writing facet mappings)
+      let hasFacetTable = false;
+      try {
+        await db.select('SELECT 1 FROM assignment_question_facets LIMIT 0');
+        hasFacetTable = true;
+      } catch { /* table doesn't exist */ }
 
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
@@ -586,14 +956,37 @@ export const Assignments = {
         );
         const questionId = result.lastInsertId;
 
-        // Resolve and insert skill mappings
-        for (const skillRef of (q.requiredSkills || [])) {
-          const resolved = resolveSkillId(courseSkills, skillRef);
-          if (resolved) {
-            await db.execute(
-              'INSERT INTO assignment_question_skills (question_id, sub_skill_id) VALUES (?, ?)',
-              [questionId, resolved]
-            );
+        if (useFacets && q.requiredFacets && hasFacetTable) {
+          // Facet-mode: resolve facet references, write to both tables
+          const seenSkillIds = new Set();
+          for (const facetRef of q.requiredFacets) {
+            const resolved = resolveFacetId(courseFacets, facetRef);
+            if (resolved) {
+              // Write facet mapping
+              await db.execute(
+                'INSERT INTO assignment_question_facets (question_id, facet_id) VALUES (?, ?)',
+                [questionId, resolved.id]
+              );
+              // Derive and write skill mapping (dedup by skill_id)
+              if (!seenSkillIds.has(resolved.skill_id)) {
+                seenSkillIds.add(resolved.skill_id);
+                await db.execute(
+                  'INSERT INTO assignment_question_skills (question_id, sub_skill_id) VALUES (?, ?)',
+                  [questionId, resolved.skill_id]
+                );
+              }
+            }
+          }
+        } else {
+          // Skill-mode fallback: resolve skill references directly
+          for (const skillRef of (q.requiredSkills || [])) {
+            const resolved = resolveSkillId(courseSkills, skillRef);
+            if (resolved) {
+              await db.execute(
+                'INSERT INTO assignment_question_skills (question_id, sub_skill_id) VALUES (?, ?)',
+                [questionId, resolved]
+              );
+            }
           }
         }
       }
@@ -654,6 +1047,21 @@ function resolveSkillId(courseSkills, ref) {
   const refLower = ref.toLowerCase();
   const byName = courseSkills.find(s => s.name && s.name.toLowerCase() === refLower);
   if (byName) return byName.id;
+  return null;
+}
+
+function resolveFacetId(facets, ref) {
+  if (!ref || !facets.length) return null;
+  // Exact id match
+  const byId = facets.find(f => String(f.id) === String(ref));
+  if (byId) return byId;
+  // Concept key match
+  const byKey = facets.find(f => f.concept_key === ref);
+  if (byKey) return byKey;
+  // Case-insensitive name match
+  const refLower = ref.toLowerCase();
+  const byName = facets.find(f => f.name && f.name.toLowerCase() === refLower);
+  if (byName) return byName;
   return null;
 }
 
@@ -1768,6 +2176,606 @@ export const PracticeSets = {
 };
 
 // ============================================================
+// Facets — atomic trackable learning units under sub_skills
+// ============================================================
+
+export const Facets = {
+  async getBySkill(skillId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM facets WHERE skill_id = ? AND is_archived = 0 ORDER BY id', [skillId]
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT f.* FROM facets f
+       JOIN sub_skills ss ON f.skill_id = ss.id
+       WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND f.is_archived = 0
+       ORDER BY f.skill_id, f.id`,
+      [courseId]
+    );
+  },
+
+  async getById(id) {
+    const db = await getDb();
+    const rows = await db.select('SELECT * FROM facets WHERE id = ?', [id]);
+    return rows[0] || null;
+  },
+
+  async create({ skillId, name, description, conceptKey, skillType, bloomsLevel,
+                 masteryCriteria, evidence }) {
+    const db = await getDb();
+    const result = await db.execute(
+      `INSERT INTO facets (skill_id, name, description, concept_key, skill_type, blooms_level,
+         mastery_criteria, evidence, is_archived, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [skillId, name, description || null, conceptKey || null,
+       skillType || null, bloomsLevel || null,
+       masteryCriteria ? JSON.stringify(masteryCriteria) : null,
+       evidence ? JSON.stringify(evidence) : null, now()]
+    );
+    return result.lastInsertId;
+  },
+
+  async createBatch(facets, { externalTransaction = false } = {}) {
+    const work = async (db) => {
+      const ids = [];
+      for (const f of facets) {
+        const result = await db.execute(
+          `INSERT INTO facets (skill_id, name, description, concept_key, skill_type, blooms_level,
+             mastery_criteria, evidence, is_archived, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          [f.skillId, f.name, f.description || null, f.conceptKey || null,
+           f.skillType || null, f.bloomsLevel || null,
+           f.masteryCriteria ? JSON.stringify(f.masteryCriteria) : null,
+           f.evidence ? JSON.stringify(f.evidence) : null, now()]
+        );
+        ids.push(result.lastInsertId);
+      }
+      return ids;
+    };
+    if (externalTransaction) { return work(await getDb()); }
+    return withTransaction(work);
+  },
+
+  async update(id, fields) {
+    const db = await getDb();
+    const allowed = ['name', 'description', 'concept_key', 'skill_type', 'blooms_level',
+      'mastery_criteria', 'evidence', 'is_archived'];
+    const sets = [];
+    const vals = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (allowed.includes(k)) {
+        sets.push(`${k} = ?`);
+        vals.push(['mastery_criteria', 'evidence'].includes(k) && typeof v === 'object'
+          ? JSON.stringify(v) : v);
+      }
+    }
+    if (sets.length === 0) return;
+    sets.push('updated_at = ?');
+    vals.push(now());
+    vals.push(id);
+    await db.execute(`UPDATE facets SET ${sets.join(', ')} WHERE id = ?`, vals);
+  },
+
+  async archive(id) {
+    const db = await getDb();
+    await db.execute('UPDATE facets SET is_archived = 1, updated_at = ? WHERE id = ?', [now(), id]);
+  },
+
+  async getAllActive() {
+    const db = await getDb();
+    return db.select('SELECT * FROM facets WHERE is_archived = 0 ORDER BY skill_id, id');
+  },
+
+  async findByConceptKey(conceptKey) {
+    const db = await getDb();
+    const rows = await db.select(
+      'SELECT * FROM facets WHERE concept_key = ? AND is_archived = 0', [conceptKey]
+    );
+    return rows[0] || null;
+  },
+};
+
+// ============================================================
+// Facet Mastery (FSRS)
+// ============================================================
+
+export const FacetMastery = {
+  async get(facetId) {
+    const db = await getDb();
+    const rows = await db.select('SELECT * FROM facet_mastery WHERE facet_id = ?', [facetId]);
+    return rows[0] || null;
+  },
+
+  async getByFacets(facetIds) {
+    if (facetIds.length === 0) return [];
+    const db = await getDb();
+    const ph = facetIds.map(() => '?').join(',');
+    return db.select(`SELECT * FROM facet_mastery WHERE facet_id IN (${ph})`, facetIds);
+  },
+
+  async getAll(courseId) {
+    const db = await getDb();
+    if (courseId) {
+      return db.select(
+        `SELECT fm.* FROM facet_mastery fm
+         JOIN facets f ON fm.facet_id = f.id
+         JOIN sub_skills ss ON f.skill_id = ss.id
+         WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND f.is_archived = 0`,
+        [courseId]
+      );
+    }
+    return db.select('SELECT * FROM facet_mastery');
+  },
+
+  async getDueForReview(courseId, beforeTimestamp = null) {
+    const db = await getDb();
+    const ts = beforeTimestamp || now();
+    const params = [ts];
+    let courseFilter = '';
+    if (courseId) {
+      courseFilter = 'AND ss.source_course_id = ?';
+      params.push(courseId);
+    }
+    return db.select(
+      `SELECT fm.*, f.name AS facet_name, f.skill_id, f.concept_key AS facet_key
+       FROM facet_mastery fm
+       JOIN facets f ON fm.facet_id = f.id
+       JOIN sub_skills ss ON f.skill_id = ss.id
+       WHERE fm.next_review_at IS NOT NULL AND fm.next_review_at <= ?
+         AND f.is_archived = 0 AND ss.is_archived = 0
+         ${courseFilter}
+       ORDER BY fm.next_review_at`, params
+    );
+  },
+
+  async upsert(facetId, { difficulty, stability, retrievability, reps, lapses,
+                          lastReviewAt, nextReviewAt, totalMasteryPoints, lastRating = null }) {
+    const db = await getDb();
+    await db.execute(
+      `INSERT INTO facet_mastery (facet_id, difficulty, stability, retrievability, reps, lapses,
+         last_review_at, next_review_at, last_rating, total_mastery_points, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(facet_id) DO UPDATE SET
+         difficulty = excluded.difficulty,
+         stability = excluded.stability,
+         retrievability = excluded.retrievability,
+         reps = excluded.reps,
+         lapses = excluded.lapses,
+         last_review_at = excluded.last_review_at,
+         next_review_at = excluded.next_review_at,
+         last_rating = excluded.last_rating,
+         total_mastery_points = excluded.total_mastery_points,
+         updated_at = excluded.updated_at`,
+      [facetId, difficulty, stability, retrievability, reps, lapses,
+       lastReviewAt, nextReviewAt, lastRating, totalMasteryPoints, now()]
+    );
+  },
+
+  async upsertBatch(records) {
+    await withTransaction(async (db) => {
+      for (const r of records) {
+        await db.execute(
+          `INSERT INTO facet_mastery (facet_id, difficulty, stability, retrievability, reps, lapses,
+             last_review_at, next_review_at, last_rating, total_mastery_points, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(facet_id) DO UPDATE SET
+             difficulty = excluded.difficulty, stability = excluded.stability,
+             retrievability = excluded.retrievability, reps = excluded.reps,
+             lapses = excluded.lapses, last_review_at = excluded.last_review_at,
+             next_review_at = excluded.next_review_at, last_rating = excluded.last_rating,
+             total_mastery_points = excluded.total_mastery_points, updated_at = excluded.updated_at`,
+          [r.facetId, r.difficulty || 0.3, r.stability || 1.0, r.retrievability || 1.0,
+           r.reps || 0, r.lapses || 0, r.lastReviewAt || null, r.nextReviewAt || null,
+           r.lastRating || null, r.totalMasteryPoints || 0.0, now()]
+        );
+      }
+    });
+  },
+};
+
+// ============================================================
+// Chunk-Facet Bindings — typed, ranked chunk-to-facet relationships
+// ============================================================
+
+export const ChunkFacetBindings = {
+  async getByFacet(facetId, { type = null, minConfidence = null } = {}) {
+    const db = await getDb();
+    let sql = 'SELECT * FROM chunk_facet_bindings WHERE facet_id = ?';
+    const params = [facetId];
+    if (type) { sql += ' AND binding_type = ?'; params.push(type); }
+    if (minConfidence != null) { sql += ' AND confidence >= ?'; params.push(minConfidence); }
+    sql += ' ORDER BY quality_rank';
+    return db.select(sql, params);
+  },
+
+  async getByFacetRanked(facetId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cfb.*, c.label AS chunk_label, c.char_count,
+              m.classification AS material_classification
+       FROM chunk_facet_bindings cfb
+       JOIN chunks c ON cfb.chunk_id = c.id
+       JOIN materials m ON c.material_id = m.id
+       WHERE cfb.facet_id = ?
+       ORDER BY
+         CASE cfb.binding_type WHEN 'teaches' THEN 0 WHEN 'prerequisite_for' THEN 1 ELSE 2 END,
+         cfb.quality_rank,
+         cfb.confidence DESC`,
+      [facetId]
+    );
+  },
+
+  async getByChunk(chunkId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cfb.*, f.name AS facet_name, f.concept_key AS facet_key, f.skill_id
+       FROM chunk_facet_bindings cfb
+       JOIN facets f ON cfb.facet_id = f.id
+       WHERE cfb.chunk_id = ? AND f.is_archived = 0`,
+      [chunkId]
+    );
+  },
+
+  async create({ chunkId, facetId, extractionContext, confidence, bindingType,
+                 qualityRank, contentRange }) {
+    const db = await getDb();
+    await db.execute(
+      `INSERT INTO chunk_facet_bindings (chunk_id, facet_id, extraction_context, confidence,
+         binding_type, quality_rank, content_range, extracted_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [chunkId, facetId, extractionContext || null, confidence || null,
+       bindingType || 'teaches', qualityRank || 0,
+       contentRange || null, now(), now()]
+    );
+  },
+
+  async createBatch(bindings, { externalTransaction = false } = {}) {
+    const work = async (db) => {
+      for (const b of bindings) {
+        await db.execute(
+          `INSERT INTO chunk_facet_bindings (chunk_id, facet_id, extraction_context, confidence,
+             binding_type, quality_rank, content_range, extracted_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [b.chunkId, b.facetId, b.extractionContext || null, b.confidence || null,
+           b.bindingType || 'teaches', b.qualityRank || 0,
+           b.contentRange || null, now(), now()]
+        );
+      }
+    };
+    if (externalTransaction) { await work(await getDb()); }
+    else { await withTransaction(work); }
+  },
+
+  async deleteByFacetIds(facetIds, { externalTransaction = false } = {}) {
+    if (!facetIds.length) return;
+    const work = async (db) => {
+      for (const fid of facetIds) {
+        await db.execute('DELETE FROM chunk_facet_bindings WHERE facet_id = ?', [fid]);
+      }
+    };
+    if (externalTransaction) { await work(await getDb()); }
+    else { await withTransaction(work); }
+  },
+
+  async updateQualityRanks(facetId, rankings) {
+    const db = await getDb();
+    for (const { bindingId, qualityRank } of rankings) {
+      await db.execute(
+        'UPDATE chunk_facet_bindings SET quality_rank = ?, updated_at = ? WHERE id = ? AND facet_id = ?',
+        [qualityRank, now(), bindingId, facetId]
+      );
+    }
+  },
+};
+
+// ============================================================
+// Facet Concept Links — cross-domain relationships between facets
+// ============================================================
+
+export const FacetConceptLinks = {
+  async create({ facetAId, facetBId, similarityScore, linkType, reason }) {
+    const db = await getDb();
+    const [a, b] = facetAId < facetBId ? [facetAId, facetBId] : [facetBId, facetAId];
+    await db.execute(
+      `INSERT OR IGNORE INTO facet_concept_links (facet_a_id, facet_b_id, similarity_score, link_type, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [a, b, similarityScore, linkType, reason || null, now()]
+    );
+  },
+
+  async createBatch(links) {
+    await withTransaction(async (db) => {
+      for (const { facetAId, facetBId, similarityScore, linkType, reason } of links) {
+        const [a, b] = facetAId < facetBId ? [facetAId, facetBId] : [facetBId, facetAId];
+        await db.execute(
+          `INSERT OR IGNORE INTO facet_concept_links (facet_a_id, facet_b_id, similarity_score, link_type, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [a, b, similarityScore, linkType, reason || null, now()]
+        );
+      }
+    });
+  },
+
+  async getByFacet(facetId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT fcl.*, fa.name AS name_a, fa.concept_key AS key_a,
+              fb.name AS name_b, fb.concept_key AS key_b
+       FROM facet_concept_links fcl
+       JOIN facets fa ON fcl.facet_a_id = fa.id
+       JOIN facets fb ON fcl.facet_b_id = fb.id
+       WHERE fcl.facet_a_id = ? OR fcl.facet_b_id = ?`,
+      [facetId, facetId]
+    );
+  },
+
+  async getByFacetBatch(facetIds) {
+    if (!facetIds.length) return [];
+    const db = await getDb();
+    const ph = facetIds.map(() => '?').join(',');
+    return db.select(
+      `SELECT fcl.*, fa.name AS name_a, fa.concept_key AS key_a, fa.skill_id AS skill_a,
+              fb.name AS name_b, fb.concept_key AS key_b, fb.skill_id AS skill_b
+       FROM facet_concept_links fcl
+       JOIN facets fa ON fcl.facet_a_id = fa.id
+       JOIN facets fb ON fcl.facet_b_id = fb.id
+       WHERE fcl.facet_a_id IN (${ph}) OR fcl.facet_b_id IN (${ph})`,
+      [...facetIds, ...facetIds]
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT fcl.*, fa.name AS name_a, fa.concept_key AS key_a,
+              fb.name AS name_b, fb.concept_key AS key_b
+       FROM facet_concept_links fcl
+       JOIN facets fa ON fcl.facet_a_id = fa.id
+       JOIN facets fb ON fcl.facet_b_id = fb.id
+       JOIN sub_skills sa ON fa.skill_id = sa.id
+       JOIN sub_skills sb ON fb.skill_id = sb.id
+       WHERE sa.source_course_id = ? OR sb.source_course_id = ?`,
+      [courseId, courseId]
+    );
+  },
+
+  async delete(linkId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM facet_concept_links WHERE id = ?', [linkId]);
+  },
+
+  async deleteByFacet(facetId) {
+    const db = await getDb();
+    await db.execute(
+      'DELETE FROM facet_concept_links WHERE facet_a_id = ? OR facet_b_id = ?',
+      [facetId, facetId]
+    );
+  },
+};
+
+// ============================================================
+// Assignment Question Facets
+// ============================================================
+
+export const AssignmentQuestionFacets = {
+  async getByQuestion(questionId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT aqf.*, f.name AS facet_name, f.concept_key AS facet_key, f.skill_id
+       FROM assignment_question_facets aqf
+       JOIN facets f ON aqf.facet_id = f.id
+       WHERE aqf.question_id = ? AND f.is_archived = 0`,
+      [questionId]
+    );
+  },
+
+  async getByFacet(facetId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT aqf.*, aq.question_ref, aq.description AS question_desc, aq.difficulty,
+              a.title AS assignment_title, a.due_date
+       FROM assignment_question_facets aqf
+       JOIN assignment_questions aq ON aqf.question_id = aq.id
+       JOIN assignments a ON aq.assignment_id = a.id
+       WHERE aqf.facet_id = ?`,
+      [facetId]
+    );
+  },
+
+  async create({ questionId, facetId }) {
+    const db = await getDb();
+    await db.execute(
+      'INSERT INTO assignment_question_facets (question_id, facet_id) VALUES (?, ?)',
+      [questionId, facetId]
+    );
+  },
+
+  async createBatch(mappings, { externalTransaction = false } = {}) {
+    const work = async (db) => {
+      for (const { questionId, facetId } of mappings) {
+        await db.execute(
+          'INSERT INTO assignment_question_facets (question_id, facet_id) VALUES (?, ?)',
+          [questionId, facetId]
+        );
+      }
+    };
+    if (externalTransaction) { await work(await getDb()); }
+    else { await withTransaction(work); }
+  },
+
+  async deleteByQuestion(questionId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM assignment_question_facets WHERE question_id = ?', [questionId]);
+  },
+};
+
+// ============================================================
+// Facet Data Migration — promote existing mastery_criteria to facets
+// ============================================================
+
+/**
+ * One-time JS migration that runs on first boot after migration 005.
+ * Promotes existing sub_skills.mastery_criteria into facet rows and
+ * copies associated data (FSRS state, bindings, concept links, question mappings).
+ *
+ * Safe to re-run: checks settings.facet_migration_done flag.
+ */
+export const migrateFacets = async () => {
+  const db = await getDb();
+
+  // Check if already done
+  const flag = await db.select("SELECT value FROM settings WHERE key = 'facet_migration_done'");
+  if (flag.length > 0 && flag[0].value === '1') return { skipped: true };
+
+  // Check if facets table exists (migration 005 ran)
+  try {
+    await db.select('SELECT 1 FROM facets LIMIT 1');
+  } catch {
+    return { skipped: true, reason: 'facets table not yet created' };
+  }
+
+  const stats = { facetsCreated: 0, masteryRecords: 0, bindings: 0, conceptLinks: 0, questionMappings: 0 };
+
+  await withTransaction(async (db) => {
+    // 1. Load all active sub_skills
+    const skills = await db.select(
+      'SELECT id, concept_key, name, description, skill_type, blooms_level, mastery_criteria, evidence FROM sub_skills WHERE is_archived = 0'
+    );
+
+    for (const skill of skills) {
+      const criteria = jsonParse(skill.mastery_criteria, []);
+      const evidence = jsonParse(skill.evidence, {});
+      let facetIds = [];
+
+      if (criteria.length <= 2) {
+        // Single facet with all criteria
+        const result = await db.execute(
+          `INSERT INTO facets (skill_id, name, description, concept_key, skill_type, blooms_level,
+             mastery_criteria, evidence, is_archived, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          [skill.id, skill.name, skill.description,
+           skill.concept_key ? skill.concept_key + '/core' : null,
+           skill.skill_type, skill.blooms_level,
+           JSON.stringify(criteria), JSON.stringify(evidence), now()]
+        );
+        facetIds.push(result.lastInsertId);
+        stats.facetsCreated++;
+      } else {
+        // One facet per criterion
+        for (let i = 0; i < criteria.length; i++) {
+          const c = criteria[i];
+          const text = typeof c === 'string' ? c : (c.text || '');
+          // Generate a facet name from the criterion text (first ~60 chars)
+          const facetName = text.length > 60 ? text.substring(0, 57) + '...' : text;
+          const facetKey = skill.concept_key
+            ? skill.concept_key + '/f' + (i + 1)
+            : null;
+          const result = await db.execute(
+            `INSERT INTO facets (skill_id, name, description, concept_key, skill_type, blooms_level,
+               mastery_criteria, evidence, is_archived, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+            [skill.id, facetName, text, facetKey,
+             skill.skill_type, skill.blooms_level,
+             JSON.stringify([c]), JSON.stringify(evidence), now()]
+          );
+          facetIds.push(result.lastInsertId);
+          stats.facetsCreated++;
+        }
+      }
+
+      // 2. Copy FSRS state from sub_skill_mastery to each facet
+      const mastery = await db.select(
+        'SELECT * FROM sub_skill_mastery WHERE sub_skill_id = ?', [skill.id]
+      );
+      if (mastery.length > 0) {
+        const m = mastery[0];
+        for (const fid of facetIds) {
+          await db.execute(
+            `INSERT OR IGNORE INTO facet_mastery (facet_id, difficulty, stability, retrievability,
+               reps, lapses, last_review_at, next_review_at, last_rating, total_mastery_points, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [fid, m.difficulty, m.stability, m.retrievability,
+             m.reps, m.lapses, m.last_review_at, m.next_review_at,
+             m.last_rating, m.total_mastery_points, now()]
+          );
+          stats.masteryRecords++;
+        }
+      }
+
+      // 3. Copy chunk_skill_bindings → chunk_facet_bindings for ALL facets of this skill
+      const bindings = await db.select(
+        'SELECT * FROM chunk_skill_bindings WHERE sub_skill_id = ?', [skill.id]
+      );
+      for (const b of bindings) {
+        for (const fid of facetIds) {
+          await db.execute(
+            `INSERT INTO chunk_facet_bindings (chunk_id, facet_id, extraction_context, confidence,
+               binding_type, quality_rank, content_range, extracted_at, updated_at)
+             VALUES (?, ?, ?, ?, 'teaches', 0, NULL, ?, ?)`,
+            [b.chunk_id, fid, b.extraction_context, b.confidence, b.extracted_at || now(), now()]
+          );
+          stats.bindings++;
+        }
+      }
+
+      // 4. Copy concept_links → facet_concept_links
+      //    For each concept link involving this skill, create links between ALL facets of both skills
+      const links = await db.select(
+        'SELECT * FROM concept_links WHERE sub_skill_a_id = ? OR sub_skill_b_id = ?',
+        [skill.id, skill.id]
+      );
+      for (const link of links) {
+        // Find facets of the OTHER skill in this link
+        const otherSkillId = link.sub_skill_a_id === skill.id ? link.sub_skill_b_id : link.sub_skill_a_id;
+        const otherFacets = await db.select(
+          'SELECT id FROM facets WHERE skill_id = ? AND is_archived = 0', [otherSkillId]
+        );
+        // Only create links if the other skill's facets already exist (processed earlier)
+        for (const myFid of facetIds) {
+          for (const otherF of otherFacets) {
+            const [a, b] = myFid < otherF.id ? [myFid, otherF.id] : [otherF.id, myFid];
+            if (a === b) continue;
+            await db.execute(
+              `INSERT OR IGNORE INTO facet_concept_links (facet_a_id, facet_b_id, similarity_score, link_type, reason, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [a, b, link.similarity_score, link.link_type,
+               'Migrated from skill-level concept link', now()]
+            );
+            stats.conceptLinks++;
+          }
+        }
+      }
+
+      // 5. Copy assignment_question_skills → assignment_question_facets
+      const questionSkills = await db.select(
+        'SELECT * FROM assignment_question_skills WHERE sub_skill_id = ?', [skill.id]
+      );
+      for (const qs of questionSkills) {
+        for (const fid of facetIds) {
+          await db.execute(
+            'INSERT INTO assignment_question_facets (question_id, facet_id) VALUES (?, ?)',
+            [qs.question_id, fid]
+          );
+          stats.questionMappings++;
+        }
+      }
+    }
+
+    // Mark migration as complete
+    await db.execute(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('facet_migration_done', '1')"
+    );
+  });
+
+  console.log('[DB] Facet migration complete:', stats);
+  return stats;
+};
+
+// ============================================================
 // Nested Course Loader / Saver
 // ============================================================
 
@@ -1902,9 +2910,11 @@ export const resetAll = async ({ confirmed = false } = {}) => {
     counts[table] = rows[0].c;
   }
 
-  // Order matters for FK constraints
+  // Order matters for FK constraints — facet tables before their parents
   const tables = [
-    'assignment_question_skills', 'assignment_questions', 'assignments',
+    'assignment_question_facets', 'assignment_question_skills',
+    'assignment_questions', 'assignments',
+    'facet_concept_links', 'chunk_facet_bindings', 'facet_mastery', 'facets',
     'practice_sets', 'journal_entries', 'session_events', 'session_skills',
     'messages', 'sessions', 'sub_skill_mastery', 'skill_prerequisites',
     'concept_links', 'chunk_skill_bindings', 'chunk_fingerprints',

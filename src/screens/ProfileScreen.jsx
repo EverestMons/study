@@ -289,6 +289,35 @@ export default function ProfileScreen() {
                                     </div>
                                   )}
 
+                                  {sub.facets?.length > 0 && (
+                                    <div style={{ marginBottom: 14 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>FACETS ({sub.facets.length})</div>
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                        {sub.facets.map(facet => {
+                                          var fr = facet.mastery?.retrievability || 0;
+                                          var fColor = !facet.mastery ? T.txM : fr > 0.8 ? T.gn : fr > 0.5 ? "#F59E0B" : T.rd;
+                                          return (
+                                            <div key={facet.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 6, background: T.bg, border: "1px solid " + T.bd }}>
+                                              <div style={{ width: 5, height: 5, borderRadius: "50%", background: facet.mastery ? fColor : T.bd, flexShrink: 0 }} />
+                                              <div style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: T.tx }}>{facet.name}</div>
+                                              {facet.mastery ? (
+                                                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                                                  <div style={{ width: 40, height: 3, borderRadius: 2, background: T.bd, overflow: "hidden" }}>
+                                                    <div style={{ width: Math.round(fr * 100) + "%", height: "100%", background: fColor, borderRadius: 2 }} />
+                                                  </div>
+                                                  <span style={{ fontSize: 10, color: fColor, fontWeight: 500, minWidth: 26, textAlign: "right" }}>{Math.round(fr * 100)}%</span>
+                                                  {facet.mastery.isDue && <span style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600 }}>DUE</span>}
+                                                </div>
+                                              ) : (
+                                                <span style={{ fontSize: 10, color: T.txM, flexShrink: 0 }}>New</span>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+
                                   {sub.prerequisites?.length > 0 && (
                                     <div style={{ marginBottom: 14 }}>
                                       <div style={{ fontSize: 11, fontWeight: 600, color: T.txD, marginBottom: 6 }}>PREREQUISITES</div>

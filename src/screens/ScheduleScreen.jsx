@@ -3,7 +3,7 @@ import { T, CSS } from "../lib/theme.jsx";
 import { useStudy } from "../StudyContext.jsx";
 import { Assignments, CourseSchedule } from "../lib/db.js";
 import { loadSkillsV2 } from "../lib/skills.js";
-import { effectiveStrength } from "../lib/study.js";
+import { effectiveStrength, computeFacetReadiness } from "../lib/study.js";
 import DatePicker from "../components/DatePicker.jsx";
 
 function formatDueDate(epoch) {
@@ -44,6 +44,9 @@ export default function ScheduleScreen() {
   var [expanded, setExpanded] = useState(null);
   var [showAllExamSkills, setShowAllExamSkills] = useState(false);
   var [openPicker, setOpenPicker] = useState(null);
+  var [activeMap, setActiveMap] = useState({});
+  var [confirmSubmit, setConfirmSubmit] = useState(null);
+  var [currSummary, setCurrSummary] = useState(null);
   var dateRefs = useRef({});
 
   useEffect(() => { if (active) loadData(); }, []);
@@ -53,6 +56,10 @@ export default function ScheduleScreen() {
     var schedule = await CourseSchedule.getByCourse(active.id);
     var sk = await loadSkillsV2(active.id);
     setSkills(Array.isArray(sk) ? sk : []);
+
+    // Precompute facet readiness for all skills (single batch)
+    var allSkillIds = (sk || []).map(function (s) { return s.id; });
+    var facetReadinessMap = await computeFacetReadiness(allSkillIds);
 
     // Enrich assignments
     var all = [];
@@ -65,7 +72,8 @@ export default function ScheduleScreen() {
       var skillList = [...reqIds].map(function (sid) {
         var s = (sk || []).find(function (x) { return x.id === sid || x.conceptKey === sid; });
         if (!s) s = (sk || []).find(function (x) { return x.name && x.name.toLowerCase() === sid.toLowerCase(); });
-        return { id: s?.id || sid, name: s?.name || sid, strength: s ? effectiveStrength(s) : 0 };
+        var str = s ? (facetReadinessMap.has(s.id) ? facetReadinessMap.get(s.id) : effectiveStrength(s)) : 0;
+        return { id: s?.id || sid, name: s?.name || sid, strength: str };
       });
       var avg = skillList.length > 0 ? skillList.reduce(function (sum, x) { return sum + x.strength; }, 0) / skillList.length : 0;
       all.push({
@@ -78,7 +86,7 @@ export default function ScheduleScreen() {
 
     // Extract exams from schedule
     var allSkillAvg = (sk || []).length > 0
-      ? (sk || []).reduce(function (s, x) { return s + effectiveStrength(x); }, 0) / sk.length : 0;
+      ? (sk || []).reduce(function (s, x) { return s + (facetReadinessMap.has(x.id) ? facetReadinessMap.get(x.id) : effectiveStrength(x)); }, 0) / sk.length : 0;
     for (var week of schedule) {
       try {
         var exams = JSON.parse(week.exams || "[]");
@@ -92,13 +100,21 @@ export default function ScheduleScreen() {
             dueDateEpoch: dateEpoch, dueDate: formatDueDate(dateEpoch),
             coversWeeks: exam.coversWeeks || [], coversTopics: exam.coversTopics || [],
             weekNumber: week.week_number || week.weekNumber,
-            skillList: (sk || []).map(function (x) { return { id: x.id, name: x.name, strength: effectiveStrength(x) }; }),
+            skillList: (sk || []).map(function (x) { return { id: x.id, name: x.name, strength: facetReadinessMap.has(x.id) ? facetReadinessMap.get(x.id) : effectiveStrength(x) }; }),
             avgStrength: allSkillAvg,
           });
         }
       } catch (e) { /* skip malformed exams JSON */ }
     }
     setItems(all);
+
+    // Build activeMap from DB study_active flags
+    var aMap = {};
+    for (var ra of rawAsgn) { if (ra.studyActive) aMap[ra.id] = true; }
+    setActiveMap(aMap);
+
+    // Load curriculum summary
+    try { setCurrSummary(await Assignments.getCurriculumSummary(active.id)); } catch (e) { /* ignore */ }
   }
 
   if (!active) return null;
@@ -140,8 +156,9 @@ export default function ScheduleScreen() {
     var isOverdue = urgency === "overdue";
     var isPlaceholder = it.type === "placeholder";
     var isExam = it.type === "exam";
-    var border = isExp ? T.acB : isOverdue ? "rgba(248,113,113,0.3)" : T.bd;
-    var bg = isOverdue ? "rgba(248,113,113,0.06)" : T.sf;
+    var isSubmitted = it.status === "submitted" || it.status === "graded";
+    var border = isSubmitted ? "rgba(52,211,153,0.15)" : isExp ? T.acB : isOverdue ? "rgba(248,113,113,0.3)" : T.bd;
+    var bg = isSubmitted ? "rgba(52,211,153,0.04)" : isOverdue ? "rgba(248,113,113,0.06)" : T.sf;
 
     var sortedSkills = (it.skillList || []).slice().sort(function (a, b) { return a.strength - b.strength; });
     var displaySkills = isExam && !showAllExamSkills && sortedSkills.length > 10 ? sortedSkills.slice(0, 10) : sortedSkills;
@@ -153,11 +170,15 @@ export default function ScheduleScreen() {
           onMouseEnter={function (e) { if (!isExp) e.currentTarget.style.background = isOverdue ? "rgba(248,113,113,0.1)" : T.sfH; }}
           onMouseLeave={function (e) { if (!isExp) e.currentTarget.style.background = "transparent"; }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: isSubmitted ? T.txD : T.tx, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: isSubmitted ? "line-through" : "none", display: "flex", alignItems: "center", gap: 8 }}>
+              {isSubmitted && <span style={{ color: "rgba(52,211,153,0.6)", fontSize: 13, flexShrink: 0 }}>{"\u2713"}</span>}
+              {!isSubmitted && activeMap[it.id] && <span style={{ width: 6, height: 6, borderRadius: 3, background: T.gn, flexShrink: 0, display: "inline-block" }} />}
               {isExam ? "\u2605 " : ""}{it.title}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0, marginLeft: 12 }}>
-              {isExam ? (
+              {isSubmitted ? (
+                <span style={{ fontSize: 12, color: "rgba(52,211,153,0.7)", fontWeight: 500 }}>Submitted</span>
+              ) : isExam ? (
                 <span style={{ fontSize: 12, color: urgencyColor }}>{it.dueDate || "No date"}</span>
               ) : (
                 <>
@@ -206,6 +227,28 @@ export default function ScheduleScreen() {
 
         {isExp && (
           <div style={{ borderTop: "1px solid " + T.bd, padding: "14px 18px" }}>
+            {/* Study active toggle */}
+            {!isPlaceholder && !isExam && !isSubmitted && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, padding: "8px 10px", borderRadius: 8, background: activeMap[it.id] ? "rgba(52,211,153,0.08)" : "transparent", border: "1px solid " + (activeMap[it.id] ? "rgba(52,211,153,0.2)" : T.bd) }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: activeMap[it.id] ? T.gn : T.txD }}>Study active</span>
+                <button onClick={async function (e) {
+                  e.stopPropagation();
+                  var newVal = !activeMap[it.id];
+                  setActiveMap(function (prev) { var next = Object.assign({}, prev); if (newVal) next[it.id] = true; else delete next[it.id]; return next; });
+                  await Assignments.setStudyActive(it.id, newVal);
+                  try { setCurrSummary(await Assignments.getCurriculumSummary(active.id)); } catch (err) { /* ignore */ }
+                }} style={{
+                  width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", position: "relative",
+                  background: activeMap[it.id] ? T.gn : T.bd, transition: "background 0.15s",
+                }}>
+                  <div style={{
+                    width: 16, height: 16, borderRadius: 8, background: "#fff", position: "absolute", top: 2,
+                    left: activeMap[it.id] ? 18 : 2, transition: "left 0.15s",
+                  }} />
+                </button>
+              </div>
+            )}
+
             {/* Exam readiness bar */}
             {isExam && sortedSkills.length > 0 && (
               <div style={{ marginBottom: 14 }}>
@@ -255,8 +298,52 @@ export default function ScheduleScreen() {
               </div>
             )}
 
+            {/* Mark as Submitted */}
+            {!isPlaceholder && !isExam && !isSubmitted && (
+              <div style={{ marginBottom: 10 }}>
+                {confirmSubmit === it.id ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>
+                    <span style={{ fontSize: 12, color: T.txD }}>Are you sure?</span>
+                    <button onClick={async function (e) {
+                      e.stopPropagation();
+                      var prevItems = items;
+                      var prevActive = activeMap;
+                      setItems(function (prev) { return prev.map(function (x) { return x.id === it.id ? Object.assign({}, x, { status: "submitted" }) : x; }); });
+                      setActiveMap(function (prev) { var next = Object.assign({}, prev); delete next[it.id]; return next; });
+                      setConfirmSubmit(null);
+                      try {
+                        await Assignments.markSubmitted(it.id);
+                        setCurrSummary(await Assignments.getCurriculumSummary(active.id));
+                      } catch (err) {
+                        setItems(prevItems);
+                        setActiveMap(prevActive);
+                      }
+                    }} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: T.gn, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                      Yes, mark submitted
+                    </button>
+                    <button onClick={function (e) { e.stopPropagation(); setConfirmSubmit(null); }}
+                      style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid " + T.bd, background: "none", color: T.txD, fontSize: 12, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={function (e) { e.stopPropagation(); setConfirmSubmit(it.id); }}
+                    style={{ width: "100%", padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "none", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer", transition: "all 0.15s" }}
+                    onMouseEnter={function (e) { e.currentTarget.style.borderColor = "rgba(52,211,153,0.4)"; e.currentTarget.style.color = T.tx; }}
+                    onMouseLeave={function (e) { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; }}>
+                    Mark as Submitted
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Action button */}
-            {!isPlaceholder && (
+            {!isPlaceholder && isSubmitted && (
+              <div style={{ width: "100%", padding: "10px 16px", borderRadius: 10, background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.15)", textAlign: "center", fontSize: 13, fontWeight: 600, color: "rgba(52,211,153,0.7)" }}>
+                Submitted {"\u2713"}
+              </div>
+            )}
+            {!isPlaceholder && !isSubmitted && (
               <button onClick={function () { enterStudy(active); }}
                 style={{ width: "100%", padding: "10px 16px", borderRadius: 10, border: it.avgStrength >= 0.4 ? "none" : "1px solid " + T.bd, background: it.avgStrength >= 0.4 ? T.ac : T.sf, color: it.avgStrength >= 0.4 ? "#0F1115" : T.tx, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                 {isExam ? "Start Exam Prep" : it.avgStrength >= 0.4 ? "Start Assignment" : "Start Anyway (low readiness)"}
@@ -288,6 +375,31 @@ export default function ScheduleScreen() {
         <div style={{ maxWidth: 640, margin: "0 auto" }}>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Schedule</h1>
           <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 28 }}>{active.name}</p>
+
+          {/* Summary bar — from getCurriculumSummary */}
+          {currSummary && (currSummary.activeCount > 0 || currSummary.completedCount > 0) && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 12, marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>
+                  {currSummary.activeCount} active {"\u00B7"} {currSummary.totalSkills} skill{currSummary.totalSkills !== 1 ? "s" : ""} {"\u00B7"} {Math.round((currSummary.avgMastery || 0) * 100)}% ready
+                </span>
+                {currSummary.dueReviewCount > 0 && (
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#0F1115", background: T.am, padding: "2px 8px", borderRadius: 10 }}>
+                    {currSummary.dueReviewCount} due for review
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                {currSummary.completedCount > 0 && (
+                  <span style={{ fontSize: 12, color: T.txD }}>{currSummary.completedCount} submitted</span>
+                )}
+                <button onClick={function () { setScreen("curriculum"); }}
+                  style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  View Curriculum
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Loading */}
           {!items && <div style={{ color: T.txD, fontSize: 14, padding: "24px 0" }}>Loading schedule...</div>}

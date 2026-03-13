@@ -1,7 +1,9 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
 import { callClaude, extractJSON } from "../../lib/api.js";
+import { Facets, FacetMastery } from "../../lib/db.js";
 import { loadSkillsV2 } from "../../lib/skills.js";
+import { currentRetrievability } from "../../lib/fsrs.js";
 import { useStudy } from "../../StudyContext.jsx";
 
 export default function SkillsPanel() {
@@ -12,6 +14,32 @@ export default function SkillsPanel() {
     expandedCats, setExpandedCats,
     addNotif,
   } = useStudy();
+
+  const [expandedSkillId, setExpandedSkillId] = React.useState(null);
+  const [facetCache, setFacetCache] = React.useState({});
+
+  // Lazy-load facets when a skill is expanded
+  React.useEffect(() => {
+    if (!expandedSkillId || facetCache[expandedSkillId]) return;
+    var cancelled = false;
+    (async () => {
+      try {
+        var facets = await Facets.getBySkill(expandedSkillId);
+        if (cancelled || !facets.length) { if (!cancelled) setFacetCache(prev => ({ ...prev, [expandedSkillId]: [] })); return; }
+        var fIds = facets.map(f => f.id);
+        var fmRows = await FacetMastery.getByFacets(fIds);
+        var fmMap = {};
+        for (var fm of fmRows) fmMap[fm.facet_id] = fm;
+        var enriched = facets.map(f => {
+          var m = fmMap[f.id];
+          var r = m ? currentRetrievability({ stability: m.stability, lastReviewAt: m.last_review_at }) : 0;
+          return { id: f.id, name: f.name, description: f.description, bloomsLevel: f.blooms_level, retrievability: r, hasMastery: !!m, reps: m?.reps || 0 };
+        });
+        if (!cancelled) setFacetCache(prev => ({ ...prev, [expandedSkillId]: enriched }));
+      } catch { if (!cancelled) setFacetCache(prev => ({ ...prev, [expandedSkillId]: [] })); }
+    })();
+    return () => { cancelled = true; };
+  }, [expandedSkillId]);
 
   if (!showSkills || !skillViewData) return null;
 
@@ -128,10 +156,13 @@ export default function SkillsPanel() {
                     padding: 8,
                     background: T.sf
                   }}>
-                    {skills.map(sk => (
-                      <div key={sk.id} style={{ background: T.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 4, border: "1px solid " + T.bd }}>
+                    {skills.map(sk => {
+                      var isSkillExp = expandedSkillId === sk.id;
+                      var skFacets = facetCache[sk.id] || [];
+                      return (
+                      <div key={sk.id} style={{ background: T.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 4, border: "1px solid " + (isSkillExp ? T.acB : T.bd), transition: "border-color 0.15s" }}>
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => setExpandedSkillId(isSkillExp ? null : sk.id)}>
                             <div style={{ fontSize: 13, color: T.tx, fontWeight: 500 }}>
                               {sk.name}
                               {sk.refMatch && <span style={{ fontSize: 10, color: T.gn, marginLeft: 6, fontWeight: 400 }}>ref</span>}
@@ -190,8 +221,31 @@ export default function SkillsPanel() {
                             title="Flag this skill for re-examination"
                             style={{ background: "none", border: "1px solid " + T.bd, borderRadius: 6, padding: "3px 7px", fontSize: 10, color: T.txD, cursor: busy ? "default" : "pointer", flexShrink: 0 }}>?</button>
                         </div>
+                        {isSkillExp && skFacets.length > 0 && (
+                          <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid " + T.bd }}>
+                            <div style={{ fontSize: 10, fontWeight: 600, color: T.txD, marginBottom: 4 }}>FACETS ({skFacets.length})</div>
+                            {skFacets.map(f => {
+                              var fColor = !f.hasMastery ? T.txM : f.retrievability > 0.8 ? T.gn : f.retrievability > 0.5 ? "#F59E0B" : T.rd;
+                              return (
+                                <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0", fontSize: 11 }}>
+                                  <div style={{ width: 4, height: 4, borderRadius: "50%", background: f.hasMastery ? fColor : T.bd, flexShrink: 0 }} />
+                                  <span style={{ color: T.tx, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                                  {f.hasMastery ? (
+                                    <span style={{ color: fColor, fontSize: 10, fontWeight: 500, flexShrink: 0 }}>{Math.round(f.retrievability * 100)}%</span>
+                                  ) : (
+                                    <span style={{ color: T.txM, fontSize: 10, flexShrink: 0 }}>New</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {isSkillExp && skFacets.length === 0 && expandedSkillId === sk.id && facetCache[sk.id] === undefined && (
+                          <div style={{ marginTop: 4, fontSize: 10, color: T.txM }}>Loading facets...</div>
+                        )}
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
               </div>

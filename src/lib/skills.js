@@ -1,4 +1,4 @@
-import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints } from './db.js';
+import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets } from './db.js';
 import { computeMinHash, findNearDuplicates } from './minhash.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { chunkDocument } from './chunker.js';
@@ -276,13 +276,34 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
 
   onStatus("Decomposing assignments into skill requirements...");
 
-  const skillList = Array.isArray(skills)
-    ? skills.map(s => (s.conceptKey || s.id) + ": " + s.name).join("\n")
-    : "Skills not yet structured";
+  // Load facets for this course — if available, use facet-level mapping
+  let courseFacets = [];
+  try { courseFacets = await Facets.getByCourse(courseId); } catch { /* table may not exist */ }
 
-  const asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + skillList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
+  const useFacets = courseFacets.length > 0;
+  let referenceList;
+  let asgnPrompt;
 
-  const result = await callClaude(asgnPrompt, [{ role: "user", content: "Decompose all assignments into skill requirements." }], 16384, true);
+  if (useFacets) {
+    // Build a skill name lookup for context in the facet list
+    const skillNameMap = {};
+    if (Array.isArray(skills)) for (const s of skills) skillNameMap[s.id] = s.name;
+
+    referenceList = courseFacets.map(f => {
+      const parentName = skillNameMap[f.skill_id] || "";
+      return (f.concept_key || String(f.id)) + ": " + f.name + (parentName ? " [under: " + parentName + "]" : "");
+    }).join("\n");
+
+    asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the specific knowledge facets required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE FACETS (atomic learning units):\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredFacets\": [\"<exact ID from AVAILABLE FACETS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to facets from AVAILABLE FACETS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs. Use only the IDs from the AVAILABLE FACETS list.\n- If a question requires knowledge not covered by any available facet, omit it from requiredFacets rather than inventing a new ID.\n- Prefer fine-grained facet mapping: if a question involves 3 distinct concepts, list all 3 facet IDs.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required facet.";
+  } else {
+    referenceList = Array.isArray(skills)
+      ? skills.map(s => (s.conceptKey || s.id) + ": " + s.name).join("\n")
+      : "Skills not yet structured";
+
+    asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
+  }
+
+  const result = await callClaude(asgnPrompt, [{ role: "user", content: useFacets ? "Decompose all assignments into facet requirements." : "Decompose all assignments into skill requirements." }], 16384, true);
   if (isApiError(result)) {
     console.warn("[decomposeAssignments] API error:", result);
     return;
@@ -327,7 +348,13 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
       }
 
       if (Array.isArray(a.questions) && a.questions.length > 0) {
-        await Assignments.saveQuestions(assignmentId, courseId, a.questions);
+        // Normalize: LLM may return requiredFacets or requiredSkills depending on prompt mode
+        const normalizedQs = a.questions.map(q => ({
+          ...q,
+          requiredFacets: q.requiredFacets || null,
+          requiredSkills: q.requiredSkills || null,
+        }));
+        await Assignments.saveQuestions(assignmentId, courseId, normalizedQs, { useFacets, courseFacets });
       }
     }
     return asgn;
@@ -572,9 +599,18 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
       // --- Concept link generation (non-blocking) ---
       if (result.createdSkillIds?.length > 0) {
         try {
-          const { generateConceptLinks } = await import('./conceptLinks.js');
+          const { generateConceptLinks, generateFacetConceptLinks } = await import('./conceptLinks.js');
           const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
-          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} links created`);
+          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} skill links created`);
+          if (result.createdFacetIds?.length > 0) {
+            const { preMergeDuplicateFacets, rankBindingsForFacets } = await import('./extraction.js');
+            const mergeResult = await preMergeDuplicateFacets(result.createdFacetIds);
+            if (mergeResult.merged > 0) console.log(`[PreMerge] ${mergeResult.merged} duplicate facets merged`);
+            const rankResult = await rankBindingsForFacets(result.createdFacetIds);
+            if (rankResult.totalRanked > 0) console.log(`[QualityRank] ${rankResult.totalRanked} bindings ranked across ${rankResult.facetsProcessed} facets`);
+            const fclResult = await generateFacetConceptLinks(courseId, result.createdFacetIds);
+            if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
+          }
         } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
       }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
@@ -605,9 +641,18 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
       // --- Concept link generation (non-blocking) ---
       if (result.createdSkillIds?.length > 0) {
         try {
-          const { generateConceptLinks } = await import('./conceptLinks.js');
+          const { generateConceptLinks, generateFacetConceptLinks } = await import('./conceptLinks.js');
           const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
-          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} links created`);
+          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} skill links created`);
+          if (result.createdFacetIds?.length > 0) {
+            const { preMergeDuplicateFacets, rankBindingsForFacets } = await import('./extraction.js');
+            const mergeResult = await preMergeDuplicateFacets(result.createdFacetIds);
+            if (mergeResult.merged > 0) console.log(`[PreMerge] ${mergeResult.merged} duplicate facets merged`);
+            const rankResult = await rankBindingsForFacets(result.createdFacetIds);
+            if (rankResult.totalRanked > 0) console.log(`[QualityRank] ${rankResult.totalRanked} bindings ranked across ${rankResult.facetsProcessed} facets`);
+            const fclResult = await generateFacetConceptLinks(courseId, result.createdFacetIds);
+            if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
+          }
         } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
       }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
