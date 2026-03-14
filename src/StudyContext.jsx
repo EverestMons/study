@@ -685,6 +685,10 @@ export function StudyProvider({ children, setErrorCtx }) {
           };
         });
 
+        // Only show skills the user has actually reviewed/acquired
+        const acquiredSubs = enrichedSubs.filter(s => s.mastery !== null);
+        if (acquiredSubs.length === 0) continue;
+
         const level = Math.floor(Math.sqrt(totalPoints));
         const nextLevelThreshold = (level + 1) * (level + 1);
         const progressToNext = totalPoints - (level * level);
@@ -692,9 +696,9 @@ export function StudyProvider({ children, setErrorCtx }) {
 
         results.push({
           parent, cipDomain: parent.cip_code ? parent.cip_code.substring(0, 2) : null,
-          subSkills: enrichedSubs, masteryMap, level, progressToNext, progressNeeded,
+          subSkills: acquiredSubs, masteryMap, level, progressToNext, progressNeeded,
           readiness: readinessCount > 0 ? readinessSum / readinessCount : 0,
-          subCount: subs.length, reviewedCount, dueForReview, totalPoints, lastActivityDate,
+          subCount: acquiredSubs.length, reviewedCount, dueForReview, totalPoints, lastActivityDate,
         });
       }
       results.sort((a, b) => b.level - a.level);
