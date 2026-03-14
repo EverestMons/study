@@ -18,7 +18,7 @@ export default function SkillsScreen() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => setScreen("manage")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+        <button onClick={() => setScreen("courseHome")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
           onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
         <TopBarButtons />
