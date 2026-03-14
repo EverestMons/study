@@ -93,20 +93,14 @@ export async function loadLanguage(langId) {
       case "rust": { const m = await import("@codemirror/lang-rust"); ext = m.rust(); break; }
       case "sql": { const m = await import("@codemirror/lang-sql"); ext = m.sql(); break; }
       case "go": { const m = await import("@codemirror/lang-go"); ext = m.go(); break; }
-      case "c#": {
-        const [legacy, lang] = await Promise.all([
-          import("@codemirror/legacy-modes/mode/clike"),
-          import("@codemirror/language"),
-        ]);
-        ext = lang.StreamLanguage.define(legacy.csharp);
-        break;
-      }
+      case "c#":
       case "kotlin": {
         const [legacy, lang] = await Promise.all([
           import("@codemirror/legacy-modes/mode/clike"),
           import("@codemirror/language"),
         ]);
-        ext = lang.StreamLanguage.define(legacy.kotlin);
+        const mode = langId === "c#" ? legacy.csharp : legacy.kotlin;
+        if (mode && typeof mode.token === "function") ext = lang.StreamLanguage.define(mode);
         break;
       }
       case "swift": {
@@ -114,7 +108,7 @@ export async function loadLanguage(langId) {
           import("@codemirror/legacy-modes/mode/swift"),
           import("@codemirror/language"),
         ]);
-        ext = lang.StreamLanguage.define(legacy.swift);
+        if (legacy.swift && typeof legacy.swift.token === "function") ext = lang.StreamLanguage.define(legacy.swift);
         break;
       }
       case "ruby": {
@@ -122,7 +116,7 @@ export async function loadLanguage(langId) {
           import("@codemirror/legacy-modes/mode/ruby"),
           import("@codemirror/language"),
         ]);
-        ext = lang.StreamLanguage.define(legacy.ruby);
+        if (legacy.ruby && typeof legacy.ruby.token === "function") ext = lang.StreamLanguage.define(legacy.ruby);
         break;
       }
       case "r": {
@@ -130,7 +124,7 @@ export async function loadLanguage(langId) {
           import("@codemirror/legacy-modes/mode/r"),
           import("@codemirror/language"),
         ]);
-        ext = lang.StreamLanguage.define(legacy.r);
+        if (legacy.r && typeof legacy.r.token === "function") ext = lang.StreamLanguage.define(legacy.r);
         break;
       }
       case "matlab": {
@@ -138,7 +132,7 @@ export async function loadLanguage(langId) {
           import("@codemirror/legacy-modes/mode/octave"),
           import("@codemirror/language"),
         ]);
-        ext = lang.StreamLanguage.define(legacy.octave);
+        if (legacy.octave && typeof legacy.octave.token === "function") ext = lang.StreamLanguage.define(legacy.octave);
         break;
       }
       default: break;
