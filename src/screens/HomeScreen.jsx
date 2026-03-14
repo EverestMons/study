@@ -9,7 +9,7 @@ function getCourseState(c, summary, curriculum) {
   if (mats.length === 0) return { state: "no-materials", label: "Upload materials", action: "materials" };
   var hasAssignmentMats = mats.some(function (m) { return m.classification === "assignment"; });
   if (!hasAssignmentMats) return { state: "no-assignments", label: "Upload assignments", action: "materials" };
-  if (curriculum && curriculum.activeCount === 0 && curriculum.completedCount === 0) return { state: "none-active", label: "Activate assignments", action: "schedule" };
+  if (curriculum && curriculum.activeCount === 0 && curriculum.completedCount === 0) return { state: "none-active", label: "Activate assignments", action: "curriculum" };
   if (curriculum && curriculum.activeCount > 0) return { state: "active", label: null, action: "curriculum" };
   if (curriculum && curriculum.completedCount > 0 && curriculum.dueReviewCount > 0) return { state: "reviews-due", label: curriculum.dueReviewCount + " skill" + (curriculum.dueReviewCount !== 1 ? "s" : "") + " due for review", action: "curriculum" };
   if (curriculum && curriculum.completedCount > 0) return { state: "current", label: "You're current!", action: "curriculum" };

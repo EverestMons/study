@@ -482,10 +482,19 @@ export default function CurriculumScreen() {
           {/* EMPTY STATE */}
           {showEmpty && (
             <div style={{ textAlign: "center", padding: "48px 20px", background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
-              <div style={{ fontSize: 28, marginBottom: 12 }}>{"\u2713"}</div>
-              <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 8 }}>You're current</div>
-              <div style={{ fontSize: 14, color: T.txD, lineHeight: 1.5 }}>
-                No active assignments and no skills due for review. Activate assignments on the schedule to start tracking.
+              <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 8 }}>No active assignments</div>
+              <div style={{ fontSize: 14, color: T.txD, lineHeight: 1.5, marginBottom: 20 }}>
+                Activate assignments on the schedule to start tracking readiness, or go to materials to manage your uploads.
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                <button onClick={function () { setScreen("schedule"); }}
+                  style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  Go to Schedule
+                </button>
+                <button onClick={function () { setScreen("materials"); }}
+                  style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+                  Materials
+                </button>
               </div>
             </div>
           )}
