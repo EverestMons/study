@@ -8,6 +8,8 @@ import {
 } from "../../lib/study.js";
 import { useStudy } from "../../StudyContext.jsx";
 
+const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+
 export default function PracticeMode() {
   const {
     active,
@@ -208,53 +210,37 @@ export default function PracticeMode() {
                 )}
 
                 {/* Code editor - disabled until confidence is rated */}
-                <textarea
-                  value={problem.studentAnswer || (problem.starterCode || "")}
-                  onChange={e => {
-                    var val = e.target.value;
-                    setPracticeMode(prev => {
-                      var s = prev.set;
-                      var t = s.currentTier;
-                      var td = { ...s.tiers[t] };
-                      var attempts = [...td.attempts];
-                      var lastA = { ...attempts[attempts.length - 1] };
-                      var probs = [...lastA.problems];
-                      probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], studentAnswer: val };
-                      lastA.problems = probs;
-                      attempts[attempts.length - 1] = lastA;
-                      td.attempts = attempts;
-                      var newTiers = { ...s.tiers, [t]: td };
-                      return { ...prev, set: { ...s, tiers: newTiers } };
-                    });
-                  }}
-                  disabled={problem.passed !== null || pm.evaluating || problem.confidenceRating === null}
-                  onKeyDown={e => {
-                    if (e.key === "Tab") {
-                      e.preventDefault();
-                      var ta = e.target;
-                      var start = ta.selectionStart, end = ta.selectionEnd;
-                      var val = (problem.studentAnswer || problem.starterCode || "");
-                      var newVal = val.substring(0, start) + "  " + val.substring(end);
+                <React.Suspense fallback={
+                  <div style={{ minHeight: 220, maxHeight: 400, background: "#13151A", borderRadius: 10, border: "1px solid " + T.bd, display: "flex", alignItems: "center", justifyContent: "center", color: T.txM, fontSize: 12 }}>
+                    Loading editor...
+                  </div>
+                }>
+                  <CodeEditor
+                    value={problem.studentAnswer || (problem.starterCode || "")}
+                    onChange={val => {
                       setPracticeMode(prev => {
-                        var s = prev.set, t2 = s.currentTier;
-                        var td2 = { ...s.tiers[t2] }; var atts = [...td2.attempts];
-                        var la = { ...atts[atts.length - 1] }; var pr = [...la.problems];
-                        pr[prev.currentProblemIdx] = { ...pr[prev.currentProblemIdx], studentAnswer: newVal };
-                        la.problems = pr; atts[atts.length - 1] = la; td2.attempts = atts;
-                        return { ...prev, set: { ...s, tiers: { ...s.tiers, [t2]: td2 } } };
+                        var s = prev.set;
+                        var t = s.currentTier;
+                        var td = { ...s.tiers[t] };
+                        var attempts = [...td.attempts];
+                        var lastA = { ...attempts[attempts.length - 1] };
+                        var probs = [...lastA.problems];
+                        probs[prev.currentProblemIdx] = { ...probs[prev.currentProblemIdx], studentAnswer: val };
+                        lastA.problems = probs;
+                        attempts[attempts.length - 1] = lastA;
+                        td.attempts = attempts;
+                        var newTiers = { ...s.tiers, [t]: td };
+                        return { ...prev, set: { ...s, tiers: newTiers } };
                       });
-                      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
-                    }
-                  }}
-                  style={{
-                    width: "100%", minHeight: 220, maxHeight: 400, padding: 16,
-                    fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace", fontSize: 13, lineHeight: 1.6,
-                    background: "#1A1D24", color: problem.passed !== null ? T.txD : "#E8EAF0",
-                    border: "1px solid " + (pm.feedback ? (problem.passed ? T.gn : T.rd) : T.bd),
-                    borderRadius: 10, resize: "vertical", tabSize: 2
-                  }}
-                  placeholder={tier === 1 ? "Type the expected output..." : "Write your answer here..."}
-                />
+                    }}
+                    language={pm.set.detectedLanguage}
+                    disabled={problem.passed !== null || pm.evaluating || problem.confidenceRating === null}
+                    borderColor={pm.feedback ? (problem.passed ? T.gn : T.rd) : null}
+                    minHeight={220}
+                    maxHeight={400}
+                    placeholder={tier === 1 ? "Type the expected output..." : "Write your answer here..."}
+                  />
+                </React.Suspense>
 
                 {/* Action buttons */}
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>

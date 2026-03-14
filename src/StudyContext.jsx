@@ -82,6 +82,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
   const [codeMode, setCodeMode] = useState(false);
+  const [detectedLanguage, setDetectedLanguage] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [booting, setBooting] = useState(false);
@@ -703,7 +704,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   const enterStudy = async (course) => {
     setActive(course); setScreen("study");
-    setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
+    setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
     cachedSessionCtx.current = null;
     sessionStartIdx.current = 0;
@@ -916,13 +917,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
     if (focus.type === "assignment") {
       var lang = detectLanguage(active.name, focus.assignment?.title || "", "");
-      if (lang) setCodeMode(true);
+      if (lang) { setCodeMode(true); setDetectedLanguage(lang); }
     } else if (focus.type === "skill") {
       var lang2 = detectLanguage(active.name, focus.skill?.name || "", focus.skill?.description || "");
-      if (lang2) setCodeMode(true);
+      if (lang2) { setCodeMode(true); setDetectedLanguage(lang2); }
     } else {
       var lang3 = detectLanguage(active.name, "", "");
-      if (lang3) setCodeMode(true);
+      if (lang3) { setCodeMode(true); setDetectedLanguage(lang3); }
     }
     try {
       const skills = await loadSkillsV2(active.id);
@@ -1009,7 +1010,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     const isCode = codeMode;
     setInput(""); setCodeMode(false);
     const userTs = Date.now();
-    const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs, codeMode: isCode }];
+    const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs, codeMode: isCode, detectedLanguage: isCode ? detectedLanguage : null }];
     setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
 
     try {
@@ -1323,7 +1324,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     showSettings, setShowSettings, apiKeyLoaded, setApiKeyLoaded,
     apiKeyInput, setApiKeyInput, keyVerifying, setKeyVerifying, keyError, setKeyError,
     files, setFiles, cName, setCName, drag, setDrag, parsing,
-    msgs, setMsgs, input, setInput, codeMode, setCodeMode,
+    msgs, setMsgs, input, setInput, codeMode, setCodeMode, detectedLanguage,
     exporting, setExporting, busy, setBusy, booting, setBooting,
     status, setStatus, processingMatId, setProcessingMatId,
     errorLogModal, setErrorLogModal,
@@ -1369,7 +1370,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     screen, courses, active, ready,
     showSettings, apiKeyLoaded, apiKeyInput, keyVerifying, keyError,
     files, cName, drag, parsing,
-    msgs, input, codeMode, exporting, busy, booting,
+    msgs, input, codeMode, detectedLanguage, exporting, busy, booting,
     status, processingMatId, errorLogModal,
     globalLock, lockElapsed, dupPrompt,
     showManage, showSkills, skillViewData, expandedCats,

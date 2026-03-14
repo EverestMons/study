@@ -3,6 +3,8 @@ import { T, renderMd } from "../../lib/theme.jsx";
 import { parseSkillUpdates } from "../../lib/study.js";
 import { useStudy } from "../../StudyContext.jsx";
 
+const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+
 export default function MessageList() {
   const {
     msgs, booting, status, processingMatId,
@@ -46,7 +48,21 @@ export default function MessageList() {
               </span>
             )) : (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                <div>{m.content}</div>
+                {m.codeMode ? (
+                  <React.Suspense fallback={<pre style={{ fontSize: 13, fontFamily: "'SF Mono','Fira Code',monospace", whiteSpace: "pre-wrap", color: T.ac }}>{m.content.replace(/^```\n?/, "").replace(/\n?```$/, "")}</pre>}>
+                    <CodeEditor
+                      value={m.content.replace(/^```\n?/, "").replace(/\n?```$/, "")}
+                      language={m.detectedLanguage}
+                      readOnly
+                      minHeight={null}
+                      maxHeight={null}
+                      showLineNumbers
+                      showLanguageBadge={false}
+                    />
+                  </React.Suspense>
+                ) : (
+                  <div>{m.content}</div>
+                )}
                 {ts && <div style={{ fontSize: 10, color: T.txM, marginTop: 4 }}>{ts}</div>}
               </div>
             )}

@@ -2,9 +2,11 @@ import React from "react";
 import { T } from "../../lib/theme.jsx";
 import { useStudy } from "../../StudyContext.jsx";
 
+const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+
 export default function InputBar() {
   const {
-    msgs, input, setInput, codeMode, setCodeMode,
+    msgs, input, setInput, codeMode, setCodeMode, detectedLanguage,
     busy, practiceMode,
     focusContext, sessionMode,
     taRef, sendMessage,
@@ -13,7 +15,15 @@ export default function InputBar() {
   if (msgs.length === 0 || practiceMode) return null;
 
   return (
-    <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", flexShrink: 0 }}>
+    <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", flexShrink: 0 }}
+      onKeyDown={e => {
+        // Ctrl/Cmd+Shift+C toggles code mode (works regardless of focus)
+        if (e.key === "C" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          setCodeMode(c => !c);
+          return;
+        }
+      }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
         {/* Mode context bar */}
         {(focusContext || sessionMode) && (
@@ -32,69 +42,44 @@ export default function InputBar() {
           </div>
         )}
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-          <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
-            onKeyDown={e => {
-              // Ctrl/Cmd+Shift+C toggles code mode
-              if (e.key === "C" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                var savedPos = e.target.selectionStart;
-                setCodeMode(c => !c);
-                setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = savedPos; taRef.current.focus(); } }, 0);
-                return;
-              }
-              // Escape exits code mode
-              if (e.key === "Escape" && codeMode) { setCodeMode(false); return; }
-              // Cmd/Ctrl+Enter always sends
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); return; }
-              // Enter in prose mode sends; in code mode inserts newline (default)
-              if (e.key === "Enter" && !e.shiftKey && !codeMode) { e.preventDefault(); sendMessage(); return; }
-              // Tab inserts 2 spaces (code mode only)
-              if (e.key === "Tab" && codeMode && !e.shiftKey) {
-                e.preventDefault();
-                var ta = e.target, start = ta.selectionStart, end = ta.selectionEnd;
-                var newVal = input.substring(0, start) + "  " + input.substring(end);
-                setInput(newVal);
-                setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = start + 2; } }, 0);
-                return;
-              }
-              // Shift+Tab dedents current line (code mode only)
-              if (e.key === "Tab" && codeMode && e.shiftKey) {
-                e.preventDefault();
-                var ta2 = e.target, pos = ta2.selectionStart;
-                var lineStart = input.lastIndexOf("\n", pos - 1) + 1;
-                var lineText = input.substring(lineStart);
-                var spaces = 0;
-                if (lineText.startsWith("  ")) spaces = 2;
-                else if (lineText.startsWith(" ")) spaces = 1;
-                if (spaces > 0) {
-                  var dedented = input.substring(0, lineStart) + input.substring(lineStart + spaces);
-                  setInput(dedented);
-                  var newPos = Math.max(lineStart, pos - spaces);
-                  setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = newPos; } }, 0);
-                }
-                return;
-              }
-            }}
-            placeholder={codeMode ? "Enter code..." : "Type your answer or ask a question..."}
-            rows={codeMode ? 3 : 1}
-            style={{
-              flex: 1, borderRadius: 12, padding: "12px 16px", color: T.tx,
-              transition: "all 0.2s",
-              ...(codeMode ? {
-                fontFamily: "'SF Mono', 'Fira Code', 'Consolas', monospace",
-                fontSize: 13, lineHeight: 1.6, background: "#1A1D24",
-                border: "1px solid " + T.acB, minHeight: 80, maxHeight: 200,
-                resize: "vertical", tabSize: 2
-              } : {
+          {codeMode ? (
+            <div style={{ flex: 1 }}>
+              <React.Suspense fallback={
+                <div style={{ minHeight: 240, maxHeight: 400, background: "#13151A", borderRadius: 10, border: "1px solid " + T.bd, display: "flex", alignItems: "center", justifyContent: "center", color: T.txM, fontSize: 12 }}>
+                  Loading editor...
+                </div>
+              }>
+                <CodeEditor
+                  value={input}
+                  onChange={setInput}
+                  language={detectedLanguage}
+                  minHeight={240}
+                  maxHeight={400}
+                  onSubmit={sendMessage}
+                  onEscape={() => setCodeMode(false)}
+                  autoFocus
+                  placeholder="Enter code..."
+                />
+              </React.Suspense>
+            </div>
+          ) : (
+            <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => {
+                // Cmd/Ctrl+Enter always sends
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); return; }
+                // Enter in prose mode sends
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
+              }}
+              placeholder="Type your answer or ask a question..."
+              rows={1}
+              style={{
+                flex: 1, borderRadius: 12, padding: "12px 16px", color: T.tx,
+                transition: "all 0.2s",
                 fontSize: 14, lineHeight: 1.5, background: T.sf,
                 border: "1px solid " + T.bd, maxHeight: 150, resize: "none"
-              })
-            }} />
-          <button onClick={() => {
-              var savedPos = taRef.current?.selectionStart || 0;
-              setCodeMode(c => !c);
-              setTimeout(() => { if (taRef.current) { taRef.current.selectionStart = taRef.current.selectionEnd = savedPos; taRef.current.focus(); } }, 0);
-            }}
+              }} />
+          )}
+          <button onClick={() => setCodeMode(c => !c)}
             aria-label="Toggle code input mode"
             aria-pressed={codeMode}
             style={{
@@ -124,7 +109,7 @@ export default function InputBar() {
             </svg>
           </button>
         </div>
-        {codeMode && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>&#x23CE; new line &middot; {navigator.platform?.includes("Mac") ? "&#x2318;" : "Ctrl+"}&#x23CE; send</div>}
+        {codeMode && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>Esc exit &#xB7; &#x23CE; new line &#xB7; {navigator.platform?.includes("Mac") ? "&#x2318;" : "Ctrl+"}&#x23CE; send</div>}
       </div>
     </div>
   );
