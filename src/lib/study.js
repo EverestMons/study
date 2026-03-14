@@ -887,7 +887,7 @@ const collectFacetBindings = async (facetIds, { mode = 'standard' } = {}) => {
           }
         } catch { allBindings.push(b); } // Include on error (safe default)
       } else if (b.binding_type === 'references') {
-        if (mode === 'explore' || mode === 'exam') {
+        if (mode === 'exam') {
           allBindings.push(b);
         }
       }
@@ -1431,29 +1431,6 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     var domProfCtx2 = await buildDomainProficiency(courseId);
     if (domProfCtx2) ctx += "\n" + domProfCtx2;
 
-  } else if (focus.type === "recap") {
-    // Just skill summary, no materials
-    ctx += "STUDENT PROFILE:\n";
-    var recapSessionCount = await Sessions.countByCourse(courseId);
-    ctx += "Total sessions: " + recapSessionCount + "\n";
-    if (allSkills.some(s => s.mastery)) {
-      const sorted = [...allSkills].filter(s => s.mastery).sort((a, b) => effectiveStrength(b) - effectiveStrength(a));
-      ctx += "Skills engaged:\n";
-      for (const s of sorted) {
-        const str = effectiveStrength(s);
-        ctx += "  " + s.name + ": " + Math.round(str * 100) + "% strength\n";
-      }
-    }
-
-    var dlCtx3 = await buildDeadlineContext(courseId, allSkills);
-    if (dlCtx3) ctx += "\n" + dlCtx3 + "\n";
-
-    var crossCtx3 = await buildCrossSkillContext(courseId, allSkills);
-    if (crossCtx3) ctx += "\n" + crossCtx3;
-
-    var domProfCtx3 = await buildDomainProficiency(courseId);
-    if (domProfCtx3) ctx += "\n" + domProfCtx3;
-
   } else if (focus.type === "exam") {
     // Load ALL chunks from the selected materials for broad exam coverage
     var selectedMats = focus.materials || [];
@@ -1544,81 +1521,6 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     var domProfCtx4 = await buildDomainProficiency(courseId);
     if (domProfCtx4) ctx += "\n" + domProfCtx4;
 
-  } else if (focus.type === "explore") {
-    // Lightweight context prioritizing chunks matching the topic
-    var sanitizedTopic = (focus.topic || "").replace(/[\n\r]/g, " ").trim().substring(0, 200);
-    var topic = sanitizedTopic.toLowerCase();
-    var topicWords = topic.split(/\s+/).filter(function(w) { return w.length > 3; });
-
-    ctx += "EXPLORATION TOPIC: " + (sanitizedTopic || "General") + "\n\n";
-
-    // Include full skill tree for reference
-    ctx += "SKILL TREE:\n";
-    for (var s3 of allSkills) {
-      var str3 = effectiveStrength(s3);
-      var strPct3 = Math.round(str3 * 100);
-      ctx += "  " + (s3.conceptKey || s3.id) + ": " + s3.name + " [strength: " + strPct3 + "%] -- " + s3.description + "\n";
-    }
-
-    // Try facet-based loading: match topic words against skill names → get facets
-    ctx += "\nSOURCE MATERIAL:\n";
-    var exploreFacetContent = '';
-    if (topicWords.length > 0) {
-      var matchedSkills = allSkills.filter(function(sk) {
-        var skName = sk.name.toLowerCase();
-        return topicWords.some(function(kw) { return skName.includes(kw); });
-      });
-      if (matchedSkills.length > 0) {
-        var exploreFacetIds = [];
-        for (var ms of matchedSkills) {
-          var msFacets = await facetsForSkill(ms);
-          for (var msf of msFacets) exploreFacetIds.push(msf.id);
-        }
-        exploreFacetIds = [...new Set(exploreFacetIds)];
-        if (exploreFacetIds.length > 0) {
-          exploreFacetContent = await loadFacetBasedContent(exploreFacetIds, { mode: 'explore' });
-        }
-      }
-    }
-
-    if (exploreFacetContent) {
-      ctx += exploreFacetContent;
-    } else {
-      // Keyword fallback: existing topic-matching chunk loading
-      var loadedCount = 0;
-      for (var mat2 of materials) {
-        var loaded2 = await getMatContent(courseId, mat2);
-        var activeChunks2 = loaded2.chunks.filter(function(ch) { return ch.status !== "skipped"; });
-        if (!activeChunks2.length) continue;
-
-        var relevant = activeChunks2.filter(function(ch) {
-          var tl = ch.label.toLowerCase();
-          var preview = ch.content.substring(0, 1000).toLowerCase();
-          return topicWords.some(function(kw) { return tl.includes(kw) || preview.includes(kw); });
-        });
-
-        for (var ch2 of relevant.slice(0, 3)) {
-          ctx += "\n--- " + ch2.label + " ---\n" + ch2.content + "\n";
-          loadedCount++;
-        }
-        if (loadedCount >= 5) break;
-      }
-
-      if (loadedCount === 0) {
-        for (var mat3 of materials) {
-          var loaded3 = await getMatContent(courseId, mat3);
-          var activeChunks3 = loaded3.chunks.filter(function(ch) { return ch.status !== "skipped"; });
-          for (var ch3 of activeChunks3.slice(0, 2)) {
-            ctx += "\n--- " + ch3.label + " ---\n" + ch3.content + "\n";
-            loadedCount++;
-          }
-          if (loadedCount >= 3) break;
-        }
-      }
-    }
-
-    var domProfCtx5 = await buildDomainProficiency(courseId);
-    if (domProfCtx5) ctx += "\n" + domProfCtx5;
   }
 
   return ctx;

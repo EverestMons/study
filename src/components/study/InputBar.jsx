@@ -29,14 +29,12 @@ export default function InputBar() {
         {(focusContext || sessionMode) && (
           <div style={{ fontSize: 11, color: T.txM, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ background: T.acS, color: T.ac, padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
-              {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "recap" ? "RC" : focusContext?.type === "exam" ? "XM" : focusContext?.type === "explore" ? "XP" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
+              {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "exam" ? "XM" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
             </span>
             <span>
               {focusContext?.type === "assignment" ? "Assignment: " + (focusContext.assignment?.title || "")
                 : focusContext?.type === "skill" ? "Skill: " + (focusContext.skill?.name || "")
-                : focusContext?.type === "recap" ? "Session Recap"
                 : focusContext?.type === "exam" ? "Exam Prep: " + (focusContext.materials?.map(m => m.name).join(", ") || "")
-                : focusContext?.type === "explore" ? "Explore: " + (focusContext.topic || "")
                 : sessionMode || ""}
             </span>
           </div>

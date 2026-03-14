@@ -3,11 +3,12 @@ import { T, CSS } from "../lib/theme.jsx";
 import { loadSkillsV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function ManageScreen() {
   const {
     active, processingMatId, globalLock,
-    setScreen, setShowSettings, setSkillViewData,
+    setScreen, setSkillViewData,
   } = useStudy();
 
   return (
@@ -23,12 +24,7 @@ export default function ManageScreen() {
           onMouseLeave={e => e.currentTarget.style.background = "none"}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
-        <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
-          Settings
-        </button>
+        <TopBarButtons />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
         <div style={{ maxWidth: 640, margin: "0 auto" }}>

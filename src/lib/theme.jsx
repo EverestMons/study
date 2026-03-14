@@ -38,6 +38,7 @@ export const CSS = [
   "@keyframes shelfPulse{0%,100%{opacity:.5}50%{opacity:.8}}",
   "@keyframes dotPulse{0%,100%{opacity:.2;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}",
   "@keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}",
+  "button:active{transform:scale(0.97);background-color:rgba(139,92,246,0.08) !important;transition:transform 0.1s}",
 ].join("\n");
 
 // --- Markdown Renderer ---

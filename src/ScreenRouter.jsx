@@ -5,6 +5,7 @@ import ErrorDisplay from "./components/ErrorDisplay.jsx";
 import GlobalLockOverlay from "./components/GlobalLockOverlay.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import HomeScreen from "./screens/HomeScreen.jsx";
+import CourseHomepage from "./screens/CourseHomepage.jsx";
 import UploadScreen from "./screens/UploadScreen.jsx";
 import ManageScreen from "./screens/ManageScreen.jsx";
 import NotifsScreen from "./screens/NotifsScreen.jsx";
@@ -60,6 +61,7 @@ export default function ScreenRouter() {
   // --- Screen content ---
   var content = null;
   if (screen === "home") content = <HomeScreen />;
+  else if (screen === "courseHome" && active) content = <CourseHomepage />;
   else if (screen === "profile") content = <ProfileScreen />;
   else if (screen === "upload") content = <UploadScreen />;
   else if (screen === "manage" && active) content = <ManageScreen />;
@@ -67,13 +69,13 @@ export default function ScreenRouter() {
   else if (screen === "skills" && active) content = <SkillsScreen />;
   else if (screen === "schedule" && active) content = <ScheduleScreen />;
   else if (screen === "curriculum" && active) content = <CurriculumScreen />;
-  else if (screen === "notifs" && active) content = <NotifsScreen />;
+  else if (screen === "notifs") content = <NotifsScreen />;
   else if (screen === "study" && active) content = <StudyScreen />;
 
   return (
     <>
       {updateInfo && <UpdateBanner />}
-      {content}
+      <div key={screen} style={{ animation: "fadeIn 0.25s ease" }}>{content}</div>
     </>
   );
 }

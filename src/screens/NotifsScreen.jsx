@@ -1,11 +1,12 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function NotifsScreen() {
   const {
-    active, notifs, setNotifs, extractionErrors, setExtractionErrors,
-    setScreen, setShowSettings,
+    notifs, setNotifs, extractionErrors, setExtractionErrors,
+    setScreen,
   } = useStudy();
 
   return (
@@ -13,20 +14,14 @@ export default function NotifsScreen() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => setScreen("study")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+        <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
           onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
-        <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
-          Settings
-        </button>
+        <TopBarButtons />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>Notifications</h1>
-        <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 24 }}>{active.name}</p>
+        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 24 }}>Notifications</h1>
 
         {/* Extraction Errors */}
         {extractionErrors.length > 0 && (

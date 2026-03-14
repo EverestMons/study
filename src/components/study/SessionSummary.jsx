@@ -188,7 +188,7 @@ export default function SessionSummary() {
         )}
 
         <button onClick={function() {
-          setSessionSummary(null); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
+          setSessionSummary(null); setScreen("courseHome"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
         }}
           style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
           Done

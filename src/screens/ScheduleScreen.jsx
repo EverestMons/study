@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 import { Assignments, CourseSchedule } from "../lib/db.js";
 import { loadSkillsV2 } from "../lib/skills.js";
 import { effectiveStrength, computeFacetReadiness } from "../lib/study.js";
@@ -36,7 +37,7 @@ function readinessColor(v) { return v >= 0.6 ? T.gn : v >= 0.3 ? "#F59E0B" : T.t
 
 export default function ScheduleScreen() {
   var {
-    active, setScreen, setShowSettings, enterStudy, setActive,
+    active, setScreen, enterStudy, setActive,
   } = useStudy();
 
   var [items, setItems] = useState(null);
@@ -365,10 +366,7 @@ export default function ScheduleScreen() {
           onMouseEnter={function (e) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={function (e) { e.currentTarget.style.background = "none"; }}>&lt; Back</button>
         <div style={{ flex: 1 }} />
-        <button onClick={function () { setShowSettings(true); }}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={function (e) { e.currentTarget.style.background = T.sfH; }}
-          onMouseLeave={function (e) { e.currentTarget.style.background = T.sf; }}>Settings</button>
+        <TopBarButtons />
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>

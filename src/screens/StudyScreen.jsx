@@ -7,11 +7,14 @@ import SkillsPanel from "../components/study/SkillsPanel.jsx";
 import PracticeMode from "../components/study/PracticeMode.jsx";
 import NotifPanel from "../components/study/NotifPanel.jsx";
 import ChunkPicker from "../components/study/ChunkPicker.jsx";
-import ModePicker from "../components/study/ModePicker.jsx";
+import AssignmentPicker from "../components/study/AssignmentPicker.jsx";
+import SkillPicker from "../components/study/SkillPicker.jsx";
+import ExamScopePicker from "../components/study/ExamScopePicker.jsx";
 import MessageList from "../components/study/MessageList.jsx";
 import AssignmentPanel from "../components/study/AssignmentPanel.jsx";
 import InputBar from "../components/study/InputBar.jsx";
 import SessionSummary from "../components/study/SessionSummary.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function StudyScreen() {
   const {
@@ -31,8 +34,7 @@ export default function StudyScreen() {
     sessionMasteryEvents, sessionFacetUpdates, sessionMasteredSkills,
     cachedSessionCtx, sessionStartTime, discussedChunks,
     saveSessionToJournal,
-    setShowSettings,
-    focusContext,
+    focusContext, booting,
   } = useStudy();
 
   return (
@@ -43,6 +45,7 @@ export default function StudyScreen() {
         <button onClick={async () => {
             if (sessionMode || pickerData || chunkPicker || practiceMode) {
               setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false); setMsgs([]); setInput("");
+              setScreen("courseHome");
             } else if (msgs.length > 1 && sessionStartTime.current) {
               const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current, sessionMasteryEvents.current, sessionFacetUpdates.current);
               const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
@@ -56,7 +59,7 @@ export default function StudyScreen() {
               setAsgnWork(null);
               setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork, masteryEvents: sessionMasteryEvents.current.slice(), facetsAssessed: sessionFacetUpdates.current.slice() });
             } else {
-              await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
+              await saveSessionToJournal(); setScreen("courseHome"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
             }
           }}
           style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
@@ -69,12 +72,7 @@ export default function StudyScreen() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
-          Settings
-        </button>
+        <TopBarButtons />
       </div>
 
       <MaterialsPanel />
@@ -87,7 +85,13 @@ export default function StudyScreen() {
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", order: 1 }}>
           <div style={{ maxWidth: 640, margin: "0 auto" }}>
             <ChunkPicker />
-            <ModePicker />
+            {sessionMode && !focusContext && !booting && msgs.length <= 1 && (
+              <>
+                {sessionMode === "assignment" && <AssignmentPicker />}
+                {sessionMode === "skills" && <SkillPicker />}
+                {sessionMode === "exam" && <ExamScopePicker />}
+              </>
+            )}
             {/* Break reminder banner */}
             {sessionElapsed >= 25 && !breakDismissed && msgs.length > 0 && (
               <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)", borderRadius: 10, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, animation: "fadeIn 0.3s" }}>

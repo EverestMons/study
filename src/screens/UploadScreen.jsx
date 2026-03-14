@@ -2,12 +2,13 @@ import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
 
 export default function UploadScreen() {
   const {
     files, setFiles, cName, setCName, drag, setDrag, parsing,
-    setScreen, setShowSettings, onDrop, onSelect, classify, removeF, createCourse, fiRef,
+    setScreen, onDrop, onSelect, classify, removeF, createCourse, fiRef,
     importFromFolder, confirmFolderImport, folderImportData, setFolderImportData,
   } = useStudy();
 
@@ -40,12 +41,7 @@ export default function UploadScreen() {
         <button onClick={() => setScreen("home")} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
           onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
-        <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
-          Settings
-        </button>
+        <TopBarButtons />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>

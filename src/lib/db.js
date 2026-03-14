@@ -1978,7 +1978,7 @@ export const Sessions = {
     if (rows.length > 0) return rows[0].id;
     const id = uuid();
     await db.execute(
-      "INSERT INTO sessions (id, course_id, intent, status, started_at) VALUES (?, ?, 'explore', 'active', ?)",
+      "INSERT INTO sessions (id, course_id, intent, status, started_at) VALUES (?, ?, 'study', 'active', ?)",
       [id, courseId, now()]
     );
     return id;

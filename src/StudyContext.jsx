@@ -705,7 +705,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
   };
 
-  const enterStudy = async (course) => {
+  const enterStudy = async (course, initialMode) => {
     setActive(course); setScreen("study");
     setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
@@ -735,17 +735,16 @@ export function StudyProvider({ children, setErrorCtx }) {
         }
       }
       await Sessions.end(oldSid);
-      chatSessionId.current = await Sessions.create({ courseId: course.id, intent: 'explore' });
+      chatSessionId.current = await Sessions.create({ courseId: course.id, intent: 'study' });
     } catch (e) { console.error("Journal capture on enter:", e); }
+    if (initialMode) {
+      selectMode(initialMode);
+    }
   };
 
   // --- Mode Selection ---
   const selectMode = async (mode) => {
     setSessionMode(mode);
-    if (mode === "recap") {
-      bootWithFocus({ type: "recap" });
-      return;
-    }
     try {
       const skills = await loadSkillsV2(active.id);
       if (mode === "assignment") {
@@ -908,8 +907,6 @@ export function StudyProvider({ children, setErrorCtx }) {
           }
         } catch (e) { console.error("Exam scope auto-selection failed:", e); }
         setPickerData({ mode, materials: mats, selectedMats: preSelected });
-      } else if (mode === "explore") {
-        setPickerData({ mode, exploreTopic: "" });
       }
     } catch (e) {
       console.error("Picker load failed:", e);
@@ -966,10 +963,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       }
 
       var userMsg, modeHint;
-      if (focus.type === "recap") {
-        userMsg = "Catch me up on where I left off.";
-        modeHint = "\n\nMODE: RECAP. Summarize progress from session history. Be direct about skill status -- name what's solid, what needs work, and what's due for review. Suggest what to do next based on gaps and upcoming assignments.";
-      } else if (focus.type === "assignment") {
+      if (focus.type === "assignment") {
         var qs = (focus.assignment.questions || []).map(q => ({
           id: q.id, description: q.description, difficulty: q.difficulty,
           requiredSkills: q.requiredSkills || [],
@@ -985,9 +979,6 @@ export function StudyProvider({ children, setErrorCtx }) {
         var matNames = (focus.materials || []).map(m => m.name || m).join(", ");
         userMsg = "I'm preparing for an exam covering: " + matNames;
         modeHint = "\n\nMODE: EXAM PREPARATION. The student is preparing for an exam covering the selected materials. Use interleaved practice across topics. Ask questions that test understanding at increasing difficulty. Focus on common exam question formats. Identify weak areas and drill them. Mix retrieval practice with elaborative interrogation.";
-      } else if (focus.type === "explore") {
-        userMsg = "I want to explore: " + (focus.topic || "this course");
-        modeHint = "\n\nMODE: OPEN EXPLORATION. The student wants to freely explore a topic. Be conversational and curious. Follow their interests. Share interesting connections. Still track skill demonstrations but don't force structured assessment. If they show genuine understanding, note it, but keep the tone light and exploratory.";
       }
 
       const bootSystem = "You are Study -- a master teacher.\n\nCOURSE: " + active.name + "\n\n" + ctx + "\n\nSESSION HISTORY:\n" + formatJournal(journal) + studentContext + modeHint + "\n\nRespond concisely. Your first response should be a focused question, not a lecture. 1-4 sentences max.";
@@ -1029,7 +1020,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         skills = await loadSkillsV2(active.id);
         var jRows = await JournalEntries.getByCourse(active.id);
         journal = jRows.reverse().map(r => { try { return typeof r.entry_data === 'string' ? JSON.parse(r.entry_data) : r.entry_data; } catch { return null; } }).filter(Boolean);
-        if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam" || focusContext.type === "explore")) {
+        if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam")) {
           ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills);
         } else {
           const asgn = await loadAssignmentsCompat(active.id) || [];
@@ -1047,7 +1038,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       const asstTs = Date.now();
       const updates = parseSkillUpdates(response);
       if (updates.length) {
-        var intentWeights = { assignment: 1.0, exam: 0.8, skills: 1.0, recap: 0.4, explore: 0.2 };
+        var intentWeights = { assignment: 1.0, exam: 0.8, skills: 1.0 };
         var intentWeight = intentWeights[sessionMode] || 1.0;
         var newMasteryEvents = await applySkillUpdates(active.id, updates, intentWeight, sessionMasteredSkills.current) || [];
         sessionSkillLog.current.push(...updates);

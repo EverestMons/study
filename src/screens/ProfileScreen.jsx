@@ -7,12 +7,13 @@ import {
 import { currentRetrievability } from "../lib/fsrs.js";
 import { CIP_DOMAINS } from "../App.jsx";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function ProfileScreen() {
   const {
     courses, profileData,
     expandedProfile, setExpandedProfile, expandedSubSkill, setExpandedSubSkill,
-    setScreen, setShowSettings, setSessionMode, setPracticeMode,
+    setScreen, setSessionMode, setPracticeMode,
     enterStudy, addNotif,
   } = useStudy();
 
@@ -112,9 +113,7 @@ export default function ProfileScreen() {
           onMouseLeave={e => e.currentTarget.style.background = "none"}>
           {profileView ? "\u2190 Back to Profile" : "\u2190 Back"}
         </button>
-        <button onClick={() => setShowSettings(true)} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>Settings</button>
+        <TopBarButtons />
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>

@@ -5,6 +5,7 @@ import { Assignments } from "../lib/db.js";
 import { loadSkillsV2, decomposeAssignments } from "../lib/skills.js";
 import { effectiveStrength, computeFacetReadiness } from "../lib/study.js";
 import { currentRetrievability } from "../lib/fsrs.js";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 function readinessColor(v) { return v >= 0.6 ? T.gn : v >= 0.3 ? "#F59E0B" : T.txM; }
 
@@ -40,7 +41,7 @@ function masteryToStrength(m) {
 var URGENCY_COLORS = { overdue: T.rd, urgent: T.rd, soon: T.am, normal: T.ac, none: T.txM };
 
 export default function CurriculumScreen() {
-  var { active, setScreen, setShowSettings, bootWithFocus } = useStudy();
+  var { active, setScreen, bootWithFocus } = useStudy();
 
   var [activeAssignments, setActiveAssignments] = useState(null);
   var [reviewPool, setReviewPool] = useState([]);
@@ -186,10 +187,7 @@ export default function CurriculumScreen() {
           onMouseEnter={function (e) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={function (e) { e.currentTarget.style.background = "none"; }}>&lt; Schedule</button>
         <div style={{ flex: 1 }} />
-        <button onClick={function () { setShowSettings(true); }}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={function (e) { e.currentTarget.style.background = T.sfH; }}
-          onMouseLeave={function (e) { e.currentTarget.style.background = T.sf; }}>Settings</button>
+        <TopBarButtons />
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>

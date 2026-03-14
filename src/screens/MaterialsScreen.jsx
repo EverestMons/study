@@ -6,6 +6,7 @@ import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
 import { useStudy } from "../StudyContext.jsx";
+import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function MaterialsScreen() {
   const {
@@ -21,7 +22,7 @@ export default function MaterialsScreen() {
     chunkPicker, setChunkPicker,
     focusContext, setFocusContext, sessionMode, setSessionMode,
     fiRef, extractionCancelledRef,
-    setScreen, setShowSettings,
+    setScreen,
     onDrop, onSelect, classify, removeF,
     addMats, removeMat, addNotif,
     getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
@@ -344,12 +345,7 @@ export default function MaterialsScreen() {
           onMouseLeave={e => e.currentTarget.style.background = "none"}>
           &lt; Back {processingMatId && "(extraction in progress)"}
         </button>
-        <button onClick={() => setShowSettings(true)}
-          style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "8px 14px", color: T.txD, cursor: "pointer", fontSize: 13, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = T.sfH}
-          onMouseLeave={e => e.currentTarget.style.background = T.sf}>
-          Settings
-        </button>
+        <TopBarButtons />
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 32 }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
