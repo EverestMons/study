@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri_plugin_sql::{Migration, MigrationKind};
+use tauri::WindowEvent;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -64,6 +65,16 @@ pub fn run() {
                 .build()
         )
         .invoke_handler(tauri::generate_handler![greet])
+        // macOS: red X hides the window instead of quitting (standard Apple behavior)
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                #[cfg(target_os = "macos")]
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
