@@ -5,7 +5,7 @@
 **Reports To:** Security & Testing Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** SECURITY_TESTING_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -51,7 +51,7 @@ Study handles student academic data locally. The app processes uploaded course m
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and SECURITY_TESTING_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 Before testing any database migration, create a backup of the test database. Migration testing should always test both the forward path (apply migration) and verify that existing functionality is not broken. Never test migrations against the user's actual database — use a test copy.
@@ -62,7 +62,7 @@ For document parsing tests, use a range of file types including: well-formed EPU
 
 ## Output Format
 
-All outputs follow the standard testing report format defined in SECURITY_TESTING_DIRECTOR.md.
+All outputs follow the standard testing report format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Migration Safety** field for any migration-touching builds:
@@ -130,7 +130,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and SECURITY_TESTING_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT test migrations against the actual user database — always use test copies

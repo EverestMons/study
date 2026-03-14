@@ -1,6 +1,6 @@
 # study — Knowledge Index
 **Maintained By:** Study Documentation Analyst
-**Last Updated:** 2026-03-11 (post Materials Grid Redesign + Hardening Pass)
+**Last Updated:** 2026-03-14 (post Facet-Level Mastery Assessment pipeline)
 
 ---
 
@@ -30,6 +30,7 @@ knowledge/
 | File | Date | Author | Summary |
 |---|---|---|---|
 | `cip-2020-taxonomy-2026-03-08.md` | 2026-03-08 | Educational Research Analyst | Complete CIP 2020 4-digit taxonomy from NCES — 416 entries across 42 academic domains. Structured JSON with code, name, domain, domainName, aliases (2-5 student-oriented aliases per entry, ~1,429 total). Series 60-61 excluded per blueprint. |
+| `facet-assessment-research-2026-03-14.md` | 2026-03-14 | Educational Research Analyst | Facet-level assessment best practices for AI-tutored learning. Continuous stealth assessment (IES, Shute, Shen et al. 2024). Mastery threshold: all facets "good"+ at least once. Celebration: brief, specific, non-blocking, no extrinsic rewards (Zeng 2024, Alazemi 2024). Decay: separate Level (permanent) from Readiness (decaying), growth mindset framing (Dweck 2006). Evidence weight hierarchy (diagnostic > guided > scaffolded > explained). |
 
 ## Research — UX
 
@@ -62,6 +63,7 @@ knowledge/
 | `performance-hardening-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Performance hardening blueprint — P1 context value memoization, P2 batch profile queries, P3 request deduplication, P4 extractJSON early exit. |
 | `stability-hardening-v2-2026-03-10.md` | 2026-03-10 | Study Systems Analyst | Stability hardening v2 blueprint — T1 isApiError helper + call site audit, T2 DB backup before resetAll, T4 stream truncation marker. |
 | `materials-grid-redesign-2026-03-11.md` | 2026-03-11 | Study Systems Analyst | Materials grid redesign blueprint — grouped 3-col grid with collapsible type sections, compact cards with status dots, expand-in-place detail view. Reuse pattern documented for other screens. |
+| `facet-assessment-pipeline-2026-03-14.md` | 2026-03-14 | Study Systems Analyst | Facet assessment pipeline architecture — `buildFacetAssessmentBlock()` context builder (3-skill cap, ~400-600 tokens), SKILL_UPDATE facet sub-line format (Option A: backward compatible), per-facet FSRS routing with uniform distribution fallback, skill-level aggregate computation, mastery threshold detection (all facets good/easy + new transition), `MasteryEvent` data structure, `_pointsToLevel` thresholds (10/30/60/100). System prompt additions: FACET-LEVEL ASSESSMENT + ASSESSMENT PROTOCOL (~910 chars). |
 
 ## Development
 
@@ -92,6 +94,9 @@ knowledge/
 | `phase1-character-sheet-2026-03-10.md` | 2026-03-10 | Study Developer | Character Sheet Phase 1 — ProfileScreen hero view + domain drill-down. Refactored from 409 → 507 lines. XP bar, top-3 parents, domain grouping, expandable parent cards, sub-skill detail panels. |
 | `phase2-domain-drilldown-2026-03-10.md` | 2026-03-10 | Study Developer | Character Sheet Phase 2 — domain drill-down enhancements. Sort toggle (Level / Weakest first), course attribution, empty domain guard. +12 lines. 2 QA fixes (domainSort reset, cross-domain navigation). |
 | `phase3-parent-ai-context-2026-03-10.md` | 2026-03-10 | Study Developer | Character Sheet Phase 3 — `buildDomainProficiency()` helper (~30 lines) + 6 insertion points in study.js. `ParentSkills` import added. Cross-course aggregation, top-8 cap, ~10-20ms overhead. |
+| `facet-context-prompt-2026-03-14.md` | 2026-03-14 | Study Developer | Facet assessment Step 4 — Context + Prompt. `buildFacetAssessmentBlock()` in study.js (lines 1223-1283): formats facets with mastery state for AI context. 2 injection points in `buildFocusedContext` (assignment + skill focus). System prompt additions: FACET-LEVEL ASSESSMENT section (facet sub-line format) + ASSESSMENT PROTOCOL section (continuous stealth assessment). ~740 chars added to system prompt. Build pass. |
+| `facet-parsing-routing-2026-03-14.md` | 2026-03-14 | Study Developer | Facet assessment Step 5 — Parsing + FSRS Routing. `parseSkillUpdates` rewritten (study.js lines 1700-1755): detects indented/`>`-prefixed facet sub-lines with per-facet context tags and criteria. `applySkillUpdates` expanded (lines 244-724): per-facet FSRS routing branch (individual grade, stability modulation, concept link transfer, Bloom's multiplier) + uniform distribution fallback + skill-level aggregate computation (mean retrievability, min stability, sum points) + mastery threshold detection (all facets good/easy + new transition → MasteryEvent). `_pointsToLevel` helper (lines 727-734). StudyContext: 3 new refs (sessionMasteryEvents, sessionFacetUpdates, sessionMasteredSkills), sendMessage mastery event handling with dedup + notification. Build pass. |
+| `facet-mastery-ui-2026-03-14.md` | 2026-03-14 | Study Developer | Facet assessment Step 6 — Session Mastery Summary UI. 5 files modified: MessageList.jsx enhanced skill pills (3 modes: no facets, single facet, multi-facet with tree connectors + 5-dot indicators) + inline MasteryCard (non-modal, green border, level change, facet checklist, next review text). SessionSummary.jsx full rewrite (~199 lines): Skills Mastered (green tint), Facets Assessed (5+expand), What's Next. NotifPanel.jsx mastery type (green + ★). StudyScreen.jsx mastery data wiring. study.js journal enhancement. +7 kB bundle. Build pass. |
 
 ## QA
 
@@ -123,6 +128,7 @@ knowledge/
 | `performance-verification-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Performance verification — context memoization, batch profile queries, request dedup, extractJSON early exit. PASS. |
 | `stability-verification-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Stability verification — isApiError audit, DB backup on reset, stream truncation marker. PASS. |
 | `hardening-sweep-2026-03-10.md` | 2026-03-10 | Study Security & Testing Analyst | Full regression sweep post-hardening — 8/8 PASS (upload, study, profile, materials, OCR, practice, settings, build). |
+| `facet-mastery-qa-2026-03-14.md` | 2026-03-14 | Study Security & Testing Analyst | Facet-level mastery assessment QA — 22 test scenarios across Context+Prompt (T1-T6), Parsing+Routing (T7-T15), UI (T16-T22). All 22 PASS. 0 critical, 2 minor (M1: PracticeMode mastery events dropped, M2: level decrease after extraction), 5 advisory (A1: facet assessment scoped to focused modes, A2: `formatKey` duplication, A3: facet name inconsistency pills vs cards, A4: facet updates lack parent skill name, A5: explore mode design choice). Backward compatibility matrix verified across 10 scenarios. Build verified. |
 
 ## Design
 
@@ -136,6 +142,7 @@ knowledge/
 | `character-sheet-profile-2026-03-10.md` | 2026-03-10 | Study UX Designer | Character sheet profile UX design — hero view layout (XP bar, top-3 parents, domain grouping), domain drill-down (sort toggle, course attribution, sub-skill detail). |
 | `domain-drilldown-2026-03-10.md` | 2026-03-10 | Study UX Designer | Character Sheet Phase 2 domain drill-down design — sort toggle enhancement, course attribution on parent cards, empty domain guard. 3 enhancements specified. |
 | `materials-grid-ux-2026-03-11.md` | 2026-03-11 | Study UX Designer | Materials grid redesign UX direction — progressive disclosure, spatial grouping by type, compact 3-col cards, expand-in-place interaction model. |
+| `facet-mastery-summary-ux-2026-03-14.md` | 2026-03-14 | Study UX Designer | Facet mastery summary UX design — 5 sections: (1) In-chat facet pills (3 rendering modes: no facets, single facet minimal, multi-facet expanded card with tree connectors + 5-dot indicators), (2) Inline MasteryCard (non-modal, green border, level change, facet checklist, next review text), (3) SessionSummary enhancements (Skills Mastered green tint, Facets Assessed expand/collapse, What's Next guidance), (4) Profile screen minimal "(was Lv 2)" indicator (deferred), (5) Consistency mapping to existing patterns. Three new components specified: FacetPills, MasteryCard, SessionSummary modifications. |
 
 ## Design — Validation
 
@@ -149,6 +156,7 @@ knowledge/
 | `near-dedup-ux-validation-2026-03-10.md` | 2026-03-10 | Study UX Validator | MinHash near-dedup UX validation — near-duplicate detection presentation assessment. |
 | `character-sheet-validation-2026-03-10.md` | 2026-03-10 | Study UX Validator | Character Sheet Phase 1 UX validation — hero view layout, domain grouping, drill-down navigation. APPROVED. |
 | `domain-drilldown-validation-2026-03-10.md` | 2026-03-10 | Study UX Validator | Character Sheet Phase 2 UX validation — drill-down navigation clarity, parent/sub-skill hierarchy, course attribution utility, back button behavior. 4 areas, all Strong/Adequate. No blockers. |
+| `facet-mastery-uxv-2026-03-14.md` | 2026-03-14 | Study UX Validator | Facet-level mastery assessment UX validation — 6 areas: (1) Assessment feels like teaching PASS (stealth assessment directives strong, monitor for checklist-driven AI), (2) Celebration calibration PASS (MasteryCard non-modal, informationally dense, green border only), (3) Decay communication PASS ("Next review in N days" honest without deflating), (4) Facet progress clarity PASS (intentionally stealth mid-session, visible at exit; 2 advisory: name inconsistency, flat facet list), (5) Session summary utility PASS (functional but leans "report card"; What's Next minimal), (6) Learning science risk LOW (stealth + evidence weighting + teaching methodology protect against teaching-to-the-test; premature confidence from single-session mastery is residual concern). CEO escalation: premature confidence pattern — monitor in live sessions. |
 
 ## Product
 

@@ -10,10 +10,13 @@ export default function MessageList() {
     msgs, booting, status, processingMatId,
     cachedSessionCtx, extractionCancelledRef,
     endRef, timeAgo,
+    sessionMasteryEvents,
   } = useStudy();
 
   const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
   const ratingBg = { easy: T.gnS, good: T.gnS, hard: T.amS, struggled: T.amS };
+  const RATING_DOTS = { easy: 5, good: 4, hard: 2, struggled: 1 };
+  const formatKey = (k) => k.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
   return (
     <>
@@ -67,20 +70,85 @@ export default function MessageList() {
               </div>
             )}
           </div>
-          {/* Skill update pills */}
+          {/* Skill update pills — enhanced with facet sub-rows */}
           {skillPills.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, paddingLeft: 12 }}>
+            <div style={{ marginTop: 6, paddingLeft: 12 }}>
               {skillPills.map((sp, si) => {
                 const allSk = cachedSessionCtx.current?.skills || [];
                 const sk = allSk.find(s => s.id === sp.skillId || s.conceptKey === sp.skillId);
+                const hasFacets = sp.facets && sp.facets.length > 0;
+                if (!hasFacets) {
+                  return (
+                    <span key={si} style={{ display: "inline-block", fontSize: 11, padding: "2px 8px", borderRadius: 12, background: ratingBg[sp.rating] || T.acS, color: ratingColor[sp.rating] || T.ac, fontWeight: 500, marginRight: 6, marginBottom: 4 }}>
+                      {sk?.name || sp.skillId}: {sp.rating}
+                    </span>
+                  );
+                }
+                if (sp.facets.length === 1) {
+                  const f = sp.facets[0];
+                  return (
+                    <div key={si} style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11, background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "6px 10px", marginRight: 6, marginBottom: 4 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: ratingColor[f.rating] || T.ac, flexShrink: 0 }} />
+                      <span style={{ color: T.txD }}>{formatKey(f.facetKey)}</span>
+                      <span style={{ fontSize: 10, color: ratingColor[f.rating] || T.ac, fontWeight: 500 }}>{f.rating}</span>
+                    </div>
+                  );
+                }
                 return (
-                  <span key={si} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 12, background: ratingBg[sp.rating] || T.acS, color: ratingColor[sp.rating] || T.ac, fontWeight: 500 }}>
-                    {sk?.name || sp.skillId}: {sp.rating}
-                  </span>
+                  <div key={si} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", marginTop: si > 0 ? 8 : 0, marginBottom: 4 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: T.tx }}>{sk?.name || sp.skillId}</span>
+                      <span style={{ fontSize: 11, color: ratingColor[sp.rating] || T.ac, fontWeight: 500 }}>{sp.rating}</span>
+                    </div>
+                    {sp.facets.map((f, fi) => {
+                      const filled = RATING_DOTS[f.rating] || 3;
+                      const isLast = fi === sp.facets.length - 1;
+                      return (
+                        <div key={fi} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, fontSize: 11, color: T.txD }}>
+                          <span style={{ color: T.bd, fontSize: 10, width: 10, textAlign: "center" }}>{isLast ? "\u2514" : "\u251C"}</span>
+                          <span style={{ flex: 1 }}>{formatKey(f.facetKey)}</span>
+                          <span style={{ display: "inline-flex", gap: 2 }}>
+                            {[1,2,3,4,5].map(d => (
+                              <span key={d} style={{ display: "inline-block", width: 4, height: 4, borderRadius: "50%", background: d <= filled ? (ratingColor[f.rating] || T.ac) : T.bd }} />
+                            ))}
+                          </span>
+                          <span style={{ fontSize: 10, color: ratingColor[f.rating] || T.ac, minWidth: 48, textAlign: "right" }}>{f.rating}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 );
               })}
             </div>
           )}
+          {/* Inline mastery celebration cards */}
+          {isAsst && sessionMasteryEvents.current && sessionMasteryEvents.current.filter(me => me.messageIndex === i).map((me, mi) => (
+            <div key={"mastery-" + mi} style={{ maxWidth: "80%", margin: "20px auto", animation: "fadeIn 0.3s" }}>
+              <div style={{ background: T.sf, border: "1px solid " + T.gn, borderRadius: 14, padding: "20px 24px" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.tx, marginBottom: 4 }}>{me.skillName}</div>
+                <div style={{ height: 1, background: T.bd, margin: "8px 0 12px" }} />
+                {me.levelBefore !== me.levelAfter && (
+                  <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
+                    <span style={{ color: T.ac }}>Lv {me.levelBefore}</span>
+                    <span style={{ color: T.txD, margin: "0 8px" }}>{"\u2192"}</span>
+                    <span style={{ color: T.ac }}>Lv {me.levelAfter}</span>
+                  </div>
+                )}
+                {me.facets.map((f, fi) => (
+                  <div key={fi} style={{ display: "flex", gap: 8, padding: "4px 0", alignItems: "center" }}>
+                    <span style={{ color: T.gn, fontSize: 13, fontWeight: 600 }}>{"\u2713"}</span>
+                    <span style={{ fontSize: 13, color: T.tx, flex: 1 }}>{f.name}</span>
+                    <span style={{ fontSize: 11, color: f.rating === "easy" || f.rating === "good" ? T.gn : T.am }}>{f.rating}</span>
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, color: T.txM, marginTop: 12 }}>
+                  {me.nextReviewDays > 14
+                    ? "Next review in " + me.nextReviewDays + " days \u2014 well locked in"
+                    : "Next review in " + me.nextReviewDays + " day" + (me.nextReviewDays !== 1 ? "s" : "")}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
         );
       })}

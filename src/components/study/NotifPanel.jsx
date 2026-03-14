@@ -61,8 +61,8 @@ export default function NotifPanel() {
         {notifs.length === 0 && extractionErrors.length === 0 ? (
           <div style={{ padding: 20, textAlign: "center", color: T.txD, fontSize: 12 }}>No notifications yet</div>
         ) : notifs.map(n => {
-          var typeColor = n.type === "error" ? (T.rd || "#EF4444") : n.type === "warn" ? "#F59E0B" : n.type === "skill" ? "#8B5CF6" : n.type === "success" ? T.gn : T.ac;
-          var typeIcon = n.type === "error" ? "x" : n.type === "warn" ? "!" : n.type === "skill" ? "^" : n.type === "success" ? "+" : "*";
+          var typeColor = n.type === "error" ? (T.rd || "#EF4444") : n.type === "warn" ? "#F59E0B" : n.type === "skill" ? "#8B5CF6" : n.type === "mastery" ? T.gn : n.type === "success" ? T.gn : T.ac;
+          var typeIcon = n.type === "error" ? "x" : n.type === "warn" ? "!" : n.type === "skill" ? "^" : n.type === "mastery" ? "\u2605" : n.type === "success" ? "+" : "*";
           var ago = Math.round((Date.now() - n.time.getTime()) / 1000);
           var agoStr = ago < 60 ? ago + "s" : ago < 3600 ? Math.round(ago / 60) + "m" : Math.round(ago / 3600) + "h";
           return (

@@ -5,7 +5,7 @@
 **Reports To:** Systems Architecture Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** SYSTEMS_ARCHITECTURE_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -52,7 +52,7 @@ Study is mid-migration from a browser-based artifact prototype to a full Tauri d
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and SYSTEMS_ARCHITECTURE_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 Before designing anything schema-related, read `docs/skill-architecture-redesign.md` completely. Most major design decisions have already been made and documented with citations. Design work should extend and implement this spec, not re-litigate it. If a new feature requires schema not covered by the redesign, note explicitly why it isn't covered and propose an extension that is consistent with the redesign's philosophy.
@@ -61,7 +61,7 @@ Before designing anything schema-related, read `docs/skill-architecture-redesign
 
 ## Output Format
 
-All outputs follow the standard architecture format defined in SYSTEMS_ARCHITECTURE_DIRECTOR.md.
+All outputs follow the standard architecture format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Migration Impact** field:
@@ -131,7 +131,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and SYSTEMS_ARCHITECTURE_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT modify existing v1 tables — migration 002 is additive only

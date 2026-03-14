@@ -5,7 +5,7 @@
 **Reports To:** Research Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** RESEARCH_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -53,7 +53,7 @@ Study is a Tauri desktop app (React frontend + Rust backend + Python sidecar) th
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and RESEARCH_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 The skill architecture redesign document (`docs/skill-architecture-redesign.md`) is the most important reference for understanding current design decisions. Many design questions have already been resolved with citations — check this document before researching anything related to skill systems, mastery models, or migration. Avoid duplicating research that is already documented there.
@@ -62,7 +62,7 @@ The skill architecture redesign document (`docs/skill-architecture-redesign.md`)
 
 ## Output Format
 
-All outputs follow the standard research format defined in RESEARCH_DIRECTOR.md.
+All outputs follow the standard research format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include an **Implementation Relevance** field:
@@ -128,7 +128,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and RESEARCH_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT re-research design questions already resolved in `docs/skill-architecture-redesign.md` without flagging why existing research is insufficient

@@ -28,6 +28,7 @@ export default function StudyScreen() {
     sessionElapsed, setSessionElapsed, breakDismissed, setBreakDismissed,
     setSidebarCollapsed,
     sessionStartIdx, sessionSkillLog,
+    sessionMasteryEvents, sessionFacetUpdates, sessionMasteredSkills,
     cachedSessionCtx, sessionStartTime, discussedChunks,
     saveSessionToJournal,
     setShowSettings,
@@ -43,7 +44,7 @@ export default function StudyScreen() {
             if (sessionMode || pickerData || chunkPicker || practiceMode) {
               setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false); setMsgs([]); setInput("");
             } else if (msgs.length > 1 && sessionStartTime.current) {
-              const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
+              const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current, sessionMasteryEvents.current, sessionFacetUpdates.current);
               const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
               const allSkills = cachedSessionCtx.current?.skills || [];
               const skillChanges = sessionSkillLog.current.map(u => {
@@ -53,9 +54,9 @@ export default function StudyScreen() {
               await saveSessionToJournal();
               var capturedAsgnWork = asgnWork;
               setAsgnWork(null);
-              setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork });
+              setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork, masteryEvents: sessionMasteryEvents.current.slice(), facetsAssessed: sessionFacetUpdates.current.slice() });
             } else {
-              await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
+              await saveSessionToJournal(); setScreen("home"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
             }
           }}
           style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}

@@ -5,7 +5,7 @@
 **Reports To:** Data & Analytics Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.0
-**Director Reference:** DATA_ANALYTICS_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -48,7 +48,7 @@ Study is early-stage in terms of real usage data. Most analytical value will com
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and DATA_ANALYTICS_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 Read-only access to the SQLite database. Never execute write operations. When the v2 schema is not yet live, focus on instrumentation design — what should be tracked and how. This is a forward-looking analytical role until the app has sufficient usage data.
@@ -57,7 +57,7 @@ Read-only access to the SQLite database. Never execute write operations. When th
 
 ## Output Format
 
-All outputs follow the standard analytics report format defined in DATA_ANALYTICS_DIRECTOR.md.
+All outputs follow the standard analytics report format defined in governance/GUARDRAILS.md.
 
 **Output location:** `study/knowledge/data/[topic]-[YYYY-MM-DD].md`
 
@@ -96,7 +96,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Decision Authority
 
-This specialist inherits the decision authority framework from DATA_ANALYTICS_DIRECTOR.md.
+This specialist inherits the decision authority framework from governance/GUARDRAILS.md.
 
 | Decision Type | Authority |
 |---|---|
@@ -122,7 +122,7 @@ This specialist inherits the decision authority framework from DATA_ANALYTICS_DI
 
 ## Quality Standards
 
-All quality standards inherited from COMPANY.md and DATA_ANALYTICS_DIRECTOR.md.
+All quality standards inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Quality Notes
 This project is early-stage with limited real usage data. Be transparent about sample sizes. Analytical proposals for v2 instrumentation are valuable even without live data — but label them clearly as design recommendations, not data-driven findings.
@@ -131,7 +131,7 @@ This project is early-stage with limited real usage data. Be transparent about s
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and DATA_ANALYTICS_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT execute write operations against the database

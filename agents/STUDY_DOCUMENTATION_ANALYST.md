@@ -5,7 +5,7 @@
 **Reports To:** Documentation Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.0
-**Director Reference:** DOCUMENTATION_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -54,7 +54,7 @@ The study project has a blank README and extensive docs folder. The documentatio
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and DOCUMENTATION_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 The README is currently blank — start there. It should describe what the app is, what currently works, and how to set it up. Be honest: the skill architecture redesign is specified but not fully implemented, the Python sidecar is not yet built. Document reality, not the roadmap.
@@ -63,7 +63,7 @@ The README is currently blank — start there. It should describe what the app i
 
 ## Output Format
 
-All outputs follow the documentation standards defined in DOCUMENTATION_DIRECTOR.md.
+All outputs follow the documentation standards defined in governance/GUARDRAILS.md.
 
 **Output location:** Project root files and `study/knowledge/documentation/`
 
@@ -102,7 +102,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Decision Authority
 
-This specialist inherits the decision authority framework from DOCUMENTATION_DIRECTOR.md.
+This specialist inherits the decision authority framework from governance/GUARDRAILS.md.
 
 | Decision Type | Authority |
 |---|---|
@@ -127,7 +127,7 @@ This specialist inherits the decision authority framework from DOCUMENTATION_DIR
 
 ## Quality Standards
 
-All quality standards inherited from COMPANY.md and DOCUMENTATION_DIRECTOR.md.
+All quality standards inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Quality Notes
 The docs/ folder contains detailed design specs — do not duplicate or summarize them in user-facing documentation. README should describe what exists and works, not the ambitious redesign plan. When the spec says something and reality differs, document reality.
@@ -136,7 +136,7 @@ The docs/ folder contains detailed design specs — do not duplicate or summariz
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and DOCUMENTATION_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT duplicate or summarize the `docs/` spec documents — they are detailed design references, not user-facing documentation

@@ -5,7 +5,7 @@
 **Reports To:** Design & Experience Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** DESIGN_EXPERIENCE_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -50,7 +50,7 @@ Study's most novel UX challenge is the session intent system — users declare "
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and DESIGN_EXPERIENCE_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 Read `docs/skill-architecture-redesign.md` section on Session Intent (Q6) before designing the session flow. The intent types and their teaching strategy mappings are defined there — design must support those distinctions without exposing their complexity to the user. The user experience should feel like "what are you here to do today?" not "configure your AI tutoring session parameters."
@@ -59,7 +59,7 @@ Read `docs/skill-architecture-redesign.md` section on Session Intent (Q6) before
 
 ## Output Format
 
-All outputs follow the standard design output format defined in DESIGN_EXPERIENCE_DIRECTOR.md.
+All outputs follow the standard design output format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Learning Science Alignment** field:
@@ -128,7 +128,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and DESIGN_EXPERIENCE_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT design flows that could cause students to skip the session intent declaration entirely — it is architecturally important

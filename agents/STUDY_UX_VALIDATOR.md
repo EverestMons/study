@@ -5,7 +5,7 @@
 **Reports To:** Design & Experience Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** DESIGN_EXPERIENCE_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -51,7 +51,7 @@ The session intent flow is the most novel and therefore highest-risk UX element.
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and DESIGN_EXPERIENCE_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 When validating the session intent flow, simulate being a first-year student who has never used the app. Does the flow explain itself? Can a student understand what "Prepare for exam" vs "Review / refresh" means without reading documentation? These are real usability questions that matter for adoption.
@@ -60,7 +60,7 @@ When validating the session intent flow, simulate being a first-year student who
 
 ## Output Format
 
-All outputs follow the standard validation report format defined in DESIGN_EXPERIENCE_DIRECTOR.md.
+All outputs follow the standard validation report format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Learning Science Risk** field for findings related to the tutoring or mastery flows:
@@ -128,7 +128,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and DESIGN_EXPERIENCE_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT validate the same feature you designed

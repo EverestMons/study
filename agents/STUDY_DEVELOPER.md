@@ -5,7 +5,7 @@
 **Reports To:** Development Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** DEVELOPMENT_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -52,7 +52,7 @@ Study is mid-migration from browser-based to full Tauri desktop app. The current
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and DEVELOPMENT_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 Before implementing any new feature, run `npm run dev` to verify the current state builds cleanly. Before touching any database migration, read `docs/skill-architecture-redesign.md` — specifically the migration section. Migration 002 is additive only. Do not modify existing db.js queries or schema without CEO approval.
@@ -61,7 +61,7 @@ Before implementing any new feature, run `npm run dev` to verify the current sta
 
 ## Output Format
 
-All outputs follow the standard development log format defined in DEVELOPMENT_DIRECTOR.md.
+All outputs follow the standard development log format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Migration State** field for any database-touching work:
@@ -131,7 +131,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and DEVELOPMENT_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT implement migration 003 (data migration) or 004 (cleanup) without explicit CEO approval

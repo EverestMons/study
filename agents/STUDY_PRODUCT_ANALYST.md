@@ -5,7 +5,7 @@
 **Reports To:** Product Management Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.0
-**Director Reference:** PRODUCT_MANAGEMENT_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -51,7 +51,7 @@ Study has two parallel tracks: the Tauri migration (moving from browser-based to
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and PRODUCT_MANAGEMENT_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 The distinction between "specified in docs" and "implemented in code" is critical for this project. Many features exist as detailed specs in `docs/` but have not been coded. Status reporting must be explicit about this distinction — do not report a feature as existing just because it is documented.
@@ -60,7 +60,7 @@ The distinction between "specified in docs" and "implemented in code" is critica
 
 ## Output Format
 
-All outputs follow the PROJECT_STATUS.md format defined in PRODUCT_MANAGEMENT_DIRECTOR.md.
+All outputs follow the PROJECT_STATUS.md format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Add two progress sections to the study PROJECT_STATUS.md:
@@ -110,7 +110,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Decision Authority
 
-This specialist inherits the decision authority framework from PRODUCT_MANAGEMENT_DIRECTOR.md.
+This specialist inherits the decision authority framework from governance/GUARDRAILS.md.
 
 | Decision Type | Authority |
 |---|---|
@@ -129,7 +129,7 @@ This specialist reads from all department knowledge bases. Escalate directly to 
 
 ## Quality Standards
 
-All quality standards inherited from COMPANY.md and PRODUCT_MANAGEMENT_DIRECTOR.md.
+All quality standards inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Quality Notes
 The distinction between "specified in docs" and "implemented in code" is the most important quality dimension for this project's status tracking. Never conflate spec documentation with implementation progress. The CEO needs to know exactly what works, not what's been designed.
@@ -138,7 +138,7 @@ The distinction between "specified in docs" and "implemented in code" is the mos
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and PRODUCT_MANAGEMENT_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT report spec documentation as implemented features

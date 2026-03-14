@@ -53,3 +53,37 @@ uses fewer tokens than manual file reading.
 `run_pipeline` auto-queries all indexed repos. Use `repos: ["alias"]` to scope.
 Use `index_status` to discover available repo aliases.
 <!-- /vexp -->
+
+---
+
+## Git Operations — Mandatory Guardrails
+
+Stale git lock files have caused repeated hangs, escalating workarounds, and corrupted index state across Eluvian projects. These rules are mandatory for all git operations.
+
+### Before ANY git command
+Check for and remove stale lock files first:
+```bash
+rm -f .git/index.lock .git/"index "*.lock .git/"index "[0-9]* 2>/dev/null
+```
+Run this before `git add`, `git commit`, `git status`, or `git push`. No exceptions.
+
+### Sequential execution only
+- Never chain git commands with `&&`. Run each command separately and verify it completed before running the next.
+- Never run a second git command while the first is still executing.
+- Wait for `git add` to finish before running `git commit`. Wait for `git commit` to finish before running `git push`.
+
+### Environment flags
+Always use `GIT_TERMINAL_PROMPT=0` to prevent git from hanging on credential prompts:
+```bash
+GIT_TERMINAL_PROMPT=0 git push
+```
+
+### Timeout handling
+- If a git command takes more than 15 seconds, it is likely stuck. Kill it and check for lock files.
+- Never escalate to plumbing commands (`git write-tree`, `git update-ref`) to work around a stuck commit. Fix the root cause (stale locks) instead.
+
+### If git operations fail repeatedly
+1. Kill all git processes: `pkill -f git`
+2. Remove all lock files: `rm -f .git/index.lock .git/"index "*.lock .git/"index "[0-9]*`
+3. Verify index health: `git status`
+4. Then retry the operation

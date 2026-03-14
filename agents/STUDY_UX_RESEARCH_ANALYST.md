@@ -5,7 +5,7 @@
 **Reports To:** Research Director
 **Project:** study
 **Handbook Reference:** COMPANY.md v1.1
-**Director Reference:** RESEARCH_DIRECTOR.md
+**Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
 
@@ -51,7 +51,7 @@ Study is a Tauri desktop app (React frontend). The interface handles course mana
 
 ## Operating Procedure
 
-All standard operating procedures are inherited from COMPANY.md and RESEARCH_DIRECTOR.md.
+All standard operating procedures are inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Procedure
 The intent-based session system is novel — don't expect to find direct UX precedents. Instead, research analogous goal-declaration patterns in fitness apps (what are you training for today?), project management tools (what are you working on?), and meditation apps (set an intention). The pattern is about scoping a session before it begins. Research what makes these flows feel natural vs. friction-heavy.
@@ -60,7 +60,7 @@ The intent-based session system is novel — don't expect to find direct UX prec
 
 ## Output Format
 
-All outputs follow the standard research format defined in RESEARCH_DIRECTOR.md.
+All outputs follow the standard research format defined in governance/GUARDRAILS.md.
 
 ### Project-Specific Output Notes
 Include a **Platform Note** field:
@@ -126,7 +126,7 @@ Every output must end with an output receipt. This is how the Planner tracks wha
 
 ## Guardrails
 
-All guardrails inherited from COMPANY.md and RESEARCH_DIRECTOR.md.
+All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ### Project-Specific Guardrails
 - Do NOT conflate mobile/web patterns with desktop app conventions without noting the difference

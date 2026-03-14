@@ -124,6 +124,9 @@ export function StudyProvider({ children, setErrorCtx }) {
   const fiRef = useRef(null);
   const sessionStartIdx = useRef(0);
   const sessionSkillLog = useRef([]);
+  const sessionMasteryEvents = useRef([]);
+  const sessionFacetUpdates = useRef([]);
+  const sessionMasteredSkills = useRef(new Set());
   const cachedSessionCtx = useRef(null);
   const extractionCancelledRef = useRef(false);
   const coursesLoaded = useRef(false);
@@ -706,6 +709,9 @@ export function StudyProvider({ children, setErrorCtx }) {
     setActive(course); setScreen("study");
     setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
+    sessionMasteryEvents.current = [];
+    sessionFacetUpdates.current = [];
+    sessionMasteredSkills.current = new Set();
     cachedSessionCtx.current = null;
     sessionStartIdx.current = 0;
     sessionStartTime.current = null;
@@ -1043,9 +1049,37 @@ export function StudyProvider({ children, setErrorCtx }) {
       if (updates.length) {
         var intentWeights = { assignment: 1.0, exam: 0.8, skills: 1.0, recap: 0.4, explore: 0.2 };
         var intentWeight = intentWeights[sessionMode] || 1.0;
-        await applySkillUpdates(active.id, updates, intentWeight);
+        var newMasteryEvents = await applySkillUpdates(active.id, updates, intentWeight, sessionMasteredSkills.current) || [];
         sessionSkillLog.current.push(...updates);
-        for (var u of updates) addNotif("skill", u.skillId + ": " + u.rating + (u.context !== 'guided' ? " (" + u.context + ")" : ""));
+
+        // Accumulate facet-level updates for session summary
+        for (var u of updates) {
+          if (u.facets && u.facets.length > 0) {
+            for (var fu of u.facets) {
+              sessionFacetUpdates.current.push({ facetKey: fu.facetKey, skillId: u.skillId, rating: fu.rating });
+            }
+          }
+        }
+
+        // Handle mastery events
+        var masteredSkillIds = new Set();
+        if (newMasteryEvents.length > 0) {
+          for (var me of newMasteryEvents) {
+            me.messageIndex = newMsgs.length; // index of the assistant message
+            sessionMasteryEvents.current.push(me);
+            sessionMasteredSkills.current.add(me.skillId);
+            masteredSkillIds.add(me.skillId);
+            masteredSkillIds.add(me.conceptKey);
+            addNotif("mastery", me.skillName + " → Lv " + me.levelAfter);
+          }
+        }
+
+        // Notifications for regular skill updates (skip skills that triggered mastery)
+        for (var u2 of updates) {
+          if (!masteredSkillIds.has(u2.skillId)) {
+            addNotif("skill", u2.skillId + ": " + u2.rating + (u2.context !== 'guided' ? " (" + u2.context + ")" : ""));
+          }
+        }
         if (cachedSessionCtx.current) {
           var updatedSkills = await loadSkillsV2(active.id);
           var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, updatedSkills);
@@ -1347,6 +1381,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     updateInfo, updateStatus, checkUpdate, doInstallUpdate, dismissUpdate,
     // Refs (stable identity)
     endRef, taRef, fiRef, sessionStartIdx, sessionSkillLog,
+    sessionMasteryEvents, sessionFacetUpdates, sessionMasteredSkills,
     cachedSessionCtx, extractionCancelledRef, sessionStartTime, discussedChunks,
     // Handlers
     addNotif, getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
