@@ -7,7 +7,7 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 export default function HomeScreen() {
   const {
     courses, cName, setCName, pendingConfirm, setPendingConfirm,
-    setScreen, setActive, quickCreateCourse, loadProfile, delCourse,
+    setScreen, setActive, quickCreateCourse, delCourse,
   } = useStudy();
 
   var [showAddForm, setShowAddForm] = useState(false);
@@ -35,12 +35,6 @@ export default function HomeScreen() {
             <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, letterSpacing: "-0.03em", margin: 0, marginBottom: 4 }}>Study</h1>
             <p style={{ fontSize: 14, color: T.txD, margin: 0 }}>Your courses and skill profile <span style={{ fontSize: 11, color: T.txM, marginLeft: 8 }}>v{typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev"}</span></p>
           </div>
-          <button onClick={async () => { await loadProfile(); setScreen("profile"); }}
-            style={{ background: T.acS, border: "1px solid " + T.acB, borderRadius: 10, padding: "10px 18px", color: T.ac, fontSize: 14, fontWeight: 600, cursor: "pointer" }}
-            onMouseEnter={e => e.currentTarget.style.background = "rgba(108,156,252,0.15)"}
-            onMouseLeave={e => e.currentTarget.style.background = T.acS}>
-            View Profile
-          </button>
         </div>
 
         {/* Course list */}

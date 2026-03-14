@@ -107,37 +107,37 @@ export default function CourseHomepage() {
 
   var cards = [
     {
-      icon: "\uD83D\uDCCB", title: "Assignment Work",
+      title: "Assignment Work",
       subtitle: data ? (data.activeCount > 0 ? data.activeCount + " active" + (data.overdueCount > 0 ? " \u00B7 " + data.overdueCount + " overdue" : "") : "No active assignments") : "",
       urgency: data && data.overdueCount > 0 ? T.rd : null,
       onClick: function () { enterStudy(active, "assignment"); },
     },
     {
-      icon: "\uD83D\uDCDD", title: "Exam Review",
+      title: "Exam Review",
       subtitle: data ? (data.nextExam ? "Exam in " + data.nextExam.daysUntil + "d \u00B7 " + data.examReadiness + "% ready" : "No upcoming exams") : "",
       urgency: data && data.nextExam ? (data.nextExam.daysUntil < 2 ? T.rd : data.nextExam.daysUntil < 7 ? T.am : null) : null,
       onClick: function () { enterStudy(active, "exam"); },
     },
     {
-      icon: "\uD83D\uDCAA", title: "Skill Development",
+      title: "Skill Development",
       subtitle: data ? (data.skillTotal > 0 ? data.skillTotal + " skills" + (data.dueForReview > 0 ? " \u00B7 " + data.dueForReview + " due" : "") : "No skills yet") : "",
       urgency: data && data.dueForReview > 0 ? T.am : null,
       onClick: function () { enterStudy(active, "skills"); },
     },
     {
-      icon: "\uD83D\uDCDA", title: "Curriculum",
+      title: "Curriculum",
       subtitle: data ? (data.curActiveCount > 0 ? data.curActiveCount + " active \u00B7 " + data.curTotalSkills + " skills" : "No assignments") : "",
       urgency: null,
       onClick: function () { setScreen("curriculum"); },
     },
     {
-      icon: "\uD83D\uDCC4", title: "Materials",
+      title: "Materials",
       subtitle: data ? data.matCount + " material" + (data.matCount !== 1 ? "s" : "") + (data.totalSections > 0 ? " \u00B7 " + data.totalSections + " sections" : "") : "",
       urgency: null,
       onClick: function () { setScreen("materials"); },
     },
     {
-      icon: "\uD83D\uDCC5", title: "Schedule",
+      title: "Schedule",
       subtitle: data ? (data.totalWeeks > 0 ? "Week " + (data.currentWeek || "?") + " of " + data.totalWeeks : "No schedule") : "",
       urgency: null,
       onClick: function () { setScreen("schedule"); },
@@ -180,7 +180,6 @@ export default function CourseHomepage() {
                   }}
                   onMouseEnter={function (e) { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
                   onMouseLeave={function (e) { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-                  <div style={{ fontSize: 24, marginBottom: 12 }}>{card.icon}</div>
                   <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 4 }}>{card.title}</div>
                   <div style={{ fontSize: 12, color: card.urgency || T.txD, marginTop: 4 }}>{card.subtitle}</div>
                 </button>
