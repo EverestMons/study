@@ -387,9 +387,9 @@ export default function MaterialsScreen() {
                     <span style={{ fontSize: 13, fontWeight: 600, color: T.am }}>Unclassified</span>
                     <span style={{ fontSize: 12, color: T.txM }}>({unclassifiedFiles.length})</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {unclassifiedFiles.map(f => (
-                      <div key={f.id} style={{ background: T.bg, borderRadius: 10, padding: "12px 14px", border: "1px solid " + T.am + "40", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div key={f.id} style={{ background: T.bg, borderRadius: 14, padding: "20px 22px", border: "1px solid " + T.am + "40", display: "flex", flexDirection: "column", gap: 10 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: T.txM, background: T.bg, padding: "2px 6px", borderRadius: 4, border: "1px solid " + T.bd }}>?</span>
                           <button onClick={() => removeF(f.id)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 14, padding: "0 2px", lineHeight: 1 }}>×</button>
@@ -418,7 +418,7 @@ export default function MaterialsScreen() {
                     <span style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>{CLS_LABELS[cls] || cls}</span>
                     <span style={{ fontSize: 12, color: T.txM }}>({stagedByClass[cls].length})</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {stagedByClass[cls].map(f => {
                       var isExpSt = expandedStaged === f.id;
                       if (isExpSt) {
@@ -448,7 +448,7 @@ export default function MaterialsScreen() {
                       }
                       return (
                         <div key={f.id} onClick={() => setExpandedStaged(f.id)}
-                          style={{ background: T.bg, borderRadius: 10, padding: "12px 14px", cursor: "pointer", border: "1px solid " + T.bd, transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 8, minHeight: 72 }}
+                          style={{ background: T.bg, borderRadius: 14, padding: "20px 22px", cursor: "pointer", border: "1px solid " + T.bd, transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 10, minHeight: 90 }}
                           onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
                           onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.background = T.bg; }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -504,7 +504,7 @@ export default function MaterialsScreen() {
               </div>
               {/* Grid of compact cards */}
               {!isCollapsed && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                   {mats.map(mat => {
                     var st = matStates.get(mat.id);
                     var isExpanded = expandedCard === mat.id;
@@ -521,7 +521,7 @@ export default function MaterialsScreen() {
 
                     return (
                       <div key={mat.id} onClick={() => setExpandedCard(mat.id)}
-                        style={{ background: T.sf, borderRadius: 10, padding: "12px 14px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 8, minHeight: 72 }}
+                        style={{ background: T.sf, borderRadius: 14, padding: "20px 22px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 10, minHeight: 90 }}
                         onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
                         onMouseLeave={e => { e.currentTarget.style.borderColor = isActive ? T.acB : T.bd; e.currentTarget.style.background = T.sf; }}>
                         {/* Top row: type badge + status dot */}
