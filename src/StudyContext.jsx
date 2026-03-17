@@ -546,7 +546,12 @@ export function StudyProvider({ children, setErrorCtx }) {
             }
           } catch (e) {
             console.error("Auto-extraction failed for", extractable[ei].name, e);
-            addNotif("warn", "Could not extract skills from " + extractable[ei].name + ". You can retry from the material card.");
+            const errMsg2 = e.message || String(e);
+            if (/API\s*(429|529|500|503)|overloaded|rate.?limit|service.?unavailable|failed.?to.?fetch|connection|ECONNREFUSED|timeout/i.test(errMsg2)) {
+              addNotif("error", "Claude API unavailable — " + extractable[ei].name + " was not processed. Try again later.");
+            } else {
+              addNotif("warn", "Could not extract skills from " + extractable[ei].name + ": " + errMsg2.substring(0, 120));
+            }
           }
         }
         setProcessingMatId(null);
@@ -1245,7 +1250,12 @@ export function StudyProvider({ children, setErrorCtx }) {
           }
         } catch (e) {
           console.error("Auto-extraction failed for", extractable[ei].name, e);
-          addNotif("warn", "Could not extract skills from " + extractable[ei].name + ".");
+          const errMsg = e.message || String(e);
+          if (/API\s*(429|529|500|503)|overloaded|rate.?limit|service.?unavailable|failed.?to.?fetch|connection|ECONNREFUSED|timeout/i.test(errMsg)) {
+            addNotif("error", "Claude API unavailable — " + extractable[ei].name + " was not processed. Try again later.");
+          } else {
+            addNotif("warn", "Could not extract skills from " + extractable[ei].name + ": " + errMsg.substring(0, 120));
+          }
         }
       }
       setProcessingMatId(null);
