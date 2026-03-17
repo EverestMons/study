@@ -1131,6 +1131,39 @@ export const Materials = {
       [courseId]
     );
   },
+
+  async findByFilename(courseId, filename) {
+    const db = await getDb();
+    const rows = await db.select(
+      'SELECT * FROM materials WHERE course_id = ? AND original_filename = ? ORDER BY created_at DESC LIMIT 1',
+      [courseId, filename]
+    );
+    return rows[0] || null;
+  },
+
+  async deduplicateAll() {
+    const db = await getDb();
+    const dupes = await db.select(`
+      SELECT course_id, original_filename, GROUP_CONCAT(id) as ids, COUNT(*) as cnt
+      FROM materials
+      WHERE original_filename IS NOT NULL
+      GROUP BY course_id, original_filename
+      HAVING cnt > 1
+    `);
+    let removed = 0;
+    for (const d of dupes) {
+      const ids = d.ids.split(',');
+      const keep = ids[0];
+      const remove = ids.slice(1);
+      for (const rid of remove) {
+        await db.execute('DELETE FROM chunk_fingerprints WHERE chunk_id IN (SELECT id FROM chunks WHERE material_id = ?)', [rid]);
+        await db.execute('DELETE FROM chunks WHERE material_id = ?', [rid]);
+        await db.execute('DELETE FROM materials WHERE id = ?', [rid]);
+        removed++;
+      }
+    }
+    return { removed };
+  },
 };
 
 // ============================================================

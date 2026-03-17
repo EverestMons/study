@@ -61,6 +61,26 @@ export const computeAndStoreFingerprints = async (materialId, chunks) => {
 export const storeAsChunks = async (courseId, file, docIdPrefix) => {
   // --- V2 path: file has structured parser output ---
   if (file._structured) {
+    // --- Dedup: check for existing material with same filename ---
+    const existing = await Materials.findByFilename(courseId, file.name);
+    if (existing) {
+      const existingChunks = await Chunks.getByMaterial(existing.id);
+      return {
+        id: existing.id,
+        name: existing.label || file.name,
+        classification: existing.classification || file.classification,
+        type: existing.file_type || file.type,
+        chunks: existingChunks.map(ch => ({
+          id: ch.id,
+          label: ch.label,
+          charCount: ch.char_count || 0,
+          status: ch.status || 'pending',
+        })),
+        totalChars: existingChunks.reduce((s, c) => s + (c.char_count || 0), 0),
+        _deduplicated: true,
+      };
+    }
+
     // Create material record in v2 table
     const matId = await Materials.create({
       courseId,

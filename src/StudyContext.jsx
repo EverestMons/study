@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, loadCoursesNested, saveCoursesNested, migrateFacets, Facets, FacetMastery } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, loadCoursesNested, saveCoursesNested, migrateFacets, Facets, FacetMastery } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -275,6 +275,12 @@ export function StudyProvider({ children, setErrorCtx }) {
           const facetResult = await migrateFacets();
           if (!facetResult.skipped) console.log(`[Init] Facet migration: ${facetResult.facetsCreated} facets created`);
         } catch (e) { console.error("Facet migration failed:", e); }
+        if (cancelled) return;
+        // One-time cleanup of duplicate materials (idempotent, no-op if none)
+        try {
+          const dedupResult = await Materials.deduplicateAll();
+          if (dedupResult.removed > 0) console.log(`[Init] Deduplicated ${dedupResult.removed} duplicate material(s)`);
+        } catch (e) { console.error("Material deduplication failed:", e); }
         if (cancelled) return;
         const loaded = await loadCoursesNested();
         if (cancelled) return;
@@ -1155,10 +1161,17 @@ export function StudyProvider({ children, setErrorCtx }) {
       newMeta.push(mat);
     }
 
-    const updatedCourse = { ...active, materials: [...active.materials, ...newMeta] };
+    // Filter out deduplicated materials — they already exist in active.materials
+    const dedupNames = newMeta.filter(m => m._deduplicated).map(m => m.name);
+    if (dedupNames.length > 0) {
+      addNotif("warn", "Skipped duplicate(s): " + dedupNames.join(", "));
+    }
+    const trulyNew = newMeta.filter(m => !m._deduplicated);
+
+    const updatedCourse = { ...active, materials: [...active.materials, ...trulyNew] };
     const updatedCourses = courses.map(c => c.id === active.id ? updatedCourse : c);
     await saveCoursesNested(updatedCourses);
-    for (const mat of newMeta) {
+    for (const mat of trulyNew) {
       const pendingDocs = mat._pendingDocs || [];
       for (const pd of pendingDocs) {
         await Chunks.updateContent(pd.chunkId, typeof pd.doc === 'string' ? pd.doc : JSON.stringify(pd.doc));
@@ -1173,7 +1186,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
     // --- Syllabus parsing (before skill extraction) ---
     if (!active.syllabus_parsed) {
-      var syllabusMats2 = newMeta.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
+      var syllabusMats2 = trulyNew.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
       for (const syllMat of syllabusMats2) {
         setStatus("Parsing syllabus: " + syllMat.name + "...");
         try {
@@ -1196,13 +1209,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
 
     // Mark assignment chunks as extracted — they use curriculum decomposition, not skill extraction
-    var asgnMats2 = newMeta.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
+    var asgnMats2 = trulyNew.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
     for (const asgnMat of asgnMats2) {
       var asgnChunkIds2 = (asgnMat.chunks || []).map(c => c.id).filter(Boolean);
       if (asgnChunkIds2.length) await Chunks.updateStatusBatch(asgnChunkIds2, "extracted");
     }
 
-    var extractable = newMeta.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
+    var extractable = trulyNew.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
     if (extractable.length > 0) {
       addNotif("success", "Materials added. Processing " + extractable.length + " material(s)...");
       for (var ei = 0; ei < extractable.length; ei++) {
@@ -1242,8 +1255,8 @@ export function StudyProvider({ children, setErrorCtx }) {
       await refreshMaterialSkillCounts(active.id);
       addNotif("success", "Done processing " + extractable.length + " material(s).");
     } else {
-      const totalSections = newMeta.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-      addNotif("success", "Added " + newMeta.length + " file(s) with " + totalSections + " section(s).");
+      const totalSections = trulyNew.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+      addNotif("success", "Added " + trulyNew.length + " file(s) with " + totalSections + " section(s).");
     }
     } catch (err) {
       console.error("Adding materials failed:", err);
