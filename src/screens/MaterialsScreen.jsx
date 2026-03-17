@@ -204,8 +204,8 @@ export default function MaterialsScreen() {
           </div>
         )}
 
-        {/* Incomplete / Partial */}
-        {isIncomplete && (
+        {/* Incomplete / Partial (not assignments — they use curriculum decomposition, not skill extraction) */}
+        {isIncomplete && mat.classification !== "assignment" && (
           <div style={{ padding: "14px 18px 16px", borderTop: "1px solid " + T.bd }}>
             <div style={{ width: "100%", height: 4, borderRadius: 2, background: T.bg, overflow: "hidden", marginBottom: 14 }}>
               <div style={{ height: "100%", borderRadius: 2, background: progress > 0 ? T.gn : T.am, width: progress + "%" }} />

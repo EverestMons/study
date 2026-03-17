@@ -503,6 +503,13 @@ export function StudyProvider({ children, setErrorCtx }) {
         }
       }
 
+      // Mark assignment chunks as extracted — they use curriculum decomposition, not skill extraction
+      var asgnMats = mats.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
+      for (const asgnMat of asgnMats) {
+        var asgnChunkIds = (asgnMat.chunks || []).map(c => c.id).filter(Boolean);
+        if (asgnChunkIds.length) await Chunks.updateStatusBatch(asgnChunkIds, "extracted");
+      }
+
       var extractable = mats.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
       if (extractable.length > 0) {
         addNotif("success", "Course created. Processing " + extractable.length + " material(s)...");
@@ -1186,6 +1193,13 @@ export function StudyProvider({ children, setErrorCtx }) {
           addNotif("warn", "Could not parse syllabus: " + e.message);
         }
       }
+    }
+
+    // Mark assignment chunks as extracted — they use curriculum decomposition, not skill extraction
+    var asgnMats2 = newMeta.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
+    for (const asgnMat of asgnMats2) {
+      var asgnChunkIds2 = (asgnMat.chunks || []).map(c => c.id).filter(Boolean);
+      if (asgnChunkIds2.length) await Chunks.updateStatusBatch(asgnChunkIds2, "extracted");
     }
 
     var extractable = newMeta.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
