@@ -884,9 +884,9 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
   // Build chapter content with [CHUNK id="..."] markers and [P#] paragraph numbering
   const chapterContent = formatChapterContentWithIds(chapterGroup.chunks);
 
-  let response = null;
+  let rawSkills, cipCode, parentDisplayName;
 
-  // Retry loop
+  // Retry loop — covers API errors, JSON parse failures, and unexpected format
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
@@ -894,7 +894,7 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         options.onProgress?.(`Chapter ${chapterGroup.chapter}: retry ${attempt}/${MAX_RETRIES}...`);
       }
 
-      response = await callClaude(
+      const response = await callClaude(
         systemPrompt,
         [{ role: 'user', content: `CHAPTER CONTENT:\n\n${chapterContent}` }],
         12288, // Increased for faceted output
@@ -905,7 +905,29 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         throw new Error(response);
       }
 
-      break; // success
+      // Parse JSON from response
+      const parsed = extractJSON(response);
+      if (!parsed) {
+        throw new Error('json_parse_failed: ' + (response?.substring(0, 200) || 'empty'));
+      }
+
+      // Handle first-chapter wrapper { cipCode, parentDisplayName, subSkills }
+      if (isFirstChapter && parsed.cipCode) {
+        cipCode = parsed.cipCode;
+        parentDisplayName = parsed.parentDisplayName;
+        rawSkills = parsed.subSkills || [];
+      } else if (Array.isArray(parsed)) {
+        rawSkills = parsed;
+      } else if (parsed.subSkills) {
+        // LLM might wrap even non-first chapters
+        cipCode = parsed.cipCode;
+        parentDisplayName = parsed.parentDisplayName;
+        rawSkills = parsed.subSkills;
+      } else {
+        throw new Error('unexpected_format');
+      }
+
+      break; // success — parsed and validated
     } catch (e) {
       if (attempt === MAX_RETRIES) {
         return {
@@ -914,35 +936,6 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         };
       }
     }
-  }
-
-  // Parse JSON from response
-  const parsed = extractJSON(response);
-  if (!parsed) {
-    return {
-      skills: [],
-      issues: [{ type: 'json_parse_failed', chapter: chapterGroup.chapter, response: response?.substring(0, 300) }],
-    };
-  }
-
-  // Handle first-chapter wrapper { cipCode, parentDisplayName, subSkills }
-  let rawSkills, cipCode, parentDisplayName;
-  if (isFirstChapter && parsed.cipCode) {
-    cipCode = parsed.cipCode;
-    parentDisplayName = parsed.parentDisplayName;
-    rawSkills = parsed.subSkills || [];
-  } else if (Array.isArray(parsed)) {
-    rawSkills = parsed;
-  } else if (parsed.subSkills) {
-    // LLM might wrap even non-first chapters
-    cipCode = parsed.cipCode;
-    parentDisplayName = parsed.parentDisplayName;
-    rawSkills = parsed.subSkills;
-  } else {
-    return {
-      skills: [],
-      issues: [{ type: 'unexpected_format', chapter: chapterGroup.chapter }],
-    };
   }
 
   // Post-process
@@ -1017,7 +1010,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
 
     if (result.skills.length === 0) {
       // Mark chunks as failed (increments fail_count, transitions to terminal at threshold)
-      await Chunks.markFailedBatch(group.chunkIds);
+      await Chunks.markFailedBatch(group.chunkIds, { type: 'empty_extraction', chapter: group.chapter });
       onChapterComplete?.(group.chapter, 0);
       continue;
     }
@@ -1152,7 +1145,7 @@ export async function extractCourse(courseId, materialId, options = {}) {
       onChapterComplete?.(group.chapter, result.skills.length);
     } catch (e) {
       allIssues.push({ type: 'save_failed', chapter: group.chapter, error: e.message });
-      await Chunks.markFailedBatch(group.chunkIds);
+      await Chunks.markFailedBatch(group.chunkIds, { type: 'save_failed', chapter: group.chapter, error: e.message });
       onChapterComplete?.(group.chapter, 0);
     }
 
@@ -1259,13 +1252,13 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
   );
 
   if (isApiError(response)) {
-    await Chunks.markFailedBatch(unfinishedChunkIds);
+    await Chunks.markFailedBatch(unfinishedChunkIds, { type: 'enrichment_api_error', error: response });
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_api_error', error: response }] };
   }
 
   const parsed = extractJSON(response);
   if (!parsed || (!parsed.enrichments && !parsed.newSkills)) {
-    await Chunks.markFailedBatch(unfinishedChunkIds);
+    await Chunks.markFailedBatch(unfinishedChunkIds, { type: 'enrichment_parse_failed' });
     return { enriched: 0, newSkills: 0, issues: [{ type: 'enrichment_parse_failed' }] };
   }
 
@@ -1515,7 +1508,7 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
 
     if (result.skills.length === 0) {
       // Mark chunks as failed (increments fail_count, transitions to terminal at threshold)
-      await Chunks.markFailedBatch(group.chunkIds);
+      await Chunks.markFailedBatch(group.chunkIds, { type: 'empty_extraction', chapter: group.chapter });
       onChapterComplete?.(group.chapter, 0);
       continue;
     }

@@ -1235,32 +1235,44 @@ export const Chunks = {
     else { await withTransaction(work); }
   },
 
-  async markFailed(id) {
+  async markFailed(id, errorInfo = null) {
     const db = await getDb();
     await db.execute(
       `UPDATE chunks SET
         fail_count = fail_count + 1,
         status = CASE WHEN fail_count + 1 >= 3 THEN 'failed' ELSE 'error' END,
+        error_info = ?,
         updated_at = ?
       WHERE id = ?`,
-      [now(), id]
+      [errorInfo ? JSON.stringify(errorInfo) : null, now(), id]
     );
   },
 
-  async markFailedBatch(ids) {
+  async markFailedBatch(ids, errorInfo = null) {
     if (ids.length === 0) return;
+    const errorStr = errorInfo ? JSON.stringify(errorInfo) : null;
     await withTransaction(async (db) => {
       for (const id of ids) {
         await db.execute(
           `UPDATE chunks SET
             fail_count = fail_count + 1,
             status = CASE WHEN fail_count + 1 >= 3 THEN 'failed' ELSE 'error' END,
+            error_info = ?,
             updated_at = ?
           WHERE id = ?`,
-          [now(), id]
+          [errorStr, now(), id]
         );
       }
     });
+  },
+
+  async resetForRetry(materialId) {
+    const db = await getDb();
+    await db.execute(
+      `UPDATE chunks SET fail_count = 0, status = 'pending', error_info = NULL, updated_at = ?
+       WHERE material_id = ? AND status = 'failed'`,
+      [now(), materialId]
+    );
   },
 
   async delete(id) {

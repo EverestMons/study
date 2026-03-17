@@ -1,7 +1,7 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
-import { loadCoursesNested, saveCoursesNested } from "../lib/db.js";
+import { loadCoursesNested, saveCoursesNested, Chunks } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
@@ -221,6 +221,7 @@ export default function MaterialsScreen() {
                 setGlobalLock({ message: "Retrying extraction..." });
                 setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
                 try {
+                  await Chunks.resetForRetry(mat.id);
                   var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") });
                   var refreshed = await loadCoursesNested(); var uc = refreshed.find(c => c.id === active.id);
                   if (uc) { setCourses(refreshed); setActive(uc); }
