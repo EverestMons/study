@@ -42,7 +42,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCQjRDQkVFRTlDOTA5MTcKUldRWENjbnA3c3UweTZLQlZFQTBMYzdrS002Qld6VmJmYlNZc3h3NXM4eWgreW9VNVFxS2pPWmIK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg5Rjk1QjEwMkZENEE5QzAKUldUQXFkUXZFRnY1aVZIdExpM1c3NjF2U3Rkazkzekg1TnluNmk4dytCV2NFaWdwMTNiSXV4R08K",
       "endpoints": [
         "https://github.com/EverestMons/study/releases/latest/download/latest.json"
       ]
