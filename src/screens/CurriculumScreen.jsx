@@ -200,7 +200,7 @@ export default function CurriculumScreen() {
 
           {/* No materials prompt */}
           {activeAssignments && activeAssignments.every(function (a) { return a.questions.length === 0; }) && skills.length === 0 && activeAssignments.length > 0 && (
-            <div style={{ textAlign: "center", padding: "32px 20px", background: "rgba(251,191,36,0.06)", borderRadius: 14, border: "1px solid rgba(251,191,36,0.15)", marginBottom: 24 }}>
+            <div style={{ textAlign: "center", padding: "24px 16px", background: "rgba(251,191,36,0.06)", borderRadius: 10, border: "1px solid rgba(251,191,36,0.15)", marginBottom: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, marginBottom: 8 }}>Upload course materials first</div>
               <div style={{ fontSize: 13, color: T.txD, marginBottom: 14 }}>Assignment decomposition requires extracted skills from your course materials.</div>
               <button onClick={function () { setScreen("materials"); }}
@@ -220,10 +220,10 @@ export default function CurriculumScreen() {
                   var urgency = getUrgencyLevel(asgn.dueDate);
                   var urgencyColor = URGENCY_COLORS[urgency];
                   return (
-                    <div key={asgn.id} style={{ background: T.sf, border: "1px solid " + (isExpA ? T.acB : T.bd), borderRadius: 12, overflow: "hidden", transition: "all 0.15s" }}>
+                    <div key={asgn.id} style={{ background: T.sf, border: "1px solid " + (isExpA ? T.acB : T.bd), borderRadius: 10, overflow: "hidden", transition: "all 0.15s" }}>
                       {/* Assignment header */}
                       <div onClick={function () { setExpandedAsgn(isExpA ? null : asgn.id); setExpandedQuestion(null); setExpandedSkill(null); }}
-                        style={{ padding: "14px 18px", cursor: "pointer" }}
+                        style={{ padding: "10px 14px", cursor: "pointer" }}
                         onMouseEnter={function (e) { if (!isExpA) e.currentTarget.style.background = T.sfH; }}
                         onMouseLeave={function (e) { if (!isExpA) e.currentTarget.style.background = "transparent"; }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -244,7 +244,7 @@ export default function CurriculumScreen() {
 
                       {/* Expanded assignment */}
                       {isExpA && (
-                        <div style={{ borderTop: "1px solid " + T.bd, padding: "14px 18px" }}>
+                        <div style={{ borderTop: "1px solid " + T.bd, padding: "10px 14px" }}>
                           {/* Ready to submit banner */}
                           {asgn.readiness >= 0.6 && (
                             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 8, marginBottom: 12 }}>
@@ -432,9 +432,9 @@ export default function CurriculumScreen() {
                   var isExpR = expandedAsgn === "review-" + rp.id;
                   var rpDueCount = rp.skills.filter(function (sk) { return dueReviews.some(function (d) { return d.subSkillId === sk.id; }); }).length;
                   return (
-                    <div key={rp.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, overflow: "hidden" }}>
+                    <div key={rp.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, overflow: "hidden" }}>
                       <div onClick={function () { setExpandedAsgn(isExpR ? null : "review-" + rp.id); }}
-                        style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                        style={{ padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
                         onMouseEnter={function (e) { e.currentTarget.style.background = T.sfH; }}
                         onMouseLeave={function (e) { e.currentTarget.style.background = "transparent"; }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -446,7 +446,7 @@ export default function CurriculumScreen() {
                         </div>
                       </div>
                       {isExpR && rp.skills.length > 0 && (
-                        <div style={{ borderTop: "1px solid " + T.bd, padding: "10px 16px" }}>
+                        <div style={{ borderTop: "1px solid " + T.bd, padding: "8px 14px" }}>
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             {rp.skills.map(function (sk) {
                               var skColor = readinessColor(sk.strength);
@@ -479,7 +479,7 @@ export default function CurriculumScreen() {
 
           {/* EMPTY STATE */}
           {showEmpty && (
-            <div style={{ textAlign: "center", padding: "48px 20px", background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+            <div style={{ textAlign: "center", padding: "32px 16px", background: T.sf, borderRadius: 10, border: "1px solid " + T.bd }}>
               <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 8 }}>No active assignments</div>
               <div style={{ fontSize: 14, color: T.txD, lineHeight: 1.5, marginBottom: 20 }}>
                 Activate assignments on the schedule to start tracking readiness, or go to materials to manage your uploads.

@@ -158,7 +158,7 @@ export default function ProfileScreen() {
             }
 
             return (
-              <div key={parent.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: 20, marginBottom: 12 }}>
+              <div key={parent.id} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 14px", marginBottom: 10 }}>
                 <div onClick={() => setExpandedProfile(p => ({ ...p, [parent.id]: !p[parent.id] }))} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
                   {/* Level badge with progress ring */}
                   <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
@@ -441,7 +441,7 @@ export default function ProfileScreen() {
 
           {!profileData || profileData.length === 0 ? (
             /* Empty state */
-            <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+            <div style={{ textAlign: "center", padding: "32px 16px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 10, border: "1px solid " + T.bd }}>
               Upload course materials to start building your skill profile
               <div style={{ marginTop: 12 }}>
                 <button onClick={() => setScreen("upload")}
@@ -460,7 +460,7 @@ export default function ProfileScreen() {
                   { label: "Total Level", value: overallLevel },
                   { label: "Due for Review", value: totalDue, color: totalDue > 0 ? "#F59E0B" : T.txD },
                 ].map((stat, i) => (
-                  <div key={i} style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
+                  <div key={i} style={{ flex: 1, background: T.sf, border: "1px solid " + T.bd, borderRadius: 8, padding: "10px 8px", textAlign: "center" }}>
                     <div style={{ fontSize: 22, fontWeight: 700, color: stat.color || T.ac }}>{stat.value}</div>
                     <div style={{ fontSize: 11, color: T.txD, marginTop: 3 }}>{stat.label}</div>
                   </div>
@@ -476,7 +476,7 @@ export default function ProfileScreen() {
                       const skill = top4[i];
                       if (!skill) {
                         return (
-                          <div key={i} style={{ background: T.sf, border: "1px dashed " + T.bd, borderRadius: 14, padding: "16px 16px 14px", display: "flex", alignItems: "center", justifyContent: "center", color: T.txM, fontSize: 13, minHeight: 88 }}>
+                          <div key={i} style={{ background: T.sf, border: "1px dashed " + T.bd, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "center", color: T.txM, fontSize: 13 }}>
                             {"\u2014"}
                           </div>
                         );
@@ -484,9 +484,9 @@ export default function ProfileScreen() {
                       const progressPct = skill.progressNeeded > 0 ? Math.min(100, Math.round((skill.progressToNext / skill.progressNeeded) * 100)) : 0;
                       const rColor = skill.readiness > 0.7 ? T.gn : skill.readiness > 0.4 ? "#F59E0B" : T.rd;
                       return (
-                        <div key={i} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "16px 16px 14px", position: "relative" }}>
-                          <div style={{ position: "absolute", top: 14, right: 16, fontSize: 32, fontWeight: 700, color: T.ac, lineHeight: 1 }}>{skill.level}</div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, marginTop: 28, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 50 }}>
+                        <div key={i} style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 12px 10px", position: "relative" }}>
+                          <div style={{ position: "absolute", top: 10, right: 12, fontSize: 28, fontWeight: 700, color: T.ac, lineHeight: 1 }}>{skill.level}</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, marginTop: 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 50 }}>
                             {skill.parent.name}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
@@ -518,7 +518,7 @@ export default function ProfileScreen() {
                     const domRColor = dom.readiness > 0.7 ? T.gn : dom.readiness > 0.4 ? "#F59E0B" : T.txD;
                     return (
                       <div key={dom.domKey} onClick={() => setProfileView({ domKey: dom.domKey })}
-                        style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "14px 16px", marginBottom: 8, cursor: "pointer", transition: "background 0.15s ease" }}
+                        style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", marginBottom: 8, cursor: "pointer", transition: "background 0.15s ease" }}
                         onMouseEnter={e => e.currentTarget.style.background = T.sfH}
                         onMouseLeave={e => e.currentTarget.style.background = T.sf}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>

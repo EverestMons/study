@@ -39,27 +39,27 @@ export default function HomeScreen() {
 
         {/* Course list */}
         {courses.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "48px 20px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+          <div style={{ textAlign: "center", padding: "32px 16px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 10, border: "1px solid " + T.bd }}>
             No courses yet. Add one to get started.
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 24 }}>
             {courses.map(c => {
               const mats = c.materials || [];
               const types = [...new Set(mats.map(m => m.classification))].filter(Boolean).map(v => CLS.find(cl => cl.v === v)?.l || v).join(", ");
 
               return (
                 <div key={c.id} onClick={() => { setActive(c); setScreen("courseHome"); }}
-                  style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "24px 22px", cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: 120 }}
+                  style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 14px", cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
                   onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
                   onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
                   <div>
-                    <div style={{ fontSize: 17, fontWeight: 600, color: T.tx, marginBottom: 8 }}>{c.name}</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 6 }}>{c.name}</div>
                     <div style={{ fontSize: 13, color: T.txD }}>
                       {mats.length} material{mats.length !== 1 ? "s" : ""}{types ? " · " + types : ""}
                     </div>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                     <button onClick={e => { e.stopPropagation();
                         if (pendingConfirm?.type === "delCourse" && pendingConfirm?.id === c.id) { setPendingConfirm(null); delCourse(c.id); }
                         else setPendingConfirm({ type: "delCourse", id: c.id });

@@ -165,9 +165,9 @@ export default function ScheduleScreen() {
     var displaySkills = isExam && !showAllExamSkills && sortedSkills.length > 10 ? sortedSkills.slice(0, 10) : sortedSkills;
 
     return (
-      <div key={key} style={{ background: bg, border: "1px solid " + border, borderRadius: 12, borderStyle: isPlaceholder ? "dashed" : "solid", overflow: "hidden", transition: "all 0.15s" }}>
+      <div key={key} style={{ background: bg, border: "1px solid " + border, borderRadius: 10, borderStyle: isPlaceholder ? "dashed" : "solid", overflow: "hidden", transition: "all 0.15s" }}>
         <div onClick={function () { setExpanded(isExp ? null : key); setShowAllExamSkills(false); }}
-          style={{ padding: "14px 18px", cursor: "pointer" }}
+          style={{ padding: "10px 14px", cursor: "pointer" }}
           onMouseEnter={function (e) { if (!isExp) e.currentTarget.style.background = isOverdue ? "rgba(248,113,113,0.1)" : T.sfH; }}
           onMouseLeave={function (e) { if (!isExp) e.currentTarget.style.background = "transparent"; }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -227,7 +227,7 @@ export default function ScheduleScreen() {
         </div>
 
         {isExp && (
-          <div style={{ borderTop: "1px solid " + T.bd, padding: "14px 18px" }}>
+          <div style={{ borderTop: "1px solid " + T.bd, padding: "10px 14px" }}>
             {/* Study active toggle */}
             {!isPlaceholder && !isExam && !isSubmitted && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, padding: "8px 10px", borderRadius: 8, background: activeMap[it.id] ? "rgba(52,211,153,0.08)" : "transparent", border: "1px solid " + (activeMap[it.id] ? "rgba(52,211,153,0.2)" : T.bd) }}>
@@ -376,7 +376,7 @@ export default function ScheduleScreen() {
 
           {/* Summary bar — from getCurriculumSummary */}
           {currSummary && (currSummary.activeCount > 0 || currSummary.completedCount > 0) && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 12, marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 10, marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>
                   {currSummary.activeCount} active {"\u00B7"} {currSummary.totalSkills} skill{currSummary.totalSkills !== 1 ? "s" : ""} {"\u00B7"} {Math.round((currSummary.avgMastery || 0) * 100)}% ready
@@ -404,7 +404,7 @@ export default function ScheduleScreen() {
 
           {/* Empty — no syllabus and no assignments */}
           {items && items.length === 0 && (
-            <div style={{ textAlign: "center", padding: "48px 20px", background: T.sf, borderRadius: 14, border: "1px solid " + T.bd }}>
+            <div style={{ textAlign: "center", padding: "32px 16px", background: T.sf, borderRadius: 10, border: "1px solid " + T.bd }}>
               <div style={{ fontSize: 16, fontWeight: 600, color: T.tx, marginBottom: 8 }}>No schedule yet</div>
               <div style={{ fontSize: 14, color: T.txD, lineHeight: 1.5, marginBottom: 20 }}>
                 Upload a syllabus to automatically extract your weekly schedule, exam dates, and assignments.

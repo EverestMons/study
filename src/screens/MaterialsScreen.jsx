@@ -154,9 +154,9 @@ export default function MaterialsScreen() {
     const badge = badges[matState] || badges.analyzing;
 
     return (
-      <div style={{ background: T.sf, borderRadius: 14, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : isQueued ? T.bd : isIncomplete ? T.am + "40" : isError ? T.rd + "40" : T.bd), transition: "border-color 0.2s ease", marginTop: 10 }}>
+      <div style={{ background: T.sf, borderRadius: 10, overflow: "hidden", border: "1px solid " + (isProcessing ? T.acB : isQueued ? T.bd : isIncomplete ? T.am + "40" : isError ? T.rd + "40" : T.bd), transition: "border-color 0.2s ease", marginTop: 10 }}>
         {/* Expanded header with badge */}
-        <div style={{ padding: "16px 18px 14px", display: "flex", alignItems: "flex-start", gap: 14 }}>
+        <div style={{ padding: "10px 14px", display: "flex", alignItems: "flex-start", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 10, background: T.acS, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: T.ac, letterSpacing: "0.02em" }}>{CLS_ABBR[mat.classification] || "Dc"}</span>
           </div>
@@ -406,13 +406,12 @@ export default function MaterialsScreen() {
                       return (
                         <div key={f.id} style={{
                           background: T.bg,
-                          borderRadius: 10,
-                          padding: 12,
+                          borderRadius: 8,
+                          padding: "8px 10px",
                           border: "1px solid " + T.am + "40",
                           display: "flex",
                           flexDirection: "column",
-                          gap: 8,
-                          minHeight: 140,
+                          gap: 6,
                           opacity: isClassifying ? 0 : 1,
                           transform: isClassifying ? "scale(0.95)" : "scale(1)",
                           transition: "opacity 150ms, transform 150ms"
@@ -457,8 +456,8 @@ export default function MaterialsScreen() {
                           var isExpSt = expandedStaged === f.id;
                           if (isExpSt) {
                             return (
-                              <div key={f.id} style={{ gridColumn: "1 / -1", background: T.sf, borderRadius: 10, padding: 16, border: "1px solid " + T.bd, animation: "fadeIn 0.2s ease" }}>
-                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                              <div key={f.id} style={{ gridColumn: "1 / -1", background: T.sf, borderRadius: 8, padding: "10px 12px", border: "1px solid " + T.bd, animation: "fadeIn 0.2s ease" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{f.name}</div>
                                   <button onClick={() => setExpandedStaged(null)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 18, padding: 4, lineHeight: 1 }}>×</button>
                                 </div>
@@ -480,15 +479,14 @@ export default function MaterialsScreen() {
                             <div key={f.id} onClick={() => setExpandedStaged(f.id)}
                               style={{
                                 background: T.sf,
-                                borderRadius: 10,
-                                padding: 12,
+                                borderRadius: 8,
+                                padding: "8px 10px",
                                 cursor: "pointer",
                                 border: "1px solid " + T.bd,
                                 transition: "all 0.15s ease",
                                 display: "flex",
                                 flexDirection: "column",
-                                gap: 6,
-                                minHeight: 72,
+                                gap: 4,
                                 animation: "fadeIn 0.3s"
                               }}
                               onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
@@ -566,7 +564,7 @@ export default function MaterialsScreen() {
 
                     return (
                       <div key={mat.id} onClick={() => setExpandedCard(mat.id)}
-                        style={{ background: T.sf, borderRadius: 10, padding: "12px 14px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 6, minHeight: 72 }}
+                        style={{ background: T.sf, borderRadius: 8, padding: "8px 10px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 4 }}
                         onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
                         onMouseLeave={e => { e.currentTarget.style.borderColor = isActive ? T.acB : T.bd; e.currentTarget.style.background = T.sf; }}>
                         {/* Top row: type badge + status dot */}
