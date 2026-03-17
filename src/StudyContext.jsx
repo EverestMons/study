@@ -1290,6 +1290,7 @@ export function StudyProvider({ children, setErrorCtx }) {
           await Chunks.delete(ch.id);
         }
       }
+      await Materials.delete(docId);
       const updatedMats = active.materials.filter(m => m.id !== docId);
       const updatedCourse = { ...active, materials: updatedMats };
       const updatedCourses = courses.map(c => c.id === active.id ? updatedCourse : c);
