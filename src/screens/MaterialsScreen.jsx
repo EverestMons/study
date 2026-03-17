@@ -34,6 +34,8 @@ export default function MaterialsScreen() {
   var [expandedCard, setExpandedCard] = React.useState(null);
   var [collapsedGroups, setCollapsedGroups] = React.useState("__init__");
   var [expandedStaged, setExpandedStaged] = React.useState(null);
+  var [stagedCollapsedGroups, setStagedCollapsedGroups] = React.useState(new Set());
+  var [classifyingFile, setClassifyingFile] = React.useState(null);
 
   // Bucket materials by state
   var tabCounts = { all: 0, ready: 0, attention: 0, failed: 0 };
@@ -107,6 +109,15 @@ export default function MaterialsScreen() {
     if (st === "incomplete" || st === "partial") return T.am;
     if (st === "critical_error") return T.rd;
     return T.txM;
+  };
+
+  // Classification animation handler
+  const handleClassify = (fileId, classification) => {
+    setClassifyingFile(fileId);
+    setTimeout(() => {
+      classify(fileId, classification);
+      setClassifyingFile(null);
+    }, 150);
   };
 
   // --- Helper: render expanded card detail ---
@@ -388,80 +399,113 @@ export default function MaterialsScreen() {
                     <span style={{ fontSize: 13, fontWeight: 600, color: T.am }}>Unclassified</span>
                     <span style={{ fontSize: 12, color: T.txM }}>({unclassifiedFiles.length})</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
-                    {unclassifiedFiles.map(f => (
-                      <div key={f.id} style={{ background: T.bg, borderRadius: 14, padding: "20px 22px", border: "1px solid " + T.am + "40", display: "flex", flexDirection: "column", gap: 10 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: T.txM, background: T.bg, padding: "2px 6px", borderRadius: 4, border: "1px solid " + T.bd }}>?</span>
-                          <button onClick={() => removeF(f.id)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 14, padding: "0 2px", lineHeight: 1 }}>×</button>
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>{f.name}</div>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {CLS.map(c => (
-                            <button key={c.v} onClick={() => classify(f.id, c.v)}
-                              style={{ background: "transparent", border: "1px solid " + T.bd, borderRadius: 6, padding: "3px 8px", fontSize: 10, color: T.txD, cursor: "pointer", transition: "all 0.15s" }}
-                              onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; }}
-                              onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; }}>
-                              {CLS_ABBR[c.v] || c.v.slice(0, 2)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Classified staging groups */}
-              {stagedGroupOrder.map(cls => (
-                <div key={cls} style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, padding: "6px 0" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>{CLS_LABELS[cls] || cls}</span>
-                    <span style={{ fontSize: 12, color: T.txM }}>({stagedByClass[cls].length})</span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
-                    {stagedByClass[cls].map(f => {
-                      var isExpSt = expandedStaged === f.id;
-                      if (isExpSt) {
-                        return (
-                          <div key={f.id} style={{ gridColumn: "1 / -1", background: T.bg, borderRadius: 10, padding: "12px 14px", border: "1px solid " + T.acB, animation: "fadeIn 0.15s ease" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontSize: 10, fontWeight: 700, color: T.ac, background: T.acS, padding: "2px 6px", borderRadius: 4 }}>{CLS_ABBR[f.classification] || "?"}</span>
-                                <span style={{ fontSize: 13, fontWeight: 500, color: T.tx }}>{f.name}</span>
-                              </div>
-                              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                                <button onClick={() => removeF(f.id)} style={{ background: "none", border: "1px solid " + T.bd, borderRadius: 6, padding: "2px 8px", color: T.rd, cursor: "pointer", fontSize: 10 }}>Remove</button>
-                                <button onClick={() => setExpandedStaged(null)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>×</button>
-                              </div>
-                            </div>
-                            <div style={{ fontSize: 11, color: T.txM, marginBottom: 6 }}>Reclassify:</div>
-                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                              {CLS.map(c => (
-                                <button key={c.v} onClick={() => { classify(f.id, c.v); setExpandedStaged(null); }}
-                                  style={{ background: f.classification === c.v ? T.acS : "transparent", border: "1px solid " + (f.classification === c.v ? T.ac : T.bd), borderRadius: 6, padding: "4px 10px", fontSize: 11, color: f.classification === c.v ? T.ac : T.txD, cursor: "pointer", transition: "all 0.15s" }}>
-                                  {c.l}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      }
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                    {unclassifiedFiles.map(f => {
+                      var idx = files.findIndex(file => file.id === f.id);
+                      var isClassifying = classifyingFile === f.id;
                       return (
-                        <div key={f.id} onClick={() => setExpandedStaged(f.id)}
-                          style={{ background: T.bg, borderRadius: 14, padding: "20px 22px", cursor: "pointer", border: "1px solid " + T.bd, transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 10, minHeight: 90 }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.background = T.bg; }}>
+                        <div key={f.id} style={{
+                          background: T.bg,
+                          borderRadius: 10,
+                          padding: 12,
+                          border: "1px solid " + T.am + "40",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                          minHeight: 140,
+                          opacity: isClassifying ? 0 : 1,
+                          transform: isClassifying ? "scale(0.95)" : "scale(1)",
+                          transition: "opacity 150ms, transform 150ms"
+                        }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: 10, fontWeight: 700, color: T.ac, background: T.acS, padding: "2px 6px", borderRadius: 4, letterSpacing: "0.02em" }}>{CLS_ABBR[f.classification] || "?"}</span>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: T.bg, background: T.txM, padding: "2px 6px", borderRadius: 4, lineHeight: "14px" }}>?</div>
+                            <button onClick={() => removeF(idx)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 16, padding: 4, lineHeight: 1 }}>×</button>
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: 500, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.4 }}>{f.name}</div>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                            {CLS.map(c => (
+                              <button key={c.v} onClick={() => handleClassify(f.id, c.v)}
+                                style={{ background: "transparent", border: "1px solid " + T.bd, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 600, color: T.txD, cursor: "pointer", transition: "all 0.15s" }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; }}>
+                                {CLS_ABBR[c.v] || c.v.slice(0, 2).toUpperCase()}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* Classified staging groups */}
+              {stagedGroupOrder.map(cls => {
+                var isCollapsed = stagedCollapsedGroups.has(cls);
+                return (
+                  <div key={cls} style={{ marginBottom: 16 }}>
+                    <div onClick={() => setStagedCollapsedGroups(prev => { var next = new Set(prev); next.has(cls) ? next.delete(cls) : next.add(cls); return next; })}
+                      style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isCollapsed ? 0 : 10, padding: "6px 0", cursor: "pointer" }}>
+                      <span style={{ fontSize: 10, color: T.txM }}>{isCollapsed ? "\u25B6" : "\u25BC"}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: T.tx }}>{CLS_LABELS[cls] || cls}</span>
+                      <span style={{ fontSize: 12, color: T.txM }}>({stagedByClass[cls].length})</span>
+                    </div>
+                    {!isCollapsed && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                        {stagedByClass[cls].map(f => {
+                          var idx = files.findIndex(file => file.id === f.id);
+                          var isExpSt = expandedStaged === f.id;
+                          if (isExpSt) {
+                            return (
+                              <div key={f.id} style={{ gridColumn: "1 / -1", background: T.sf, borderRadius: 10, padding: 16, border: "1px solid " + T.bd, animation: "fadeIn 0.2s ease" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                                  <div style={{ fontSize: 14, fontWeight: 600, color: T.tx }}>{f.name}</div>
+                                  <button onClick={() => setExpandedStaged(null)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 18, padding: 4, lineHeight: 1 }}>×</button>
+                                </div>
+                                <div style={{ fontSize: 11, color: T.txD, marginBottom: 8 }}>Reclassify:</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {CLS.map(c => (
+                                    <button key={c.v} onClick={() => { handleClassify(f.id, c.v); setExpandedStaged(null); }}
+                                      style={{ background: f.classification === c.v ? T.acS : "transparent", border: "1px solid " + (f.classification === c.v ? T.ac : T.bd), borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, color: f.classification === c.v ? T.ac : T.txD, cursor: "pointer", transition: "all 0.15s" }}
+                                      onMouseEnter={e => { if (f.classification !== c.v) { e.currentTarget.style.borderColor = T.ac; e.currentTarget.style.color = T.ac; e.currentTarget.style.background = T.acS; } }}
+                                      onMouseLeave={e => { if (f.classification !== c.v) { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.color = T.txD; e.currentTarget.style.background = "transparent"; } }}>
+                                      {c.l}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={f.id} onClick={() => setExpandedStaged(f.id)}
+                              style={{
+                                background: T.sf,
+                                borderRadius: 10,
+                                padding: 12,
+                                cursor: "pointer",
+                                border: "1px solid " + T.bd,
+                                transition: "all 0.15s ease",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                minHeight: 72,
+                                animation: "fadeIn 0.3s"
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
+                              onMouseLeave={e => { e.currentTarget.style.borderColor = T.bd; e.currentTarget.style.background = T.sf; }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: T.ac, background: T.acS, padding: "2px 6px", borderRadius: 4, lineHeight: "14px" }}>{CLS_ABBR[f.classification] || "?"}</div>
+                                <button onClick={(e) => { e.stopPropagation(); removeF(idx); }} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 16, padding: 4, lineHeight: 1 }}>×</button>
+                              </div>
+                              <div style={{ fontSize: 13, fontWeight: 500, color: T.tx, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{f.name}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -505,7 +549,7 @@ export default function MaterialsScreen() {
               </div>
               {/* Grid of compact cards */}
               {!isCollapsed && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                   {mats.map(mat => {
                     var st = matStates.get(mat.id);
                     var isExpanded = expandedCard === mat.id;
@@ -522,16 +566,16 @@ export default function MaterialsScreen() {
 
                     return (
                       <div key={mat.id} onClick={() => setExpandedCard(mat.id)}
-                        style={{ background: T.sf, borderRadius: 14, padding: "20px 22px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 10, minHeight: 90 }}
+                        style={{ background: T.sf, borderRadius: 10, padding: "12px 14px", cursor: "pointer", border: "1px solid " + (isActive ? T.acB : T.bd), transition: "all 0.15s ease", display: "flex", flexDirection: "column", gap: 6, minHeight: 72 }}
                         onMouseEnter={e => { e.currentTarget.style.borderColor = T.acB; e.currentTarget.style.background = T.sfH; }}
                         onMouseLeave={e => { e.currentTarget.style.borderColor = isActive ? T.acB : T.bd; e.currentTarget.style.background = T.sf; }}>
                         {/* Top row: type badge + status dot */}
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: T.ac, background: T.acS, padding: "2px 6px", borderRadius: 4, letterSpacing: "0.02em" }}>{CLS_ABBR[mat.classification] || "Dc"}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: T.ac, background: T.acS, padding: "2px 6px", borderRadius: 4, lineHeight: "14px" }}>{CLS_ABBR[mat.classification] || "Dc"}</span>
                           <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, flexShrink: 0, ...(isActive ? { animation: "pulse 1.5s ease-in-out infinite" } : {}) }} />
                         </div>
                         {/* Title */}
-                        <div style={{ fontSize: 12, fontWeight: 500, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", lineHeight: 1.4 }}>{mat.name}</div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: T.tx, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{mat.name}</div>
                       </div>
                     );
                   })}
