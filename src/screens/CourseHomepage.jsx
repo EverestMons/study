@@ -167,8 +167,8 @@ export default function CourseHomepage() {
           </div>
           {/* Card grid */}
           <div style={{
-            display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gridTemplateRows: "repeat(2, 1fr)",
-            gap: 12, flex: 1, minHeight: 0,
+            display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 12, alignContent: "start",
           }}>
             {cards.map(function (card, i) {
               return (

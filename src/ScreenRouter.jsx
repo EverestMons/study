@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { T, CSS } from "./lib/theme.jsx";
 import { useStudy } from "./StudyContext.jsx";
 import ErrorDisplay from "./components/ErrorDisplay.jsx";
@@ -46,6 +46,20 @@ export default function ScreenRouter() {
     bgExtraction, dupPrompt,
   } = useStudy();
 
+  var [displayScreen, setDisplayScreen] = useState(screen);
+  var [opacity, setOpacity] = useState(1);
+  var timerRef = useRef(null);
+
+  useEffect(() => {
+    if (screen === displayScreen) return;
+    setOpacity(0);
+    timerRef.current = setTimeout(() => {
+      setDisplayScreen(screen);
+      setOpacity(1);
+    }, 500);
+    return () => clearTimeout(timerRef.current);
+  }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (asyncError) return <ErrorDisplay />;
 
   // --- Loading ---
@@ -61,24 +75,25 @@ export default function ScreenRouter() {
   // --- SETTINGS MODAL ---
   if (showSettings) return <SettingsModal />;
 
-  // --- Screen content ---
+  // --- Screen content (uses displayScreen for fade-out/in) ---
+  var s = displayScreen;
   var content = null;
-  if (screen === "home") content = <HomeScreen />;
-  else if (screen === "courseHome" && active) content = <CourseHomepage />;
-  else if (screen === "profile") content = <ProfileScreen />;
-  else if (screen === "upload") content = <UploadScreen />;
-  else if (screen === "manage" && active) content = <ManageScreen />;
-  else if (screen === "materials" && active) content = <MaterialsScreen />;
-  else if (screen === "skills" && active) content = <SkillsScreen />;
-  else if (screen === "schedule" && active) content = <ScheduleScreen />;
-  else if (screen === "curriculum" && active) content = <CurriculumScreen />;
-  else if (screen === "notifs") content = <NotifsScreen />;
-  else if (screen === "study" && active) content = <StudyScreen />;
+  if (s === "home") content = <HomeScreen />;
+  else if (s === "courseHome" && active) content = <CourseHomepage />;
+  else if (s === "profile") content = <ProfileScreen />;
+  else if (s === "upload") content = <UploadScreen />;
+  else if (s === "manage" && active) content = <ManageScreen />;
+  else if (s === "materials" && active) content = <MaterialsScreen />;
+  else if (s === "skills" && active) content = <SkillsScreen />;
+  else if (s === "schedule" && active) content = <ScheduleScreen />;
+  else if (s === "curriculum" && active) content = <CurriculumScreen />;
+  else if (s === "notifs") content = <NotifsScreen />;
+  else if (s === "study" && active) content = <StudyScreen />;
 
   return (
     <>
       {updateInfo && <UpdateBanner />}
-      <div key={screen} style={{ animation: "fadeIn 0.25s ease" }}>{content}</div>
+      <div style={{ opacity, transition: "opacity 0.5s ease" }}>{content}</div>
       {dupPrompt && !globalLock && <DupPromptModal />}
       {bgExtraction && screen !== "materials" && <ExtractionProgress />}
     </>
