@@ -3,7 +3,6 @@ import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
 import { loadCoursesNested, saveCoursesNested, Chunks } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
-import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
 import { useStudy } from "../StudyContext.jsx";
 import TopBarButtons from "../components/TopBarButtons.jsx";
@@ -12,9 +11,9 @@ export default function MaterialsScreen() {
   const {
     active, setActive, courses, setCourses,
     files, setFiles, drag, setDrag, parsing,
-    busy, setBusy, status, setStatus,
+    status, setStatus,
     processingMatId, setProcessingMatId,
-    globalLock, setGlobalLock,
+    bgExtraction, setBgExtraction,
     errorLogModal, setErrorLogModal,
     showSkills, setShowSkills, skillViewData, setSkillViewData,
     pendingConfirm, setPendingConfirm,
@@ -22,7 +21,7 @@ export default function MaterialsScreen() {
     chunkPicker, setChunkPicker,
     focusContext, setFocusContext, sessionMode, setSessionMode,
     fiRef, extractionCancelledRef,
-    setScreen,
+    screen, setScreen, setPreviousScreen,
     onDrop, onSelect, classify, removeF,
     addMats, removeMat, addNotif,
     getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
@@ -228,9 +227,15 @@ export default function MaterialsScreen() {
             {unfinished.length > 0 && <div style={{ fontSize: 12, color: T.am, marginBottom: 12 }}>{unfinished.length} section{unfinished.length !== 1 ? "s" : ""} need{unfinished.length === 1 ? "s" : ""} retry</div>}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button onClick={async () => {
-                if (globalLock) return;
-                setGlobalLock({ message: "Retrying extraction..." });
-                setProcessingMatId(mat.id); setBusy(true); setStatus("Retrying..."); extractionCancelledRef.current = false;
+                if (bgExtraction || processingMatId) return;
+                extractionCancelledRef.current = false;
+                setProcessingMatId(mat.id); setStatus("Retrying...");
+                setBgExtraction({
+                  courseId: active.id,
+                  materials: [{ id: mat.id, name: mat.name, status: 'extracting',
+                    chaptersTotal: null, chaptersComplete: 0, error: null }],
+                  startedAt: Date.now(),
+                });
                 try {
                   await Chunks.resetForRetry(mat.id);
                   var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") });
@@ -239,13 +244,13 @@ export default function MaterialsScreen() {
                   refreshMaterialSkillCounts(active.id);
                   addNotif(result.success ? "success" : "warn", "Retry complete." + (result.totalSkills > 0 ? " " + result.totalSkills + " skills." : ""));
                 } catch (e) { addNotif("error", "Retry failed: " + e.message); }
-                finally { setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null); }
-              }} disabled={!!globalLock}
-                style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.am, background: T.amS, color: T.am, fontSize: 12, fontWeight: 600, cursor: globalLock ? "not-allowed" : "pointer", opacity: globalLock ? 0.5 : 1 }}>
+                finally { setProcessingMatId(null); setStatus(""); setTimeout(() => setBgExtraction(null), 2000); }
+              }} disabled={!!bgExtraction || !!processingMatId}
+                style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.am, background: T.amS, color: T.am, fontSize: 12, fontWeight: 600, cursor: (bgExtraction || processingMatId) ? "not-allowed" : "pointer", opacity: (bgExtraction || processingMatId) ? 0.5 : 1 }}>
                 Retry {unfinished.length > 0 ? "(" + unfinished.length + " section" + (unfinished.length !== 1 ? "s" : "") + ")" : "Extraction"}
               </button>
               {trust.skillCount > 0 && (
-                <button onClick={() => { setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
+                <button onClick={() => { setPreviousScreen(screen); setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
                   style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Study Available Skills</button>
               )}
             </div>
@@ -275,7 +280,7 @@ export default function MaterialsScreen() {
               </>
             )}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button onClick={() => { setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
+              <button onClick={() => { setPreviousScreen(screen); setSessionMode("skills"); setFocusContext({ type: "skill", skill: null }); setScreen("study"); }}
                 style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Start Studying</button>
               {trust.skillCount > 0 && (
                 <button onClick={async () => { const sk = await loadSkillsV2(active.id); setSkillViewData({ skills: sk, isV2: true }); setShowSkills(true); }}
@@ -346,7 +351,6 @@ export default function MaterialsScreen() {
 
   return (
     <>
-    {globalLock && <GlobalLockOverlay />}
     <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
       {/* Top bar */}
@@ -524,8 +528,8 @@ export default function MaterialsScreen() {
               );
             })}
             {tabCounts.attention > 0 && (activeFilter === "attention" || activeFilter === "all") && (
-              <button onClick={retryAllFailed} disabled={!!globalLock}
-                style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid " + T.am, background: globalLock ? "transparent" : T.amS, color: globalLock ? T.txM : T.am, cursor: globalLock ? "not-allowed" : "pointer", fontWeight: 600, marginLeft: "auto", opacity: globalLock ? 0.5 : 1, transition: "all 0.15s" }}>
+              <button onClick={retryAllFailed} disabled={!!bgExtraction || !!processingMatId}
+                style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, border: "1px solid " + T.am, background: (bgExtraction || processingMatId) ? "transparent" : T.amS, color: (bgExtraction || processingMatId) ? T.txM : T.am, cursor: (bgExtraction || processingMatId) ? "not-allowed" : "pointer", fontWeight: 600, marginLeft: "auto", opacity: (bgExtraction || processingMatId) ? 0.5 : 1, transition: "all 0.15s" }}>
                 Retry All ({tabCounts.attention})
               </button>
             )}

@@ -4,11 +4,13 @@ import { useStudy } from "../../StudyContext.jsx";
 
 const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
 
+const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
+
 export default function InputBar() {
   const {
     msgs, input, setInput, codeMode, setCodeMode, detectedLanguage,
     busy, practiceMode,
-    focusContext, sessionMode,
+    currentSkillNotif,
     taRef, sendMessage,
   } = useStudy();
 
@@ -25,20 +27,31 @@ export default function InputBar() {
         }
       }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        {/* Mode context bar */}
-        {(focusContext || sessionMode) && (
-          <div style={{ fontSize: 11, color: T.txM, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ background: T.acS, color: T.ac, padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
-              {focusContext?.type === "assignment" ? "HW" : focusContext?.type === "skill" ? "SK" : focusContext?.type === "exam" ? "XM" : sessionMode?.toUpperCase()?.slice(0, 2) || ""}
-            </span>
-            <span>
-              {focusContext?.type === "assignment" ? "Assignment: " + (focusContext.assignment?.title || "")
-                : focusContext?.type === "skill" ? "Skill: " + (focusContext.skill?.name || "")
-                : focusContext?.type === "exam" ? "Exam Prep: " + (focusContext.materials?.map(m => m.name).join(", ") || "")
-                : sessionMode || ""}
-            </span>
+        {/* Skill update notification — always mounted for smooth expand/collapse */}
+        <div style={{
+          maxHeight: currentSkillNotif ? 32 : 0, overflow: "hidden",
+          transition: "max-height 200ms ease",
+          marginBottom: currentSkillNotif ? 8 : 0,
+        }}>
+          <div role="status" aria-live="polite" style={{
+            display: "flex", alignItems: "center", gap: 8,
+            fontSize: 12, fontWeight: 500,
+            opacity: currentSkillNotif && currentSkillNotif.phase === "in" ? 1 : 0,
+            transform: currentSkillNotif && currentSkillNotif.phase === "in" ? "translateY(0)" : "translateY(-2px)",
+            transition: "opacity 300ms ease, transform 300ms ease",
+          }}>
+            {currentSkillNotif && <>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: ratingColor[currentSkillNotif.rating] || T.ac, flexShrink: 0 }} />
+              <span style={{ color: T.tx, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {currentSkillNotif.skillName}
+              </span>
+              <span style={{ color: T.txM }}>&middot;</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: ratingColor[currentSkillNotif.rating] || T.ac }}>
+                {currentSkillNotif.rating}
+              </span>
+            </>}
           </div>
-        )}
+        </div>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
           {codeMode ? (
             <div style={{ flex: 1 }}>
@@ -61,7 +74,16 @@ export default function InputBar() {
               </React.Suspense>
             </div>
           ) : (
-            <textarea ref={taRef} value={input} onChange={e => setInput(e.target.value)}
+            <textarea ref={taRef} value={input} onChange={e => {
+                setInput(e.target.value);
+                // Auto-grow: reset height to measure scrollHeight, cap at ~10 lines
+                const ta = e.target;
+                ta.style.height = 'auto';
+                const lineHeight = 14 * 1.5; // fontSize * lineHeight
+                const maxH = Math.round(lineHeight * 10) + 24; // 10 lines + padding
+                ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
+                ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+              }}
               onKeyDown={e => {
                 // Cmd/Ctrl+Enter always sends
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); return; }
@@ -72,9 +94,9 @@ export default function InputBar() {
               rows={1}
               style={{
                 flex: 1, borderRadius: 12, padding: "12px 16px", color: T.tx,
-                transition: "all 0.2s",
+                transition: "border-color 0.2s",
                 fontSize: 14, lineHeight: 1.5, background: T.sf,
-                border: "1px solid " + T.bd, maxHeight: 150, resize: "none"
+                border: "1px solid " + T.bd, resize: "none", overflowY: "hidden"
               }} />
           )}
           <button onClick={() => setCodeMode(c => !c)}

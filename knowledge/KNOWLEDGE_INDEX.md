@@ -1,6 +1,6 @@
 # study — Knowledge Index
 **Maintained By:** Study Documentation Analyst
-**Last Updated:** 2026-03-14 (post Facet-Level Mastery Assessment pipeline)
+**Last Updated:** 2026-03-17 (v0.2.6 — materials staging grid + card compaction)
 
 ---
 

@@ -25,9 +25,12 @@ export const CSS = [
   "input,textarea,button,select{font-family:'DM Sans',sans-serif;outline:none}",
   "textarea{overflow-y:auto}",
   "::selection{background:" + T.acS + ";color:" + T.ac + "}",
-  "::-webkit-scrollbar{width:6px}",
-  "::-webkit-scrollbar-track{background:transparent}",
-  "::-webkit-scrollbar-thumb{background:" + T.bd + ";border-radius:3px}",
+  "*::-webkit-scrollbar{width:6px;height:6px}",
+  "*::-webkit-scrollbar-track{background:transparent}",
+  "*::-webkit-scrollbar-thumb{background:" + T.bd + ";border-radius:3px}",
+  "*::-webkit-scrollbar-thumb:hover{background:#3A4050}",
+  "*::-webkit-scrollbar-corner{background:transparent}",
+  "html,body{scrollbar-color:" + T.bd + " transparent;scrollbar-width:thin}",
   "@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}",
   "@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}",
   "@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}",
@@ -52,7 +55,14 @@ export const inl = (t) => t.split(/(\*\*.*?\*\*)/g).map((p, i) =>
 
 export const renderMd = (text) => {
   if (!text) return null;
-  const clean = text.replace(/\[SKILL_UPDATE\][\s\S]*?\[\/SKILL_UPDATE\]/g, "").replace(/\[UNLOCK_QUESTION\][\s\S]*?\[\/UNLOCK_QUESTION\]/g, "").trim();
+  const clean = text
+    .replace(/\[SKILL_UPDATE\][\s\S]*?\[\/SKILL_UPDATE\]/g, "")
+    .replace(/\[UNLOCK_QUESTION\][\s\S]*?\[\/UNLOCK_QUESTION\]/g, "")
+    .replace(/\[SKILL_UPDATE\][\s\S]*$/g, "")
+    .replace(/\[SKILL_UPDA[\s\S]*$/g, "")
+    .replace(/\[UNLOCK_QUESTION\][\s\S]*$/g, "")
+    .replace(/\[UNLOCK_QU[\s\S]*$/g, "")
+    .trim();
   const lines = clean.split("\n");
   const els = [];
   let i = 0;

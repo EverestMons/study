@@ -15,6 +15,8 @@ import SkillsScreen from "./screens/SkillsScreen.jsx";
 import ScheduleScreen from "./screens/ScheduleScreen.jsx";
 import CurriculumScreen from "./screens/CurriculumScreen.jsx";
 import StudyScreen from "./screens/StudyScreen.jsx";
+import DupPromptModal from "./components/DupPromptModal.jsx";
+import ExtractionProgress from "./components/ExtractionProgress.jsx";
 
 function UpdateBanner() {
   const { updateInfo, updateStatus, doInstallUpdate, dismissUpdate } = useStudy();
@@ -41,6 +43,7 @@ export default function ScreenRouter() {
   const {
     asyncError, screen, active, ready,
     showSettings, globalLock, updateInfo,
+    bgExtraction, dupPrompt,
   } = useStudy();
 
   if (asyncError) return <ErrorDisplay />;
@@ -76,6 +79,8 @@ export default function ScreenRouter() {
     <>
       {updateInfo && <UpdateBanner />}
       <div key={screen} style={{ animation: "fadeIn 0.25s ease" }}>{content}</div>
+      {dupPrompt && !globalLock && <DupPromptModal />}
+      {bgExtraction && screen !== "materials" && <ExtractionProgress />}
     </>
   );
 }

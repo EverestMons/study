@@ -62,6 +62,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [asyncError, setAsyncError] = useState(null);
 
   const [screen, setScreen] = useState("home");
+  const [previousScreen, setPreviousScreen] = useState("courseHome");
   const [courses, setCourses] = useState([]);
   const [active, setActive] = useState(null);
   const [ready, setReady] = useState(false);
@@ -114,6 +115,8 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [materialSkillCounts, setMaterialSkillCounts] = useState({});
   const [expandedMaterial, setExpandedMaterial] = useState(null);
   const [dupPrompt, setDupPrompt] = useState(null);
+  const [bgExtraction, setBgExtraction] = useState(null);
+  const [currentSkillNotif, setCurrentSkillNotif] = useState(null);
 
   // App update state
   const [updateInfo, setUpdateInfo] = useState(null);      // { version, notes, update } or null
@@ -129,6 +132,8 @@ export function StudyProvider({ children, setErrorCtx }) {
   const sessionMasteredSkills = useRef(new Set());
   const cachedSessionCtx = useRef(null);
   const extractionCancelledRef = useRef(false);
+  const skillNotifQueue = useRef([]);
+  const skillNotifTimers = useRef({ hold: null, clear: null });
   const coursesLoaded = useRef(false);
   const [sessionSummary, setSessionSummary] = useState(null);
   const sessionStartTime = useRef(null);
@@ -244,6 +249,27 @@ export function StudyProvider({ children, setErrorCtx }) {
     return () => clearInterval(iv);
   }, [globalLock]);
 
+  // Skill notification queue processor — timers stored in ref to survive effect re-runs
+  useEffect(function() {
+    if (!currentSkillNotif && skillNotifQueue.current.length > 0) {
+      var next = skillNotifQueue.current.shift();
+      setCurrentSkillNotif({ ...next, phase: "in" });
+      skillNotifTimers.current.hold = setTimeout(function() {
+        setCurrentSkillNotif(function(prev) { return prev ? { ...prev, phase: "out" } : null; });
+      }, 2300);
+      skillNotifTimers.current.clear = setTimeout(function() {
+        setCurrentSkillNotif(null);
+      }, 2600);
+    }
+  }, [currentSkillNotif]);
+  // Cleanup skill notification timers on unmount
+  useEffect(function() {
+    return function() {
+      clearTimeout(skillNotifTimers.current.hold);
+      clearTimeout(skillNotifTimers.current.clear);
+    };
+  }, []);
+
   useEffect(() => {
     if (active?.id && screen === "materials") refreshMaterialSkillCounts(active.id);
   }, [active?.id, active?.materials?.length, screen]);
@@ -352,6 +378,26 @@ export function StudyProvider({ children, setErrorCtx }) {
     return () => { window.removeEventListener("beforeunload", onUnload); document.removeEventListener("visibilitychange", onVis); };
   }, [saveSessionToJournal]);
 
+  const clearSessionState = useCallback(() => {
+    setMsgs([]); setInput(""); setCodeMode(false);
+    setSessionMode(null); setFocusContext(null);
+    setPickerData(null); setChunkPicker(null);
+    setAsgnWork(null); setPracticeMode(null);
+    setShowSkills(false); setSkillViewData(null);
+    sessionStartIdx.current = 0;
+    sessionSkillLog.current = [];
+    sessionMasteryEvents.current = [];
+    sessionFacetUpdates.current = [];
+    sessionMasteredSkills.current = new Set();
+    cachedSessionCtx.current = null;
+    sessionStartTime.current = null;
+    discussedChunks.current = new Set();
+    setSessionSummary(null);
+    setSessionElapsed(0);
+    setBreakDismissed(false);
+    setSidebarCollapsed(false);
+  }, []);
+
   // --- File Handlers ---
   const filterDuplicates = (newFiles) => {
     const existingNames = new Set(files.map(f => f.name));
@@ -448,17 +494,104 @@ export function StudyProvider({ children, setErrorCtx }) {
     setParsing(false);
   }, [files, active]);
 
+  // --- Background Extraction Runner ---
+  const runBackgroundExtraction = async (courseId, extractable) => {
+    const updateMatInBg = (matId, updater) => {
+      setBgExtraction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          materials: prev.materials.map(m =>
+            m.id === matId ? (typeof updater === 'function' ? updater(m) : { ...m, ...updater }) : m
+          ),
+        };
+      });
+    };
+
+    for (let i = 0; i < extractable.length; i++) {
+      const mat = extractable[i];
+
+      // Check cancellation between materials
+      if (extractionCancelledRef.current) {
+        for (let j = i; j < extractable.length; j++) {
+          updateMatInBg(extractable[j].id, { status: 'skipped' });
+        }
+        addNotif("warn", "Extraction cancelled.");
+        break;
+      }
+
+      updateMatInBg(mat.id, { status: 'extracting' });
+      setProcessingMatId(mat.id);
+      setStatus("Extracting: " + mat.name + "...");
+
+      try {
+        var exResult = await runExtractionV2(courseId, mat.id, {
+          onStatus: setStatus,
+          onNotif: addNotif,
+          onChapterComplete: (ch, cnt) => {
+            updateMatInBg(mat.id, m => ({ ...m, chaptersComplete: m.chaptersComplete + 1 }));
+            setStatus(mat.name + " — " + ch + ": " + cnt + " skills");
+          },
+        });
+
+        if (exResult?.needsUserDecision) {
+          updateMatInBg(mat.id, { status: 'awaiting_decision' });
+          const decision = await new Promise(resolve => {
+            setDupPrompt({ materialName: mat.name, dupSummary: exResult.dupSummary, resolve });
+          });
+          setDupPrompt(null);
+
+          if (decision === 'extract') {
+            updateMatInBg(mat.id, { status: 'extracting' });
+            await runExtractionV2(courseId, mat.id, {
+              onStatus: setStatus, onNotif: addNotif,
+              onChapterComplete: (ch, cnt) => setStatus(mat.name + " — " + ch + ": " + cnt + " skills"),
+            }, { skipNearDedupCheck: true });
+            updateMatInBg(mat.id, { status: 'done' });
+          } else {
+            const skippedIds = [...new Set(exResult.nearDuplicates.map(m => m.newChunkId))];
+            await Chunks.updateStatusBatch(skippedIds, 'extracted');
+            updateMatInBg(mat.id, { status: 'skipped' });
+            addNotif("info", "Skipped \"" + mat.name + "\" — matched existing content.");
+          }
+        } else {
+          updateMatInBg(mat.id, { status: 'done' });
+        }
+      } catch (e) {
+        console.error("Background extraction failed for", mat.name, e);
+        updateMatInBg(mat.id, { status: 'error', error: e.message });
+        const errMsg = e.message || String(e);
+        if (/API\s*(429|529|500|503)|overloaded|rate.?limit|service.?unavailable|failed.?to.?fetch|connection|ECONNREFUSED|timeout/i.test(errMsg)) {
+          addNotif("error", "Claude API unavailable — " + mat.name + " was not processed.");
+        } else {
+          addNotif("warn", "Could not extract skills from " + mat.name + ": " + errMsg.substring(0, 120));
+        }
+      }
+    }
+
+    // Cleanup
+    setProcessingMatId(null);
+    setStatus("");
+    const refreshed = await loadCoursesNested();
+    const rc = refreshed.find(c => c.id === courseId);
+    if (rc) { setCourses(refreshed); setActive(rc); }
+    await refreshMaterialSkillCounts(courseId);
+    addNotif("success", "Extraction complete.");
+    setTimeout(() => setBgExtraction(null), 3000);
+  };
+
   // --- Course Creation ---
   const createCourse = async () => {
     if (!cName.trim() || !files.length || files.some(f => !f.classification)) return;
     const validFiles = files.filter(f => f.parseOk !== false);
     setGlobalLock({ message: "Creating course..." });
-    setBusy(true);
     setStatus("Storing documents...");
 
+    let courseId, mats;
     try {
-      const courseId = await Courses.create({ name: cName.trim() });
-      const mats = [];
+      // === PHASE 1 (blocking): store docs, parse syllabi, mark assignment chunks ===
+      courseId = await Courses.create({ name: cName.trim() });
+      mats = [];
       for (let i = 0; i < validFiles.length; i++) {
         const f = validFiles[i];
         setStatus("Storing: " + f.name + "...");
@@ -478,16 +611,14 @@ export function StudyProvider({ children, setErrorCtx }) {
         for (const pd of pendingDocs) {
           await Chunks.updateContent(pd.chunkId, typeof pd.doc === 'string' ? pd.doc : JSON.stringify(pd.doc));
         }
-        // Fingerprint V1 chunks (content now flushed to DB — loads from chunks table)
         if (pendingDocs.length > 0) {
           try { await computeAndStoreFingerprints(mat.id); } catch (e) { console.warn('[MinHash] Fingerprint failed:', e); }
         }
         delete mat._pendingDocs;
       }
       setCourses(updated); setActive(newCourse); setFiles([]); setCName("");
-      setScreen("materials");
 
-      // --- Syllabus parsing (before skill extraction) ---
+      // --- Syllabus parsing ---
       var syllabusMats = mats.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
       for (const syllMat of syllabusMats) {
         setStatus("Parsing syllabus: " + syllMat.name + "...");
@@ -509,68 +640,41 @@ export function StudyProvider({ children, setErrorCtx }) {
         }
       }
 
-      // Mark assignment chunks as extracted — they use curriculum decomposition, not skill extraction
+      // Mark assignment chunks as extracted
       var asgnMats = mats.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
       for (const asgnMat of asgnMats) {
         var asgnChunkIds = (asgnMat.chunks || []).map(c => c.id).filter(Boolean);
         if (asgnChunkIds.length) await Chunks.updateStatusBatch(asgnChunkIds, "extracted");
       }
-
-      var extractable = mats.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
-      if (extractable.length > 0) {
-        addNotif("success", "Course created. Processing " + extractable.length + " material(s)...");
-        for (var ei = 0; ei < extractable.length; ei++) {
-          setStatus("Extracting skills: " + extractable[ei].name + "...");
-          setProcessingMatId(extractable[ei].id);
-          try {
-            var exResult = await runExtractionV2(courseId, extractable[ei].id, {
-              onStatus: setStatus,
-              onNotif: addNotif,
-              onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
-            });
-            if (exResult?.needsUserDecision) {
-              const decision = await new Promise(resolve => {
-                setDupPrompt({ materialName: extractable[ei].name, dupSummary: exResult.dupSummary, resolve });
-              });
-              setDupPrompt(null);
-              if (decision === 'extract') {
-                await runExtractionV2(courseId, extractable[ei].id, {
-                  onStatus: setStatus, onNotif: addNotif,
-                  onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
-                }, { skipNearDedupCheck: true });
-              } else {
-                const skippedIds = [...new Set(exResult.nearDuplicates.map(m => m.newChunkId))];
-                await Chunks.updateStatusBatch(skippedIds, 'extracted');
-                addNotif("info", "Skipped \"" + extractable[ei].name + "\" — matched existing content.");
-              }
-            }
-          } catch (e) {
-            console.error("Auto-extraction failed for", extractable[ei].name, e);
-            const errMsg2 = e.message || String(e);
-            if (/API\s*(429|529|500|503)|overloaded|rate.?limit|service.?unavailable|failed.?to.?fetch|connection|ECONNREFUSED|timeout/i.test(errMsg2)) {
-              addNotif("error", "Claude API unavailable — " + extractable[ei].name + " was not processed. Try again later.");
-            } else {
-              addNotif("warn", "Could not extract skills from " + extractable[ei].name + ": " + errMsg2.substring(0, 120));
-            }
-          }
-        }
-        setProcessingMatId(null);
-        var refreshed2 = await loadCoursesNested();
-        var rc2 = refreshed2.find(c => c.id === courseId);
-        if (rc2) { setCourses(refreshed2); setActive(rc2); }
-        await refreshMaterialSkillCounts(courseId);
-        addNotif("success", "Done! " + extractable.length + " material(s) processed.");
-      } else {
-        var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-        addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s).");
-      }
     } catch (err) {
       console.error("Course creation failed:", err);
       addNotif("error", "Course creation failed: " + err.message);
-    } finally {
-      setGlobalLock(null); setBusy(false); setStatus("");
+      setGlobalLock(null); setStatus("");
+      return;
     }
-    setBooting(false); setStatus("");
+
+    // Phase 1 complete — unblock UI
+    setGlobalLock(null); setStatus("");
+    setScreen("materials");
+
+    // === PHASE 2 (non-blocking): skill extraction ===
+    var extractable = mats.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
+    if (extractable.length > 0) {
+      addNotif("success", "Course created. Extracting skills in the background...");
+      extractionCancelledRef.current = false;
+      setBgExtraction({
+        courseId,
+        materials: extractable.map(m => ({
+          id: m.id, name: m.name, status: 'pending',
+          chaptersTotal: null, chaptersComplete: 0, error: null,
+        })),
+        startedAt: Date.now(),
+      });
+      runBackgroundExtraction(courseId, extractable);
+    } else {
+      var totalSections = mats.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+      addNotif("success", "Course created with " + mats.length + " material(s) and " + totalSections + " section(s).");
+    }
   };
 
   const quickCreateCourse = async () => {
@@ -728,6 +832,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   };
 
   const enterStudy = async (course, initialMode) => {
+    setPreviousScreen(screen);
     setActive(course); setScreen("study");
     setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
@@ -939,6 +1044,8 @@ export function StudyProvider({ children, setErrorCtx }) {
   // --- Boot with focused context ---
   const bootWithFocus = async (focus) => {
     if (!active) return;
+    if (screen !== "study") setPreviousScreen(screen);
+    setScreen("study");
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
     if (focus.type === "assignment") {
       var lang = detectLanguage(active.name, focus.assignment?.title || "", "");
@@ -993,7 +1100,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         }));
         setAsgnWork({ questions: qs, currentIdx: 0 });
         userMsg = "I want to work on: " + focus.assignment.title;
-        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nIMPORTANT FLOW: Questions are hidden from the student. You control when they see each question.\n\n1. Look at the FIRST question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first using the ASK FIRST method. Diagnose, fill gaps, verify.\n3. Once the student has demonstrated competence on ALL skills needed for the question, reveal it by including:\n[UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After revealing, guide them but do NOT write their answer. Ask them to explain their approach. Nudge if stuck.\n5. When the student says they've completed a question or moves on, proceed to the next question's required skills.\n\nStart by diagnosing the first question's prerequisites. Do NOT show or describe the question yet. Just begin with a skill-check question.\n\nThe question order is: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.";
+        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nQUESTION VISIBILITY RULES:\n- The INSTRUCTOR PLANNING section shows full question text. This is for YOUR planning only.\n- The student CANNOT see questions until you unlock them with [UNLOCK_QUESTION].\n- NEVER ask the student the assignment question, restate it, or closely paraphrase it.\n- Your job is to teach the prerequisite SKILLS so the student can handle the question when they see it.\n\nBAD vs GOOD example:\n  Assignment question: \"Implement a binary search algorithm\"\n  BAD (asking the assignment question): \"How would you implement binary search?\"\n  GOOD (teaching the prerequisite skill): \"What property of a sorted array lets us skip checking every element?\"\n\nFLOW:\n1. Look at the FIRST locked question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first. Ask diagnostic questions about the CONCEPT, not about the assignment task.\n3. When the student demonstrates competence on ALL skills needed for the question, unlock it:\n   [UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After unlocking, the student sees the question in their answer panel. Guide their thinking without writing their answer.\n5. When the student completes a question, move to the next locked question's required skills.\n\nStart by checking the first question's prerequisite skills. Your opening question should test a CONCEPT — not describe or hint at the assignment task.\n\nQuestion order: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.";
       } else if (focus.type === "skill") {
         userMsg = "I want to work on: " + focus.skill.name;
         modeHint = "\n\nMODE: SKILL MASTERY. The student chose this specific skill to strengthen. You have the skill details and source material loaded. Start by asking a diagnostic question to find where their understanding breaks down.";
@@ -1024,10 +1131,16 @@ export function StudyProvider({ children, setErrorCtx }) {
   // --- Send Message ---
   const sendMessage = async () => {
     if (!input.trim() || busy || !active) return;
+    skillNotifQueue.current = [];
+    clearTimeout(skillNotifTimers.current.hold);
+    clearTimeout(skillNotifTimers.current.clear);
+    setCurrentSkillNotif(null);
     const raw = codeMode ? input.trimEnd() : input.trim();
     const userMsg = codeMode ? "```\n" + raw + "\n```" : raw;
     const isCode = codeMode;
     setInput(""); setCodeMode(false);
+    // Reset textarea height after clearing input
+    if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.style.overflowY = 'hidden'; }
     const userTs = Date.now();
     const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs, codeMode: isCode, detectedLanguage: isCode ? detectedLanguage : null }];
     setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
@@ -1043,7 +1156,13 @@ export function StudyProvider({ children, setErrorCtx }) {
         var jRows = await JournalEntries.getByCourse(active.id);
         journal = jRows.reverse().map(r => { try { return typeof r.entry_data === 'string' ? JSON.parse(r.entry_data) : r.entry_data; } catch { return null; } }).filter(Boolean);
         if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam")) {
-          ctx = await buildFocusedContext(active.id, active.materials, focusContext, skills);
+          var rebuildFocus = focusContext;
+          if (focusContext.type === "assignment" && asgnWork) {
+            var unlocked = {};
+            for (var aq of asgnWork.questions) { if (aq.unlocked) unlocked[aq.id] = true; }
+            rebuildFocus = { ...focusContext, unlocked: unlocked };
+          }
+          ctx = await buildFocusedContext(active.id, active.materials, rebuildFocus, skills);
         } else {
           const asgn = await loadAssignmentsCompat(active.id) || [];
           ctx = await buildContext(active.id, active.materials, skills, asgn, newMsgs, discussedChunks.current);
@@ -1093,9 +1212,37 @@ export function StudyProvider({ children, setErrorCtx }) {
             addNotif("skill", u2.skillId + ": " + u2.rating + (u2.context !== 'guided' ? " (" + u2.context + ")" : ""));
           }
         }
+
+        // Enqueue InputBar skill notifications (max 3) — start first directly to avoid null→null no-op
+        var fmtKey = function(k) { return k.replace(/-/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); }); };
+        var notifItems = updates.slice(0, 3).map(function(u) {
+          var allSk = cachedSessionCtx.current?.skills || [];
+          var sk = allSk.find(function(s) { return s.id === u.skillId || s.conceptKey === u.skillId; });
+          return { skillName: sk?.name || fmtKey(u.skillId), skillId: u.skillId, rating: u.rating, facetCount: u.facets?.length || 0 };
+        });
+        if (notifItems.length > 0) {
+          clearTimeout(skillNotifTimers.current.hold);
+          clearTimeout(skillNotifTimers.current.clear);
+          var first = notifItems.shift();
+          skillNotifQueue.current = notifItems;
+          setCurrentSkillNotif({ ...first, phase: "in" });
+          skillNotifTimers.current.hold = setTimeout(function() {
+            setCurrentSkillNotif(function(prev) { return prev ? { ...prev, phase: "out" } : null; });
+          }, 2300);
+          skillNotifTimers.current.clear = setTimeout(function() {
+            setCurrentSkillNotif(null);
+          }, 2600);
+        }
+
         if (cachedSessionCtx.current) {
           var updatedSkills = await loadSkillsV2(active.id);
-          var updatedCtx = await buildFocusedContext(active.id, active.materials, focusContext, updatedSkills);
+          var updateFocus = focusContext;
+          if (focusContext.type === "assignment" && asgnWork) {
+            var unlocked2 = {};
+            for (var aq2 of asgnWork.questions) { if (aq2.unlocked) unlocked2[aq2.id] = true; }
+            updateFocus = { ...focusContext, unlocked: unlocked2 };
+          }
+          var updatedCtx = await buildFocusedContext(active.id, active.materials, updateFocus, updatedSkills);
           var recentKw = extractKeywords(newMsgs.slice(-12), 10);
           var skillsSoFar = sessionSkillLog.current.map(s => s.skillId + ":" + s.rating).join(", ");
           if (recentKw.length || skillsSoFar) {
@@ -1146,14 +1293,15 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   // --- Add Materials ---
   const addMats = async () => {
-    if (!active || !files.length || files.some(f => !f.classification) || globalLock) return;
+    if (!active || !files.length || files.some(f => !f.classification) || globalLock || bgExtraction) return;
     const validFiles = files.filter(f => f.parseOk !== false);
     if (validFiles.length === 0) return;
     setGlobalLock({ message: "Adding materials..." });
-    setBusy(true);
     setStatus("Storing new materials...");
 
+    let trulyNew;
     try {
+    // === PHASE 1 (blocking): store docs, parse syllabi, mark assignment chunks ===
     const newMeta = [];
     for (let i = 0; i < validFiles.length; i++) {
       const f = validFiles[i];
@@ -1166,12 +1314,11 @@ export function StudyProvider({ children, setErrorCtx }) {
       newMeta.push(mat);
     }
 
-    // Filter out deduplicated materials — they already exist in active.materials
     const dedupNames = newMeta.filter(m => m._deduplicated).map(m => m.name);
     if (dedupNames.length > 0) {
       addNotif("warn", "Skipped duplicate(s): " + dedupNames.join(", "));
     }
-    const trulyNew = newMeta.filter(m => !m._deduplicated);
+    trulyNew = newMeta.filter(m => !m._deduplicated);
 
     const updatedCourse = { ...active, materials: [...active.materials, ...trulyNew] };
     const updatedCourses = courses.map(c => c.id === active.id ? updatedCourse : c);
@@ -1181,7 +1328,6 @@ export function StudyProvider({ children, setErrorCtx }) {
       for (const pd of pendingDocs) {
         await Chunks.updateContent(pd.chunkId, typeof pd.doc === 'string' ? pd.doc : JSON.stringify(pd.doc));
       }
-      // Fingerprint V1 chunks (content now flushed to DB — loads from chunks table)
       if (pendingDocs.length > 0) {
         try { await computeAndStoreFingerprints(mat.id); } catch (e) { console.warn('[MinHash] Fingerprint failed:', e); }
       }
@@ -1189,7 +1335,6 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
     setCourses(updatedCourses); setActive(updatedCourse); setFiles([]);
 
-    // --- Syllabus parsing (before skill extraction) ---
     if (!active.syllabus_parsed) {
       var syllabusMats2 = trulyNew.filter(m => m.classification === "syllabus" && (m.chunks || []).length > 0);
       for (const syllMat of syllabusMats2) {
@@ -1213,68 +1358,38 @@ export function StudyProvider({ children, setErrorCtx }) {
       }
     }
 
-    // Mark assignment chunks as extracted — they use curriculum decomposition, not skill extraction
     var asgnMats2 = trulyNew.filter(m => m.classification === "assignment" && (m.chunks || []).length > 0);
     for (const asgnMat of asgnMats2) {
       var asgnChunkIds2 = (asgnMat.chunks || []).map(c => c.id).filter(Boolean);
       if (asgnChunkIds2.length) await Chunks.updateStatusBatch(asgnChunkIds2, "extracted");
     }
-
-    var extractable = trulyNew.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
-    if (extractable.length > 0) {
-      addNotif("success", "Materials added. Processing " + extractable.length + " material(s)...");
-      for (var ei = 0; ei < extractable.length; ei++) {
-        setStatus("Extracting skills: " + extractable[ei].name + "...");
-        setProcessingMatId(extractable[ei].id);
-        try {
-          var exResult = await runExtractionV2(active.id, extractable[ei].id, {
-            onStatus: setStatus,
-            onNotif: addNotif,
-            onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
-          });
-          if (exResult?.needsUserDecision) {
-            const decision = await new Promise(resolve => {
-              setDupPrompt({ materialName: extractable[ei].name, dupSummary: exResult.dupSummary, resolve });
-            });
-            setDupPrompt(null);
-            if (decision === 'extract') {
-              await runExtractionV2(active.id, extractable[ei].id, {
-                onStatus: setStatus, onNotif: addNotif,
-                onChapterComplete: (ch, cnt) => setStatus(extractable[ei].name + " — " + ch + ": " + cnt + " skills"),
-              }, { skipNearDedupCheck: true });
-            } else {
-              const skippedIds = [...new Set(exResult.nearDuplicates.map(m => m.newChunkId))];
-              await Chunks.updateStatusBatch(skippedIds, 'extracted');
-              addNotif("info", "Skipped \"" + extractable[ei].name + "\" — matched existing content.");
-            }
-          }
-        } catch (e) {
-          console.error("Auto-extraction failed for", extractable[ei].name, e);
-          const errMsg = e.message || String(e);
-          if (/API\s*(429|529|500|503)|overloaded|rate.?limit|service.?unavailable|failed.?to.?fetch|connection|ECONNREFUSED|timeout/i.test(errMsg)) {
-            addNotif("error", "Claude API unavailable — " + extractable[ei].name + " was not processed. Try again later.");
-          } else {
-            addNotif("warn", "Could not extract skills from " + extractable[ei].name + ": " + errMsg.substring(0, 120));
-          }
-        }
-      }
-      setProcessingMatId(null);
-      const refreshed = await loadCoursesNested();
-      const rc = refreshed.find(c => c.id === active.id);
-      if (rc) { setCourses(refreshed); setActive(rc); }
-      await refreshMaterialSkillCounts(active.id);
-      addNotif("success", "Done processing " + extractable.length + " material(s).");
-    } else {
-      const totalSections = trulyNew.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
-      addNotif("success", "Added " + trulyNew.length + " file(s) with " + totalSections + " section(s).");
-    }
     } catch (err) {
       console.error("Adding materials failed:", err);
       addNotif("error", "Failed to add materials: " + err.message);
-    } finally {
-      setGlobalLock(null);
-      setStatus("");
-      setBusy(false);
+      setGlobalLock(null); setStatus("");
+      return;
+    }
+
+    // Phase 1 complete — unblock UI
+    setGlobalLock(null); setStatus("");
+
+    // === PHASE 2 (non-blocking): skill extraction ===
+    var extractable = trulyNew.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
+    if (extractable.length > 0) {
+      addNotif("success", "Materials added. Extracting skills in the background...");
+      extractionCancelledRef.current = false;
+      setBgExtraction({
+        courseId: active.id,
+        materials: extractable.map(m => ({
+          id: m.id, name: m.name, status: 'pending',
+          chaptersTotal: null, chaptersComplete: 0, error: null,
+        })),
+        startedAt: Date.now(),
+      });
+      runBackgroundExtraction(active.id, extractable);
+    } else {
+      const totalSections = trulyNew.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
+      addNotif("success", "Added " + trulyNew.length + " file(s) with " + totalSections + " section(s).");
     }
   };
 
@@ -1283,7 +1398,6 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (!active || globalLock) return;
     const removedMat = active.materials.find(m => m.id === docId);
     setGlobalLock({ message: "Removing " + (removedMat?.name || "material") + "..." });
-    setBusy(true);
     try {
       if (removedMat?.chunks) {
         for (const ch of removedMat.chunks) {
@@ -1302,50 +1416,27 @@ export function StudyProvider({ children, setErrorCtx }) {
       addNotif("error", "Failed to remove material: " + e.message);
     } finally {
       setGlobalLock(null);
-      setBusy(false);
     }
   };
 
   const retryAllFailed = async () => {
-    if (!active || globalLock) return;
+    if (!active || bgExtraction) return;
     var retryable = active.materials.filter(mat => {
       var chunks = mat.chunks || [];
       if (chunks.length === 0) return false;
       return chunks.some(c => c.status === "pending" || c.status === "error");
     });
     if (retryable.length === 0) { addNotif("info", "No materials need retry."); return; }
-    setGlobalLock({ message: "Retrying extraction..." });
-    setBusy(true);
-    var succeeded = 0;
-    try {
-      for (var ri = 0; ri < retryable.length; ri++) {
-        var mat = retryable[ri];
-        setStatus("Retrying " + (ri + 1) + "/" + retryable.length + ": " + mat.name + "...");
-        setProcessingMatId(mat.id);
-        try {
-          await runExtractionV2(active.id, mat.id, {
-            onStatus: setStatus,
-            onNotif: addNotif,
-            onChapterComplete: (ch, cnt) => setStatus(mat.name + " — " + ch + ": " + cnt + " skills"),
-          });
-          succeeded++;
-        } catch (e) {
-          console.error("[retryAll] Failed:", mat.name, e);
-          addNotif("warn", "Retry failed for " + mat.name + ": " + e.message);
-        }
-      }
-      setProcessingMatId(null);
-      var refreshed = await loadCoursesNested();
-      var rc = refreshed.find(c => c.id === active.id);
-      if (rc) { setCourses(refreshed); setActive(rc); }
-      await refreshMaterialSkillCounts(active.id);
-      addNotif("success", "Retry complete — " + succeeded + "/" + retryable.length + " succeeded.");
-    } catch (e) {
-      console.error("[retryAll] Unexpected error:", e);
-      addNotif("error", "Retry failed: " + e.message);
-    } finally {
-      setGlobalLock(null); setBusy(false); setStatus(""); setProcessingMatId(null);
-    }
+    extractionCancelledRef.current = false;
+    setBgExtraction({
+      courseId: active.id,
+      materials: retryable.map(m => ({
+        id: m.id, name: m.name, status: 'pending',
+        chaptersTotal: null, chaptersComplete: 0, error: null,
+      })),
+      startedAt: Date.now(),
+    });
+    runBackgroundExtraction(active.id, retryable);
   };
 
   // --- Update handlers ---
@@ -1387,7 +1478,8 @@ export function StudyProvider({ children, setErrorCtx }) {
   const value = useMemo(() => ({
     // State
     asyncError, setAsyncError, showAsyncNuclear, setShowAsyncNuclear,
-    screen, setScreen, courses, setCourses, active, setActive, ready,
+    screen, setScreen, previousScreen, setPreviousScreen,
+    courses, setCourses, active, setActive, ready,
     showSettings, setShowSettings, apiKeyLoaded, setApiKeyLoaded,
     apiKeyInput, setApiKeyInput, keyVerifying, setKeyVerifying, keyError, setKeyError,
     files, setFiles, cName, setCName, drag, setDrag, parsing,
@@ -1395,7 +1487,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     exporting, setExporting, busy, setBusy, booting, setBooting,
     status, setStatus, processingMatId, setProcessingMatId,
     errorLogModal, setErrorLogModal,
-    globalLock, setGlobalLock, lockElapsed, dupPrompt,
+    globalLock, setGlobalLock, lockElapsed, dupPrompt, bgExtraction, setBgExtraction, currentSkillNotif,
     showManage, _setShowManage, showSkills, setShowSkills,
     skillViewData, setSkillViewData, expandedCats, setExpandedCats,
     pendingConfirm, setPendingConfirm,
@@ -1418,7 +1510,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     cachedSessionCtx, extractionCancelledRef, sessionStartTime, discussedChunks,
     // Handlers
     addNotif, getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
-    timeAgo, filterDuplicates, saveSessionToJournal,
+    timeAgo, filterDuplicates, saveSessionToJournal, clearSessionState,
     onDrop, onSelect, classify, removeF, importFromFolder, confirmFolderImport,
     folderImportData, setFolderImportData,
     createCourse, quickCreateCourse, loadProfile, enterStudy,
@@ -1435,12 +1527,12 @@ export function StudyProvider({ children, setErrorCtx }) {
     testApiKey,
   }), [ // eslint-disable-line react-hooks/exhaustive-deps -- setters, refs, callbacks, and lib re-exports are stable
     asyncError, showAsyncNuclear,
-    screen, courses, active, ready,
+    screen, previousScreen, courses, active, ready,
     showSettings, apiKeyLoaded, apiKeyInput, keyVerifying, keyError,
     files, cName, drag, parsing,
     msgs, input, codeMode, detectedLanguage, exporting, busy, booting,
     status, processingMatId, errorLogModal,
-    globalLock, lockElapsed, dupPrompt,
+    globalLock, lockElapsed, dupPrompt, bgExtraction, currentSkillNotif,
     showManage, showSkills, skillViewData, expandedCats,
     pendingConfirm, notifs, showNotifs, lastSeenNotif,
     extractionErrors, sessionMode, focusContext,

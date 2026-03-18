@@ -20,6 +20,7 @@ export default function StudyScreen() {
   const {
     msgs, setMsgs, setInput, setCodeMode,
     setScreen, active,
+    previousScreen, clearSessionState,
     sessionMode, setSessionMode,
     pickerData, setPickerData,
     chunkPicker, setChunkPicker,
@@ -37,42 +38,63 @@ export default function StudyScreen() {
     focusContext, booting,
   } = useStudy();
 
+  const inSession = msgs.length > 0 || booting;
+
+  const handleExitSession = async () => {
+    if (msgs.length > 1 && sessionStartTime.current) {
+      const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current, sessionMasteryEvents.current, sessionFacetUpdates.current);
+      const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
+      const allSkills = cachedSessionCtx.current?.skills || [];
+      const skillChanges = sessionSkillLog.current.map(u => {
+        const sk = allSkills.find(s => s.id === u.skillId || s.conceptKey === u.skillId);
+        return { ...u, name: sk?.name || u.skillId, strength: sk ? effectiveStrength(sk) : 0 };
+      });
+      await saveSessionToJournal();
+      var capturedAsgnWork = asgnWork;
+      setAsgnWork(null);
+      setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork, masteryEvents: sessionMasteryEvents.current.slice(), facetsAssessed: sessionFacetUpdates.current.slice() });
+    } else {
+      await saveSessionToJournal();
+      clearSessionState();
+      const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
+      setScreen(safeScreen);
+    }
+  };
+
+  const handleBackToOrigin = () => {
+    setSessionMode(null); setPickerData(null); setChunkPicker(null);
+    setPracticeMode(null); setFocusContext(null); setCodeMode(false);
+    setMsgs([]); setInput("");
+    const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
+    setScreen(safeScreen);
+  };
+
   return (
     <div style={{ background: T.bg, height: "100vh", display: "flex", flexDirection: "column" }}>
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={async () => {
-            if (sessionMode || pickerData || chunkPicker || practiceMode) {
-              setSessionMode(null); setPickerData(null); setChunkPicker(null); setPracticeMode(null); setFocusContext(null); setCodeMode(false); setMsgs([]); setInput("");
-              setScreen("courseHome");
-            } else if (msgs.length > 1 && sessionStartTime.current) {
-              const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current, sessionMasteryEvents.current, sessionFacetUpdates.current);
-              const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
-              const allSkills = cachedSessionCtx.current?.skills || [];
-              const skillChanges = sessionSkillLog.current.map(u => {
-                const sk = allSkills.find(s => s.id === u.skillId || s.conceptKey === u.skillId);
-                return { ...u, name: sk?.name || u.skillId, strength: sk ? effectiveStrength(sk) : 0 };
-              });
-              await saveSessionToJournal();
-              var capturedAsgnWork = asgnWork;
-              setAsgnWork(null);
-              setSessionSummary({ entry, skillChanges, duration, courseName: active.name, asgnWork: capturedAsgnWork, masteryEvents: sessionMasteryEvents.current.slice(), facetsAssessed: sessionFacetUpdates.current.slice() });
-            } else {
-              await saveSessionToJournal(); setScreen("courseHome"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionSummary(null); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
-            }
-          }}
-          style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
-          onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
-        {/* Session timer */}
+        {/* Left: Exit Session (active) or Back (pre-session) */}
+        {inSession ? (
+          <button onClick={handleExitSession}
+            style={{ background: "none", border: "1px solid " + T.bd, color: T.txD, cursor: "pointer", fontSize: 13, padding: "6px 14px", borderRadius: 8, transition: "all 0.15s ease", fontWeight: 500 }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}>Exit Session</button>
+        ) : (
+          <button onClick={handleBackToOrigin}
+            style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
+            onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}>&lt; Back</button>
+        )}
+        {/* Center: Session timer (focus mode only) */}
         {msgs.length > 0 && sessionElapsed > 0 && (
           <span style={{ fontSize: 11, color: T.txM, fontWeight: 400, marginLeft: 12 }}>
             {sessionElapsed < 60 ? sessionElapsed + "m" : Math.floor(sessionElapsed / 60) + "h" + (sessionElapsed % 60 > 0 ? " " + (sessionElapsed % 60) + "m" : "")}
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <TopBarButtons />
+        {/* Right: TopBarButtons only in pre-session state */}
+        {!inSession && <TopBarButtons />}
       </div>
 
       <MaterialsPanel />

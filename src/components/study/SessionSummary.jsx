@@ -7,18 +7,10 @@ const formatKey = (k) => k.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCas
 
 export default function SessionSummary() {
   const {
-    msgs, setScreen, setMsgs, setInput, setCodeMode,
+    msgs, setScreen,
+    previousScreen, clearSessionState,
     exporting, setExporting,
-    setSessionMode, setFocusContext,
-    setPickerData, setChunkPicker,
-    setAsgnWork, setPracticeMode,
-    setShowSkills, setSkillViewData,
     sessionSummary, setSessionSummary,
-    setBreakDismissed, setSidebarCollapsed,
-    sessionStartIdx, sessionSkillLog,
-    sessionMasteryEvents, sessionFacetUpdates, sessionMasteredSkills,
-    cachedSessionCtx, sessionStartTime, discussedChunks,
-    setSessionElapsed,
   } = useStudy();
 
   const [facetsExpanded, setFacetsExpanded] = useState(false);
@@ -188,7 +180,9 @@ export default function SessionSummary() {
         )}
 
         <button onClick={function() {
-          setSessionSummary(null); setScreen("courseHome"); setMsgs([]); setInput(""); setCodeMode(false); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null); setShowSkills(false); setSkillViewData(null); sessionStartIdx.current = 0; sessionSkillLog.current = []; sessionMasteryEvents.current = []; sessionFacetUpdates.current = []; sessionMasteredSkills.current = new Set(); cachedSessionCtx.current = null; sessionStartTime.current = null; discussedChunks.current = new Set(); setSessionElapsed(0); setBreakDismissed(false); setSidebarCollapsed(false);
+          clearSessionState();
+          var safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
+          setScreen(safeScreen);
         }}
           style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
           Done

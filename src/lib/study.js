@@ -1291,13 +1291,24 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     // Load only this assignment and its required skills
     const asgn = focus.assignment;
     ctx += "CURRENT ASSIGNMENT: " + asgn.title + (asgn.dueDate ? " (Due: " + asgn.dueDate + ")" : "") + "\n\n";
-    ctx += "QUESTIONS:\n";
+    ctx += "ASSIGNMENT QUESTIONS — INSTRUCTOR PLANNING ONLY (never reveal to student):\n";
     const requiredSkillIds = new Set();
     if (asgn.questions) {
       for (const q of asgn.questions) {
         ctx += "  " + q.id + ": " + q.description + " [" + q.difficulty + "]\n";
         ctx += "    Required skills: " + (q.requiredSkills?.join(", ") || "unknown") + "\n";
         if (q.requiredSkills) q.requiredSkills.forEach(s => requiredSkillIds.add(s));
+      }
+    }
+    ctx += "\nSTUDENT VIEW:\n";
+    if (asgn.questions) {
+      var unlockStatus = focus.unlocked || {};
+      for (const q of asgn.questions) {
+        if (unlockStatus[q.id]) {
+          ctx += "  " + q.id + ": [UNLOCKED] — student is working on this\n";
+        } else {
+          ctx += "  " + q.id + ": [LOCKED] — requires: " + (q.requiredSkills?.join(", ") || "unknown") + "\n";
+        }
       }
     }
 
