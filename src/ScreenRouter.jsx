@@ -47,17 +47,17 @@ export default function ScreenRouter() {
   } = useStudy();
 
   var [displayScreen, setDisplayScreen] = useState(screen);
-  var [opacity, setOpacity] = useState(1);
+  var [fading, setFading] = useState(false);
   var timerRef = useRef(null);
 
   useEffect(() => {
     if (screen === displayScreen) return;
-    setOpacity(0);
+    setFading(true);
     timerRef.current = setTimeout(() => {
       setDisplayScreen(screen);
-      setOpacity(1);
+      setFading(false);
     }, 500);
-    return () => clearTimeout(timerRef.current);
+    return () => { clearTimeout(timerRef.current); setFading(false); };
   }, [screen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (asyncError) return <ErrorDisplay />;
@@ -93,7 +93,12 @@ export default function ScreenRouter() {
   return (
     <>
       {updateInfo && <UpdateBanner />}
-      <div style={{ opacity, transition: "opacity 0.5s ease" }}>{content}</div>
+      {content}
+      <div style={{
+        position: "fixed", inset: 0, background: T.bg,
+        opacity: fading ? 1 : 0, transition: "opacity 0.5s ease",
+        pointerEvents: fading ? "auto" : "none", zIndex: 50,
+      }} />
       {dupPrompt && !globalLock && <DupPromptModal />}
       {bgExtraction && screen !== "materials" && <ExtractionProgress />}
     </>

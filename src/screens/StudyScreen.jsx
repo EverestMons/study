@@ -38,9 +38,16 @@ export default function StudyScreen() {
     focusContext, booting,
   } = useStudy();
 
-  const inSession = msgs.length > 0 || booting;
+  const inSession = msgs.length > 0 || booting || !!practiceMode;
 
   const handleExitSession = async () => {
+    // Practice mode: exit cleanly (progress already auto-saved)
+    if (practiceMode && msgs.length === 0) {
+      clearSessionState();
+      const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
+      setScreen(safeScreen);
+      return;
+    }
     if (msgs.length > 1 && sessionStartTime.current) {
       const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current, sessionMasteryEvents.current, sessionFacetUpdates.current);
       const duration = Math.floor((Date.now() - sessionStartTime.current) / 60000);
