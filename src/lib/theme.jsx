@@ -21,7 +21,7 @@ export const T = {
 export const CSS = [
   "@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');",
   "*{box-sizing:border-box;margin:0;padding:0}",
-  "body{font-family:'DM Sans',sans-serif;background:" + T.bg + ";color:" + T.tx + "}",
+  "html,body{font-family:'DM Sans',sans-serif;background:" + T.bg + ";color:" + T.tx + ";overflow:hidden;height:100%}",
   "input,textarea,button,select{font-family:'DM Sans',sans-serif;outline:none}",
   "textarea{overflow-y:auto}",
   "::selection{background:" + T.acS + ";color:" + T.ac + "}",
