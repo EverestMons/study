@@ -99,6 +99,7 @@ const parsePptx = async (buf, filename) => {
       type: 'structured', name: filename, source_format: 'pptx',
       markdown: content, sections, images: [],
       metadata: { title: null, author: null, toc_entries: [], total_chars: content.length, section_count: sections.length, image_count: 0 },
+      _originalBuffer: buf, // Stash for LibreOffice → PDF image extraction
     },
   };
 };
@@ -381,6 +382,7 @@ export const readFile = async (file, options = {}) => {
         );
         structured._ocrUsed = true;
         structured._ocrConfidence = ocrResult.avgConfidence;
+        structured._pdfDoc = result.doc; // Stash for image extraction pipeline
         if (ocrResult.avgConfidence < 50) {
           structured._ocrWarning = 'OCR quality is low — text may be inaccurate. Consider using a higher-quality scan.';
         }

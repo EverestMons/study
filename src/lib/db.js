@@ -2659,6 +2659,129 @@ export const AssignmentQuestionFacets = {
 };
 
 // ============================================================
+// Material Images
+// ============================================================
+
+export const MaterialImages = {
+  async getByMaterial(materialId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM material_images WHERE material_id = ? ORDER BY page_or_slide_number',
+      [materialId]
+    );
+  },
+
+  async getByChunk(chunkId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM material_images WHERE chunk_id = ? ORDER BY page_or_slide_number',
+      [chunkId]
+    );
+  },
+
+  async getByChunkIds(chunkIds) {
+    if (!chunkIds.length) return [];
+    const db = await getDb();
+    const placeholders = chunkIds.map(() => '?').join(',');
+    return db.select(
+      'SELECT * FROM material_images WHERE chunk_id IN (' + placeholders + ') ORDER BY page_or_slide_number',
+      chunkIds
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM material_images WHERE course_id = ? ORDER BY material_id, page_or_slide_number',
+      [courseId]
+    );
+  },
+
+  async getByMaterialAndPage(materialId, pageNum) {
+    const db = await getDb();
+    const rows = await db.select(
+      'SELECT * FROM material_images WHERE material_id = ? AND page_or_slide_number = ? LIMIT 1',
+      [materialId, pageNum]
+    );
+    return rows[0] || null;
+  },
+
+  async getById(id) {
+    const db = await getDb();
+    const rows = await db.select('SELECT * FROM material_images WHERE id = ?', [id]);
+    return rows[0] || null;
+  },
+
+  async create({ materialId, courseId, imageType, pageOrSlideNumber, caption, filePath, width, height, chunkId, fileSizeBytes }) {
+    const db = await getDb();
+    const id = uuid();
+    await db.execute(
+      `INSERT INTO material_images (id, material_id, course_id, image_type, page_or_slide_number, caption, file_path, width, height, chunk_id, file_size_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, materialId, courseId, imageType, pageOrSlideNumber || null, caption || null,
+       filePath, width || null, height || null, chunkId || null, fileSizeBytes || null, now()]
+    );
+    return id;
+  },
+
+  async createBatch(images) {
+    return withTransaction(async (db) => {
+      const ids = [];
+      for (const img of images) {
+        const id = uuid();
+        await db.execute(
+          `INSERT INTO material_images (id, material_id, course_id, image_type, page_or_slide_number, caption, file_path, width, height, chunk_id, file_size_bytes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, img.materialId, img.courseId, img.imageType, img.pageOrSlideNumber || null,
+           img.caption || null, img.filePath, img.width || null, img.height || null,
+           img.chunkId || null, img.fileSizeBytes || null, now()]
+        );
+        ids.push(id);
+      }
+      return ids;
+    });
+  },
+
+  async updateChunkId(id, chunkId) {
+    const db = await getDb();
+    await db.execute(
+      'UPDATE material_images SET chunk_id = ? WHERE id = ?',
+      [chunkId, id]
+    );
+  },
+
+  async deleteByMaterial(materialId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM material_images WHERE material_id = ?', [materialId]);
+  },
+
+  async deleteByCourse(courseId) {
+    const db = await getDb();
+    await db.execute('DELETE FROM material_images WHERE course_id = ?', [courseId]);
+  },
+
+  async getCountByMaterial(materialId) {
+    const db = await getDb();
+    const rows = await db.select(
+      'SELECT COUNT(*) as c FROM material_images WHERE material_id = ?',
+      [materialId]
+    );
+    return rows[0]?.c || 0;
+  },
+
+  async getCountsByCourse(courseId) {
+    const db = await getDb();
+    const rows = await db.select(
+      'SELECT material_id, COUNT(*) as c FROM material_images WHERE course_id = ? GROUP BY material_id',
+      [courseId]
+    );
+    const map = {};
+    for (const r of rows) map[r.material_id] = r.c;
+    return map;
+  },
+};
+
+// ============================================================
 // Facet Data Migration — promote existing mastery_criteria to facets
 // ============================================================
 
@@ -2963,7 +3086,7 @@ export const resetAll = async ({ confirmed = false } = {}) => {
     'practice_sets', 'journal_entries', 'session_events', 'session_skills',
     'messages', 'sessions', 'sub_skill_mastery', 'skill_prerequisites',
     'concept_links', 'chunk_skill_bindings', 'chunk_fingerprints',
-    'chunk_media', 'chunks', 'materials', 'course_assessments',
+    'chunk_media', 'material_images', 'chunks', 'materials', 'course_assessments',
     'course_schedule', 'courses', 'sub_skills', 'parent_skill_aliases',
     'parent_skills', 'settings'
   ];

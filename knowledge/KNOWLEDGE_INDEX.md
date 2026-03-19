@@ -1,6 +1,6 @@
 # study — Knowledge Index
 **Maintained By:** Study Documentation Analyst
-**Last Updated:** 2026-03-18 (v0.2.7-dev — background extraction, focus mode, skill notifications, tutor boundary fix)
+**Last Updated:** 2026-03-19 (v0.2.12 — inline image display: storage, extraction, AI context, chat rendering)
 
 ---
 
@@ -145,6 +145,7 @@ knowledge/
 | `study-focus-mode-qa-2026-03-17.md` | 2026-03-17 | Study Security & Testing Analyst | Study focus mode QA — 10 test cases (focus enforcement, pre-session state, previousScreen from 3 screens, exit saves data, session summary, refresh edge case, no active course, regression). All 10 PASS. 1 concern: `active.name` unguarded in handleExitSession (ScreenRouter guard prevents in practice). |
 | `skill-update-notification-qa-2026-03-17.md` | 2026-03-17 | Study Security & Testing Analyst | Skill update notification QA — 8 test cases (streaming fix, notification fires, multiple updates, no updates, focus preservation, MessageList pills, CSS animation, build). 6 PASS, 2 FAIL. BUG-1 (HIGH): effect self-cleanup kills timers. BUG-2 (MEDIUM): null→null setCurrentSkillNotif no-op. Both fixed post-QA: timers moved to ref, first notification started directly at enqueue. |
 | `assignment-tutor-boundary-qa-2026-03-18.md` | 2026-03-18 | Study Security & Testing Analyst | Assignment tutor boundary QA — 5 test cases (context format, mode hint, unlock passthrough, unlock regression, build). All 5 PASS. Two-section context verified, BAD/GOOD example confirmed, unlock enrichment at both rebuild sites confirmed. |
+| `inline-image-qa-2026-03-19.md` | 2026-03-19 | Study Security & Testing Analyst | Inline image display QA — 28 test scenarios across Storage Layer (6), Extraction Pipeline (8), AI Context + Protocol (6), Chat Rendering (5), Integration (3). 25 PASS, 2 known limitations, 3 bugs found and fixed (BUG-1: OffscreenCanvas memory leak in freeCanvas, BUG-2: LibreOffice process leak on timeout, BUG-3: unused parseImageTags import). Build verified. |
 
 ## Design
 
@@ -180,6 +181,7 @@ knowledge/
 | `assignment-practice-uxv-2026-03-17.md` | 2026-03-17 | Study UX Validator | Assignment practice fix UX validation — 3 criteria: Transition smoothness Acceptable (no blank flash, books animation immediate), Return path Good (previousScreen captures "curriculum", exit button visible), Context continuity Adequate (rich skill context but no explicit assignment linkage). Ship with notes. |
 | `study-focus-mode-uxv-2026-03-17.md` | 2026-03-17 | Study UX Validator | Study focus mode UX validation — 5 criteria: Focus vs Trapped Acceptable, Transition In Acceptable, Transition Out Smooth, Return Context Fully Lost (local useState destroyed on unmount), Learning Science Supports Focus. Ship with notes. P1: persist CurriculumScreen expansion state, P1: Escape key handler, P1: defensive active?.name guard. |
 | `skill-update-notification-uxv-2026-03-17.md` | 2026-03-17 | Study UX Validator | Skill update notification UX validation — 6 criteria: Celebratory Well-calibrated, Animation timing Acceptable, Multiple updates Clean, Context bar transition Acceptable, Streaming cleanliness Clean, Learning science Growth-oriented. Ship with notes. P1: always-mounted container for smooth expand/collapse (implemented). Bug fixes confirmed working. |
+| `inline-image-uxv-2026-03-19.md` | 2026-03-19 | Study UX Validator | Inline image display UX validation — 7 areas: (1) Image relevance ADEQUATE (AI instructions well-calibrated; 20-image catalog cap limits coverage), (2) Image sizing STRONG (440px/280px balances visibility with chat flow), (3) Caption clarity ADEQUATE (type labels always present, captions rare but AI verbal description compensates), (4) Chat flow STRONG (images feel like natural visual aids), (5) Degraded state ACCEPTABLE (silent degradation non-confusing; LibreOffice notification unimplemented), (6) Learning science STRONG (dual coding supported, conversational format prevents passive viewing), (7) First-time LibreOffice ACCEPTABLE (student unaware of missing feature). Learning science risk LOW. Ship with notes. 3 polish opportunities (P1: smarter catalog selection, P2: LibreOffice notification, P3: hallucinated ID placeholder). |
 
 ## Product
 

@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
+    "shell:allow-execute",
     {
       "identifier": "http:default",
       "allow": [
@@ -30,8 +31,33 @@
       "allow": [{ "path": "$APPDATA/*" }]
     },
     {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$APPDATA/images/**" },
+        { "path": "$APPDATA/tmp/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$APPDATA/images/**" },
+        { "path": "$APPDATA/tmp/**" }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        { "path": "$APPDATA/images/**" },
+        { "path": "$APPDATA/tmp/**" }
+      ]
+    },
+    {
       "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$APPDATA/study.db.backup.*" }]
+      "allow": [
+        { "path": "$APPDATA/study.db.backup.*" },
+        { "path": "$APPDATA/images/**" },
+        { "path": "$APPDATA/tmp/**" }
+      ]
     },
     "updater:default",
     "process:allow-restart"

@@ -45,6 +45,12 @@ pub fn run() {
             description: "assignment_activation",
             sql: include_str!("../migrations/006_assignment_activation.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "material_images",
+            sql: include_str!("../migrations/007_material_images.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 

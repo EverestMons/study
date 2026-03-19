@@ -1,9 +1,134 @@
 import React from "react";
 import { T, renderMd } from "../../lib/theme.jsx";
 import { parseSkillUpdates } from "../../lib/study.js";
+import { MaterialImages } from "../../lib/db.js";
 import { useStudy } from "../../StudyContext.jsx";
 
 const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+
+// --- Inline Chat Image Component ---
+function InlineChatImage({ imageId, imageMap }) {
+  var [loaded, setLoaded] = React.useState(false);
+  var [error, setError] = React.useState(false);
+  var [expanded, setExpanded] = React.useState(false);
+  var [url, setUrl] = React.useState(null);
+  var [hovering, setHovering] = React.useState(false);
+  var [canExpand, setCanExpand] = React.useState(false);
+
+  var image = imageMap[imageId];
+
+  React.useEffect(() => {
+    if (!image) { setError(true); return; }
+    var cancelled = false;
+    (async () => {
+      try {
+        const { getImageUrl } = await import('../../lib/imageStore.js');
+        const u = await getImageUrl(image.file_path);
+        if (!cancelled) setUrl(u);
+      } catch { if (!cancelled) setError(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [image?.file_path]);
+
+  if (!image || error) {
+    return (
+      <div style={{ background: T.bg, border: "1px solid " + T.bd, borderRadius: 10, overflow: "hidden", margin: "12px 0", maxWidth: 440 }}>
+        <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ fontSize: 11, color: T.txM }}>Image unavailable</span>
+        </div>
+      </div>
+    );
+  }
+
+  var typeLabel = image.image_type === "slide" ? "Slide" : image.image_type === "page" ? "Page" : image.image_type === "embedded" ? "Figure" : "Image";
+  var label = typeLabel + " " + (image.page_or_slide_number || "");
+  var alt = image.caption || label;
+
+  return (
+    <div style={{ background: T.bg, border: "1px solid " + T.bd, borderRadius: 10, overflow: "hidden", margin: "12px 0", maxWidth: 440 }}>
+      <div style={{ position: "relative", cursor: canExpand ? "pointer" : "default" }}
+        onClick={() => canExpand && setExpanded(!expanded)}
+        onMouseEnter={() => setHovering(true)} onMouseLeave={() => setHovering(false)}
+        tabIndex={canExpand ? 0 : undefined}
+        role={canExpand ? "button" : undefined}
+        aria-label={canExpand ? (expanded ? "Collapse image" : "Expand image: " + alt) : undefined}
+        onKeyDown={canExpand ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded(!expanded); } } : undefined}>
+        {!loaded && !error && (
+          <div style={{ width: "100%", height: 160, background: T.bg, position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "linear-gradient(90deg, transparent, rgba(108,156,252,0.06), transparent)", animation: "shimmer 1.5s ease-in-out infinite" }} />
+          </div>
+        )}
+        {url && (
+          <img src={url} alt={alt}
+            onLoad={(e) => {
+              setLoaded(true);
+              var nw = e.target.naturalWidth, nh = e.target.naturalHeight;
+              if (nw > 0) setCanExpand(nh / nw * 440 > 280);
+            }}
+            onError={() => setError(true)}
+            style={{
+              display: loaded ? "block" : "none",
+              width: "100%",
+              maxHeight: expanded ? "none" : 280,
+              objectFit: expanded ? "contain" : "cover",
+              animation: "fadeIn 0.25s"
+            }}
+          />
+        )}
+        {canExpand && loaded && hovering && (
+          <div style={{ position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.6)", padding: "3px 10px", borderRadius: 12, fontSize: 10, color: T.tx, transition: "opacity 0.15s" }}>
+            {expanded ? "Click to collapse" : "Click to expand"}
+          </div>
+        )}
+      </div>
+      <div style={{ padding: "6px 12px", borderTop: "1px solid " + T.bd, background: T.sf, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: T.txD }}>{label}</span>
+        {image.caption && <span style={{ fontSize: 11, color: T.txM, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{image.caption}</span>}
+      </div>
+    </div>
+  );
+}
+
+// --- Render assistant message with inline images ---
+var IMG_TAG_RE = /\[SHOW_IMAGE\]\s*(img_[a-f0-9]+)\s*\[\/SHOW_IMAGE\]/g;
+
+function renderMessageWithImages(content, imageMap) {
+  if (!imageMap || Object.keys(imageMap).length === 0) return renderMd(content);
+
+  // Find all image tags
+  var matches = [];
+  IMG_TAG_RE.lastIndex = 0;
+  var mt;
+  while ((mt = IMG_TAG_RE.exec(content)) !== null) {
+    matches.push({ imageId: mt[1], start: mt.index, end: mt.index + mt[0].length });
+  }
+  if (matches.length === 0) return renderMd(content);
+
+  // Cap at 3 images per message
+  var capped = matches.slice(0, 3);
+  var elements = [];
+  var lastIdx = 0;
+
+  for (var j = 0; j < capped.length; j++) {
+    var tag = capped[j];
+    var textBefore = content.substring(lastIdx, tag.start);
+    if (textBefore.trim()) {
+      elements.push(<React.Fragment key={"t" + j}>{renderMd(textBefore)}</React.Fragment>);
+    }
+    if (imageMap[tag.imageId]) {
+      elements.push(<InlineChatImage key={"img" + j} imageId={tag.imageId} imageMap={imageMap} />);
+    }
+    lastIdx = tag.end;
+  }
+
+  // Remaining text after last image tag
+  var tail = content.substring(lastIdx);
+  if (tail.trim()) {
+    elements.push(<React.Fragment key="tail">{renderMd(tail)}</React.Fragment>);
+  }
+
+  return elements;
+}
 
 export default function MessageList() {
   const {
@@ -11,7 +136,25 @@ export default function MessageList() {
     cachedSessionCtx, extractionCancelledRef,
     endRef, timeAgo,
     sessionMasteryEvents,
+    active,
   } = useStudy();
+
+  // Load image map for current course
+  var [imageMap, setImageMap] = React.useState({});
+  React.useEffect(() => {
+    if (!active?.id) { setImageMap({}); return; }
+    var cancelled = false;
+    (async () => {
+      try {
+        var images = await MaterialImages.getByCourse(active.id);
+        if (cancelled) return;
+        var map = {};
+        for (var img of images) map['img_' + img.id.substring(0, 8)] = img;
+        setImageMap(map);
+      } catch { if (!cancelled) setImageMap({}); }
+    })();
+    return () => { cancelled = true; };
+  }, [active?.id]);
 
   const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
   const ratingBg = { easy: T.gnS, good: T.gnS, hard: T.amS, struggled: T.amS };
@@ -45,7 +188,7 @@ export default function MessageList() {
             padding: isUser ? "12px 16px" : "4px 0 4px 12px",
             color: T.tx, lineHeight: 1.7, fontSize: 15
           }}>
-            {isAsst ? (m.content ? renderMd(m.content) : (
+            {isAsst ? (m.content ? renderMessageWithImages(m.content, imageMap) : (
               <span style={{ display: "inline-flex", gap: 4, alignItems: "center", height: 16, verticalAlign: "middle" }}>
                 {[0, 1, 2].map(d => <span key={d} style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: T.ac, animation: "dotPulse 1.2s ease-in-out infinite", animationDelay: (d * 0.2) + "s" }} />)}
               </span>

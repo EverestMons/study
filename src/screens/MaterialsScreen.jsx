@@ -1,7 +1,7 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
-import { loadCoursesNested, saveCoursesNested, Chunks } from "../lib/db.js";
+import { loadCoursesNested, saveCoursesNested, Chunks, MaterialImages } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
 import { useStudy } from "../StudyContext.jsx";
@@ -35,6 +35,20 @@ export default function MaterialsScreen() {
   var [expandedStaged, setExpandedStaged] = React.useState(null);
   var [stagedCollapsedGroups, setStagedCollapsedGroups] = React.useState(new Set());
   var [classifyingFile, setClassifyingFile] = React.useState(null);
+  var [imageCounts, setImageCounts] = React.useState({});
+
+  // Load image counts per material
+  React.useEffect(() => {
+    if (!active?.id) return;
+    var cancelled = false;
+    (async () => {
+      try {
+        var counts = await MaterialImages.getCountsByCourse(active.id);
+        if (!cancelled) setImageCounts(counts);
+      } catch { /* material_images table may not exist yet */ }
+    })();
+    return () => { cancelled = true; };
+  }, [active?.id, active?.materials?.length]);
 
   // Bucket materials by state
   var tabCounts = { all: 0, ready: 0, attention: 0, failed: 0 };
@@ -165,6 +179,7 @@ export default function MaterialsScreen() {
               <span>{trust.clsLabel}</span>
               {trust.sectionCount > 0 && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.sectionCount} section{trust.sectionCount !== 1 ? "s" : ""}</span></>}
               {isReady && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{trust.wordLabel} words</span></>}
+              {isReady && imageCounts[mat.id] > 0 && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span>{imageCounts[mat.id]} {mat.classification === "slides" ? "slides" : mat.classification === "textbook" ? "pages" : "images"}</span></>}
               {hasOcr && <><span style={{ width: 3, height: 3, borderRadius: "50%", background: T.txM, display: "inline-block" }} /><span style={{ fontSize: 10, fontWeight: 600, color: lowOcrConf ? T.am : T.txD, background: lowOcrConf ? T.amS : T.bg, padding: "1px 6px", borderRadius: 4, border: "1px solid " + (lowOcrConf ? T.am + "40" : T.bd) }}>OCR{lowOcrConf ? " · low quality" : ""}</span></>}
             </div>
           </div>
@@ -578,6 +593,12 @@ export default function MaterialsScreen() {
                         </div>
                         {/* Title */}
                         <div style={{ fontSize: 13, fontWeight: 500, color: T.tx, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{mat.name}</div>
+                        {imageCounts[mat.id] > 0 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                            <span style={{ fontSize: 10, color: T.txM }}>{"\u25A3"}</span>
+                            <span style={{ fontSize: 10, color: T.txM }}>{imageCounts[mat.id]} {mat.classification === "slides" ? "slides" : mat.classification === "textbook" ? "pages" : "images"}</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

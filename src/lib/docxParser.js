@@ -367,7 +367,7 @@ function parseBody(docXml, styleMap) {
           boldTermSet.add(term);
         }
         if (result.imageRef) {
-          imageRefs.push({ ref: result.imageRef, position: 'after_para_' + paraIndex });
+          imageRefs.push({ ref: result.imageRef, position: 'after_para_' + paraIndex, altText: result.imageAltText || '' });
           metadata.image_count++;
         }
         if (result.isCode) metadata.code_block_count++;
@@ -423,6 +423,11 @@ function parseParagraph(xml, styleMap) {
   const embedMatch = xml.match(/r:embed="([^"]*)"/);
   if (embedMatch && (/<w:drawing>/.test(xml) || /<w:pict>/.test(xml))) {
     result.imageRef = embedMatch[1];
+    // Extract alt text from docPr element
+    const descrMatch = xml.match(/<wp:docPr[^>]*?\sdescr="([^"]*)"/);
+    if (descrMatch) {
+      result.imageAltText = decodeXmlEntities(descrMatch[1]);
+    }
   }
 
   // Equation detection (OMML)
@@ -593,7 +598,7 @@ async function extractImages(zip, rels, imageRefs) {
         height: null,
         section_index: -1, // Would need to map back to sections
         position: ref.position,
-        alt_text: '',
+        alt_text: ref.altText || '',
         caption: null,
       });
     } catch { /* Skip unreadable images */ }

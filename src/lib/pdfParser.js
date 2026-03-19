@@ -113,7 +113,9 @@ export async function parsePdf(buf, filename) {
     };
   }
 
-  return buildStructured(pageTexts, fontSizeChars, numPages, filename, doc);
+  const structured = await buildStructured(pageTexts, fontSizeChars, numPages, filename, doc);
+  structured._pdfDoc = doc; // Stash for image extraction pipeline
+  return structured;
 }
 
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, loadCoursesNested, saveCoursesNested, migrateFacets, Facets, FacetMastery } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, MaterialImages, loadCoursesNested, saveCoursesNested, migrateFacets, Facets, FacetMastery } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -599,6 +599,13 @@ export function StudyProvider({ children, setErrorCtx }) {
         var failedChunks = mat.chunks.filter(c => c.status === "failed").length;
         if (failedChunks > 0) {
           addNotif("error", failedChunks + " of " + mat.chunks.length + " chunks failed to save for \"" + f.name + "\". Storage may be unreliable.");
+        }
+        // Extract images (non-blocking — failure does not stop upload)
+        if (!mat._deduplicated) {
+          try {
+            const { extractAndStoreImages } = await import('./lib/imageExtractor.js');
+            await extractAndStoreImages(courseId, mat, f, { onStatus: setStatus });
+          } catch (e) { console.warn('[ImageExtract] Failed for', f.name, e); }
         }
         mats.push(mat);
       }
@@ -1283,6 +1290,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (globalLock) return;
     setGlobalLock({ message: "Deleting course..." });
     try {
+      // Clean up images (DB rows + filesystem) before cascade delete
+      try {
+        const { deleteCourseImages } = await import('./lib/imageStore.js');
+        const courseMats = courses.find(c => c.id === id)?.materials || [];
+        await MaterialImages.deleteByCourse(id);
+        await deleteCourseImages(courseMats.map(m => m.id));
+      } catch (e) { console.warn('[ImageCleanup] Course:', e); }
       await Courses.delete(id);
       setCourses(p => p.filter(c => c.id !== id));
       if (active?.id === id) { setActive(null); setScreen("home"); }
@@ -1310,6 +1324,13 @@ export function StudyProvider({ children, setErrorCtx }) {
       var failedChunks = mat.chunks.filter(c => c.status === "failed").length;
       if (failedChunks > 0) {
         addNotif("error", failedChunks + " of " + mat.chunks.length + " chunks failed for \"" + f.name + "\".");
+      }
+      // Extract images (non-blocking — failure does not stop upload)
+      if (!mat._deduplicated) {
+        try {
+          const { extractAndStoreImages } = await import('./lib/imageExtractor.js');
+          await extractAndStoreImages(active.id, mat, f, { onStatus: setStatus });
+        } catch (e) { console.warn('[ImageExtract] Failed for', f.name, e); }
       }
       newMeta.push(mat);
     }
@@ -1399,6 +1420,12 @@ export function StudyProvider({ children, setErrorCtx }) {
     const removedMat = active.materials.find(m => m.id === docId);
     setGlobalLock({ message: "Removing " + (removedMat?.name || "material") + "..." });
     try {
+      // Clean up images (DB rows + filesystem)
+      try {
+        const { deleteImageDir } = await import('./lib/imageStore.js');
+        await MaterialImages.deleteByMaterial(docId);
+        await deleteImageDir(docId);
+      } catch (e) { console.warn('[ImageCleanup] Material:', e); }
       if (removedMat?.chunks) {
         for (const ch of removedMat.chunks) {
           await Chunks.delete(ch.id);
