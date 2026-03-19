@@ -2,7 +2,17 @@ import React from "react";
 import { T } from "../../lib/theme.jsx";
 import { useStudy } from "../../StudyContext.jsx";
 
-const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+const CodeEditor = React.lazy(() => import("./CodeEditor.jsx").catch(e => {
+  console.error("CodeEditor chunk failed:", e);
+  return { default: function FallbackEditor({ value, onChange, onSubmit, onEscape, disabled, placeholder, minHeight, maxHeight }) {
+    return React.createElement("textarea", {
+      value: value || "", onChange: e => onChange && onChange(e.target.value),
+      onKeyDown: e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSubmit && onSubmit(); } if (e.key === "Escape") { onEscape && onEscape(); } },
+      disabled: disabled, placeholder: placeholder || "Enter code...",
+      style: { width: "100%", minHeight: minHeight || 240, maxHeight: maxHeight || 400, background: "#13151A", color: "#E8EAF0", border: "1px solid #2A2F3A", borderRadius: 10, padding: 12, fontSize: 13, fontFamily: "'SF Mono','Fira Code',monospace", resize: "vertical" }
+    });
+  }};
+}));
 
 const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
 

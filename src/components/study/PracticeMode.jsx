@@ -8,7 +8,16 @@ import {
 } from "../../lib/study.js";
 import { useStudy } from "../../StudyContext.jsx";
 
-const CodeEditor = React.lazy(() => import("./CodeEditor.jsx"));
+const CodeEditor = React.lazy(() => import("./CodeEditor.jsx").catch(e => {
+  console.error("CodeEditor chunk failed:", e);
+  return { default: function FallbackEditor({ value, onChange, disabled, placeholder, minHeight, maxHeight, borderColor }) {
+    return React.createElement("textarea", {
+      value: value || "", onChange: e => onChange && onChange(e.target.value),
+      disabled: disabled, placeholder: placeholder || "Write your answer here...",
+      style: { width: "100%", minHeight: minHeight || 220, maxHeight: maxHeight || 400, background: "#13151A", color: "#E8EAF0", border: "1px solid " + (borderColor || "#2A2F3A"), borderRadius: 10, padding: 12, fontSize: 13, fontFamily: "'SF Mono','Fira Code',monospace", resize: "vertical" }
+    });
+  }};
+}));
 
 export default function PracticeMode() {
   const {

@@ -14,6 +14,7 @@ export default function CodeEditor({
   const langCompRef = useRef(null);
   const editCompRef = useRef(null);
   const [loading, setLoading] = useState(true);
+  const [initError, setInitError] = useState(null);
 
   // Stable callback refs to avoid re-creating editor
   const onChangeRef = useRef(onChange);
@@ -27,58 +28,63 @@ export default function CodeEditor({
   useEffect(() => {
     let destroyed = false;
     (async () => {
-      const cm = await loadCMCore();
-      if (destroyed) return;
+      try {
+        const cm = await loadCMCore();
+        if (destroyed) return;
 
-      const langComp = new cm.Compartment();
-      const editComp = new cm.Compartment();
-      langCompRef.current = langComp;
-      editCompRef.current = editComp;
+        const langComp = new cm.Compartment();
+        const editComp = new cm.Compartment();
+        langCompRef.current = langComp;
+        editCompRef.current = editComp;
 
-      const darkTheme = buildDarkTheme(cm.EditorView, cm.HighlightStyle, cm.syntaxHighlighting, cm.tags);
+        const darkTheme = buildDarkTheme(cm.EditorView, cm.HighlightStyle, cm.syntaxHighlighting, cm.tags);
 
-      const heightTheme = cm.EditorView.theme({
-        "&": {
-          ...(minHeight != null ? { minHeight: minHeight + "px" } : {}),
-          ...(maxHeight != null ? { maxHeight: maxHeight + "px" } : {}),
-        },
-        ".cm-scroller": { overflow: "auto" },
-      });
+        const heightTheme = cm.EditorView.theme({
+          "&": {
+            ...(minHeight != null ? { minHeight: minHeight + "px" } : {}),
+            ...(maxHeight != null ? { maxHeight: maxHeight + "px" } : {}),
+          },
+          ".cm-scroller": { overflow: "auto" },
+        });
 
-      const extensions = [
-        ...darkTheme,
-        heightTheme,
-        cm.EditorView.updateListener.of(update => {
-          if (update.docChanged && onChangeRef.current) {
-            onChangeRef.current(update.state.doc.toString());
-          }
-        }),
-        cm.keymap.of([
-          cm.indentWithTab,
-          { key: "Mod-Enter", run: () => { if (onSubmitRef.current) { onSubmitRef.current(); return true; } return false; } },
-          { key: "Escape", run: () => { if (onEscapeRef.current) { onEscapeRef.current(); return true; } return false; } },
-        ]),
-        langComp.of([]),
-        editComp.of(cm.EditorView.editable.of(!readOnly && !disabled)),
-      ];
+        const extensions = [
+          ...darkTheme,
+          heightTheme,
+          cm.EditorView.updateListener.of(update => {
+            if (update.docChanged && onChangeRef.current) {
+              onChangeRef.current(update.state.doc.toString());
+            }
+          }),
+          cm.keymap.of([
+            cm.indentWithTab,
+            { key: "Mod-Enter", run: () => { if (onSubmitRef.current) { onSubmitRef.current(); return true; } return false; } },
+            { key: "Escape", run: () => { if (onEscapeRef.current) { onEscapeRef.current(); return true; } return false; } },
+          ]),
+          langComp.of([]),
+          editComp.of(cm.EditorView.editable.of(!readOnly && !disabled)),
+        ];
 
-      if (showLineNumbers) extensions.push(cm.lineNumbers());
-      if (placeholderText) extensions.push(cm.placeholder(placeholderText));
+        if (showLineNumbers) extensions.push(cm.lineNumbers());
+        if (placeholderText) extensions.push(cm.placeholder(placeholderText));
 
-      const state = cm.EditorState.create({
-        doc: value || "",
-        extensions,
-      });
+        const state = cm.EditorState.create({
+          doc: value || "",
+          extensions,
+        });
 
-      const view = new cm.EditorView({
-        state,
-        parent: containerRef.current,
-      });
+        const view = new cm.EditorView({
+          state,
+          parent: containerRef.current,
+        });
 
-      viewRef.current = view;
-      setLoading(false);
+        viewRef.current = view;
+        setLoading(false);
 
-      if (autoFocus) setTimeout(() => view.focus(), 0);
+        if (autoFocus) setTimeout(() => view.focus(), 0);
+      } catch (e) {
+        console.error("CodeMirror init failed:", e);
+        if (!destroyed) setInitError(e.message || "Editor failed to load");
+      }
     })();
 
     return () => {
@@ -125,6 +131,27 @@ export default function CodeEditor({
     });
   }, [readOnly, disabled]);
   useEffect(() => { updateEditable(); }, [updateEditable]);
+
+  // Fallback textarea if CodeMirror fails to init
+  if (initError) {
+    return (
+      <textarea
+        value={value || ""} onChange={e => onChange && onChange(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onSubmit && onSubmit(); }
+          if (e.key === "Escape") { onEscape && onEscape(); }
+        }}
+        disabled={disabled} readOnly={readOnly} placeholder={placeholderText || "Enter code..."}
+        style={{
+          width: "100%", minHeight: minHeight || 240, maxHeight: maxHeight || 400,
+          background: "#13151A", color: "#E8EAF0", border: "1px solid " + (borderColor || T.bd),
+          borderRadius: 10, padding: 12, fontSize: 13,
+          fontFamily: "'SF Mono','Fira Code',monospace", resize: "vertical",
+          opacity: disabled ? 0.5 : 1,
+        }}
+      />
+    );
+  }
 
   return (
     <div style={{
