@@ -6,7 +6,13 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
-    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        { "name": "soffice", "cmd": "soffice", "args": true },
+        { "name": "soffice-mac", "cmd": "/Applications/LibreOffice.app/Contents/MacOS/soffice", "args": true }
+      ]
+    },
     {
       "identifier": "http:default",
       "allow": [
