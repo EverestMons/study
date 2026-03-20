@@ -85,6 +85,26 @@ Agents write their own feedback directly to this file as part of their execution
 - Include the word budget per change, not just total. "Change 1: ~80 words, Change 2: ~40 words" enables per-change tightening.
 - "Run `npm run build` after changes" was correctly included and caught any syntax issues in the string concatenation.
 
+### 2026-03-19 — Study Security & Testing Analyst — QA verification of 6 IES prompt enhancements
+
+**Were any reads unnecessary?**
+- The specialist file (`STUDY_SECURITY_TESTING_ANALYST.md`) was useful for confirming the role scope (data integrity, security, FSRS correctness) but most content focuses on migrations, parsing, and security testing — not prompt QA. For prompt-only QA, this could be skipped.
+- The gap analysis was useful for the "Quick Wins" section to understand expected changes, but the DEV log was the more efficient reference — it directly lists what was changed and where.
+- Reading `study.js:buildSystemPrompt()` was essential — the actual code is the ground truth. The DEV log describes intent; the code proves correctness.
+- Reading `fsrs.js` and `package.json` via `git diff` (empty output = unchanged) was fast and confirmed no regressions without reading full files.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 5 test categories (build, integrity, regressions, coherence, token budget) covered all necessary verification angles. The per-change checklist format (24 integrity checks) was thorough without being redundant.
+- The regression check list was comprehensive — 18 items covering all existing prompt sections plus key functions and dependencies.
+
+**What would have made this prompt more efficient?**
+- For prompt-only QA: "Use `git diff` to verify no unintended changes to non-prompt code" — this is faster than reading unchanged files. The prompt did list specific functions to verify unchanged, which was good, but `git diff` is the most efficient tool.
+- The token budget check was well-specified (1,500 char / 375 token limit). Including the measurement method ("count rendered characters, not source-string characters") would prevent confusion from `\n`/`\"` escape sequences inflating counts.
+
+**What can be added to future prompts to increase performance?**
+- For QA of prompt-only changes: "Verify the prompt string compiles without syntax errors by checking that the build succeeds" — this is the minimum viable regression test. Build success proves the string concatenation is valid.
+- Include a "coherence matrix" — which existing sections might conflict with which new sections. This focuses the coherence analysis on actual risk areas rather than requiring the QA agent to discover them.
+
 ---
 
 ## Patterns Identified
@@ -120,6 +140,12 @@ Agents write their own feedback directly to this file as part of their execution
 - **Include exact anchor strings** for insertion points in large string concatenations. "Insert after the line containing X" eliminates manual discovery.
 - **Word budget per change** (not just total) enables tightening at the right granularity.
 - **"Do NOT remove or rewrite — ADD"** is essential for prompt modifications. Prevents accidentally breaking well-tested prompt text.
+
+### QA for prompt-only changes
+- **Build success is the minimum viable regression test.** If the string concatenation compiles, the prompt is structurally valid. For prompt-only changes, `npm run build` or `npm run dev` confirms no syntax errors.
+- **Use `git diff` for regression checks.** `git diff HEAD~1 -- file.js | head -5` returns empty if unchanged — faster than reading entire files.
+- **Token budget: count rendered chars, not source chars.** `\n` is 2 chars in source but 1 in output. `\"` is 2 chars in source but 1 in output. Source character counts overestimate by ~10%.
+- **Coherence checks should focus on contradiction risk.** New instructions most likely to conflict: (1) depth escalation vs. "start easy for new students", (2) proactive examples vs. "ask first, teach second", (3) within-session review vs. stealth assessment. List these in the QA prompt to focus analysis.
 
 ### What improves prompt quality
 - Cite exact function names for large files, not just file paths.
