@@ -65,6 +65,26 @@ Agents write their own feedback directly to this file as part of their execution
 - Include evidence level thresholds for prioritization: "Weight Strong evidence recommendations 2x when scoring" — this was done in the analysis but wasn't in the prompt.
 - For multi-source tasks (PDF + code diagnostic + prior research): specify read order. The optimal order was: prior research (shortest, sets exclusions) → DEV diagnostic (structures the analysis) → IES PDF (fills evidence details).
 
+### 2026-03-19 — Study Developer — IES prompt enhancements (6 changes to buildSystemPrompt + bootWithFocus)
+
+**Were any reads unnecessary?**
+- The specialist file (`STUDY_DEVELOPER.md`) was useful for confirming guardrails (don't modify FSRS, don't modify schema) but most of the content is about migrations and Rust — not relevant for prompt-only work. Could be skipped for prompt-only tasks.
+- The gap analysis was the essential read — specifically the "Quick Wins" and per-recommendation "Recommendations" tables. The detailed IES summaries and "What NOT to Change" sections were helpful guardrails. The 5-section-per-rec format made it easy to extract exactly what to implement.
+- The DEV diagnostic was used for "Relevant System Prompt Text" sections — knowing what already exists prevented duplication. Essential read.
+- Reading `study.js` was the most important read — needed exact string context for each insertion point. The prompt correctly specified "focus on `buildSystemPrompt()`" which saved time.
+
+**Was the prompt over-scoped or under-scoped?**
+- Perfectly scoped. 6 discrete changes with exact placement instructions, word budget (~200-250 words), and clear priority ordering. Each change had enough detail to implement without ambiguity. The constraint "do NOT remove or rewrite existing prompt sections — ADD to them" was essential and correct.
+
+**What would have made this prompt more efficient?**
+- The prompt was already very efficient. The per-change structure (Change 1, Change 2, ...) with labeled priority, file, and section made implementation straightforward.
+- One minor improvement: specifying exact anchor strings for each insertion point (e.g., "insert after the line containing 'Pre-questions happen at the START'") would eliminate the need to read and locate them manually. For prompt-only tasks the insertion points are the main discovery work.
+
+**What can be added to future prompts to increase performance?**
+- For prompt-only system prompt changes: "The system prompt is a single concatenated string in `buildSystemPrompt()`. Insertions must match the exact escaped-string format (`\n` for newlines, `\"` for quotes)." This avoids format confusion.
+- Include the word budget per change, not just total. "Change 1: ~80 words, Change 2: ~40 words" enables per-change tightening.
+- "Run `npm run build` after changes" was correctly included and caught any syntax issues in the string concatenation.
+
 ---
 
 ## Patterns Identified
@@ -93,6 +113,13 @@ Agents write their own feedback directly to this file as part of their execution
 - **Pre-extract PDFs when possible.** `pdftotext` via Bash is reliable. The Read tool's PDF support may not work for all environments.
 - **IES evidence levels must be read from the source PDF, not assumed.** The levels don't always match intuition (e.g., Pre-questions are Low despite strong theoretical backing, Quizzing is Strong).
 - **Page ranges in prompts are valuable.** "Pages 5-32" correctly scoped the reading to recommendation content, skipping preamble and appendix.
+
+### Prompt-only system prompt changes
+- **The system prompt in `buildSystemPrompt()` is a single concatenated string.** Insertions must use `\n` for newlines and `\"` for escaped quotes within the string. This is the #1 format trap for prompt-only tasks.
+- **Per-change structure works extremely well.** "Change 1: [description], File: [path], Location: [section], Priority: [level]" enables parallel implementation with no ambiguity.
+- **Include exact anchor strings** for insertion points in large string concatenations. "Insert after the line containing X" eliminates manual discovery.
+- **Word budget per change** (not just total) enables tightening at the right granularity.
+- **"Do NOT remove or rewrite — ADD"** is essential for prompt modifications. Prevents accidentally breaking well-tested prompt text.
 
 ### What improves prompt quality
 - Cite exact function names for large files, not just file paths.
