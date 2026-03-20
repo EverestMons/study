@@ -44,6 +44,27 @@ Agents write their own feedback directly to this file as part of their execution
 - When referencing multi-thousand-line files: specify "focus on functions X, Y, Z" rather than listing the whole file.
 - Include a word budget: "Target 200-300 words per IES recommendation" prevents over-expansion on well-implemented areas and under-investigation of weak areas.
 
+### 2026-03-19 — Educational Research Analyst — IES compliance gap analysis across 7 recommendations
+
+**Were any reads unnecessary?**
+- The IES PDF needed to be read in full (~3,800 lines extracted) to get evidence levels and detailed recommendation text. This was necessary — the evidence levels (Strong/Moderate/Low) were critical for prioritizing gaps and couldn't be assumed.
+- The facet-assessment-research file was correctly flagged as "do not re-research" — a quick read confirmed which topics to skip, saving significant effort.
+- The DEV diagnostic from Step 1 was essential and well-structured — the per-recommendation format made it easy to cross-reference with IES evidence.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 5-section-per-recommendation format (IES summary, status, gaps, recommendations, what NOT to change) was comprehensive without being excessive. The cross-cutting analysis requirement added significant value — the overall score, top 3 gaps, and quick wins provide clear prioritization.
+- The "adapt for AI tutoring context" instruction was valuable — it prevented naive application of classroom recommendations to a fundamentally different modality. This should be standard for any IES-related prompt.
+
+**What would have made this prompt more efficient?**
+- Pre-extracting the IES PDF evidence levels into a table would have saved time. The PDF extraction + reading was the most time-consuming part.
+- The prompt correctly specified "pages 5-32" for the PDF, which was accurate for the recommendation sections.
+- Specifying that all high-priority recommendations should be prompt-only (as turned out to be true) would have focused the analysis earlier.
+
+**What can be added to future prompts to increase performance?**
+- For gap analysis tasks that depend on a prior diagnostic: "Reference the diagnostic by section header, not just file path" — this enables precise cross-referencing.
+- Include evidence level thresholds for prioritization: "Weight Strong evidence recommendations 2x when scoring" — this was done in the analysis but wasn't in the prompt.
+- For multi-source tasks (PDF + code diagnostic + prior research): specify read order. The optimal order was: prior research (shortest, sets exclusions) → DEV diagnostic (structures the analysis) → IES PDF (fills evidence details).
+
 ---
 
 ## Patterns Identified
@@ -63,7 +84,19 @@ Agents write their own feedback directly to this file as part of their execution
 - **Check focus type branches in `buildFocusedContext()`** — currently only 3 (assignment, skill, exam), NOT 5 as sometimes assumed.
 - **`bootWithFocus()` in StudyContext is critical** — contains mode hints that control per-session AI behavior. Any teaching methodology audit must read this.
 
+### Multi-step analysis chains
+- **Step 2 (gap analysis) benefits from Step 1 (diagnostic) structure.** When the diagnostic uses per-recommendation sections, the gap analysis can cross-reference precisely. Keep consistent section headers across steps.
+- **"Do NOT re-research" exclusions save significant time.** Explicitly listing prior research files and their topics prevents duplication. This pattern should be standard for any multi-step analysis chain.
+- **Optimal read order for multi-source gap analysis:** (1) prior research exclusions (shortest), (2) code diagnostic (structures analysis), (3) external reference (fills evidence details).
+
+### PDF-based research tasks
+- **Pre-extract PDFs when possible.** `pdftotext` via Bash is reliable. The Read tool's PDF support may not work for all environments.
+- **IES evidence levels must be read from the source PDF, not assumed.** The levels don't always match intuition (e.g., Pre-questions are Low despite strong theoretical backing, Quizzing is Strong).
+- **Page ranges in prompts are valuable.** "Pages 5-32" correctly scoped the reading to recommendation content, skipping preamble and appendix.
+
 ### What improves prompt quality
 - Cite exact function names for large files, not just file paths.
 - Reference the development knowledge index to check if a feature has been eliminated/redesigned (e.g., `modepicker-elimination-2026-03-14.md`).
 - Structured output format (per-dimension: what exists / prompt text / gaps) produces excellent diagnostics.
+- **"Adapt for AI tutoring context" should be standard** for any IES/classroom-research prompt. AI tutoring is a fundamentally different modality — naive application of classroom recommendations produces incorrect priorities.
+- **Include "What NOT to change" section** in gap analyses — prevents next-step agents from breaking well-implemented features while fixing gaps.
