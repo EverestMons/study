@@ -577,6 +577,24 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (rc) { setCourses(refreshed); setActive(rc); }
     await refreshMaterialSkillCounts(courseId);
     addNotif("success", "Extraction complete.");
+
+    // Decompose assignments if any assignment-classified materials exist
+    const allMats = rc ? rc.materials : [];
+    const hasAsgnMats = allMats.some(m => m.classification === "assignment");
+    if (hasAsgnMats) {
+      try {
+        const sk = await loadSkillsV2(courseId);
+        if (sk.length > 0) {
+          setStatus("Decomposing assignments...");
+          await decomposeAssignments(courseId, allMats, sk, setStatus);
+          setStatus("");
+          addNotif("success", "Assignments decomposed.");
+        }
+      } catch (e) {
+        console.warn("[addMats] Assignment decomposition failed:", e);
+      }
+    }
+
     setTimeout(() => setBgExtraction(null), 3000);
   };
 
@@ -883,9 +901,11 @@ export function StudyProvider({ children, setErrorCtx }) {
       const skills = await loadSkillsV2(active.id);
       if (mode === "assignment") {
         const asgn = await loadAssignmentsCompat(active.id);
-        if (!Array.isArray(asgn) || asgn.length === 0) {
-          var hasAsgnMats = (active.materials || []).some(m => m.classification === "assignment");
-          var hasSkills = skills && Array.isArray(skills) && skills.length > 0;
+        var hasAsgnMats = (active.materials || []).some(m => m.classification === "assignment");
+        var hasSkills = skills && Array.isArray(skills) && skills.length > 0;
+        var needsDecomposition = !Array.isArray(asgn) || asgn.length === 0 ||
+          (hasAsgnMats && asgn.some(a => !a.questions || a.questions.length === 0));
+        if (needsDecomposition) {
           if (hasAsgnMats && hasSkills) {
             setPickerData({ mode, empty: true, message: "Decomposing assignment..." });
             try {
@@ -1411,6 +1431,21 @@ export function StudyProvider({ children, setErrorCtx }) {
     } else {
       const totalSections = trulyNew.reduce((sum, m) => sum + (m.chunks?.length || 0), 0);
       addNotif("success", "Added " + trulyNew.length + " file(s) with " + totalSections + " section(s).");
+
+      // If only assignments were uploaded, try to decompose them directly
+      var newAsgnMats = trulyNew.filter(m => m.classification === "assignment");
+      if (newAsgnMats.length > 0) {
+        try {
+          var allMats = active.materials.concat(trulyNew);
+          var sk = await loadSkillsV2(active.id);
+          if (sk.length > 0) {
+            await decomposeAssignments(active.id, allMats, sk, () => {});
+            addNotif("success", "Assignments decomposed.");
+          }
+        } catch (e) {
+          console.warn("[addMats] Assignment decomposition failed:", e);
+        }
+      }
     }
   };
 

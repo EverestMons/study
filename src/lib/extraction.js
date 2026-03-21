@@ -359,7 +359,7 @@ Skill schema:
     "definitionsFound": ["definition text..."],
     "examplesInSource": 2,
     "equationPresence": true,
-    "figureReferences": ["Figure 3.15"]
+    "figureReferences": ["Figure 3.15 (only include if the figure content is described in text — do not reference stripped visuals)"]
   },
   "facets": [
     {
@@ -394,7 +394,8 @@ RULES:
 - A facet may have ZERO sourceChunks if the concept is implied but not explicitly taught (rare).
 - A facet may reference MULTIPLE chunks if the concept spans sections.
 - DO NOT extract skills/facets for front matter, table of contents, or index entries.
-- DO NOT create facets for individual vocabulary words unless they represent a distinct learnable concept.`;
+- DO NOT create facets for individual vocabulary words unless they represent a distinct learnable concept.
+- Source material may have contained diagrams, images, charts, or visual elements that were stripped during text extraction. Do NOT reference visuals that are not present in the text content. Never say "as shown in the figure/slide/diagram" or similar phrases unless the visual is explicitly described in the text. Instead, describe the concept verbally using only the information available in the text.`;
 
   return prompt;
 }

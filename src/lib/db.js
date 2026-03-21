@@ -998,7 +998,7 @@ export const Assignments = {
   async getPlaceholders(courseId) {
     const db = await getDb();
     const rows = await db.select(
-      "SELECT * FROM assignments WHERE course_id = ? AND source = 'syllabus' AND material_id IS NULL ORDER BY due_date ASC",
+      "SELECT * FROM assignments WHERE course_id = ? ORDER BY due_date ASC",
       [courseId]
     );
     return rows;
