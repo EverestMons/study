@@ -105,6 +105,42 @@ Agents write their own feedback directly to this file as part of their execution
 - For QA of prompt-only changes: "Verify the prompt string compiles without syntax errors by checking that the build succeeds" — this is the minimum viable regression test. Build success proves the string concatenation is valid.
 - Include a "coherence matrix" — which existing sections might conflict with which new sections. This focuses the coherence analysis on actual risk areas rather than requiring the QA agent to discover them.
 
+### 2026-03-21 — Study Developer — Black screen when starting study from MaterialsScreen
+
+**Were any reads unnecessary?**
+- No. Every file read was necessary and directly contributed to the diagnosis. The chain was: MaterialsScreen.jsx (origin click) → ScreenRouter.jsx (routing) → StudyScreen.jsx (rendered view) → StudyContext.jsx (bootWithFocus vs selectMode vs direct setState) → sub-components (guard conditions). Each read narrowed the problem.
+- The sub-component guard condition checks (MaterialsPanel, SkillsPanel, PracticeMode, InputBar, MessageList, SkillPicker, SessionSummary, AssignmentPanel, ChunkPicker, NotifPanel) were individually small but collectively essential — they confirmed that ALL components return null in this state, proving the screen is truly empty.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4 investigation axes (component chain, console errors, DOM visibility, data at mount) efficiently covered the diagnosis. The "open the app with npm run dev" instruction was unnecessary for this bug — the root cause is visible from pure code tracing. But it would be necessary for CSS-only bugs.
+- The prompt correctly identified the 3 categories of black screen: (a) null-guard silent failure, (b) data initialization race, (c) CSS invisibility. Category (a) turned out to be the root cause.
+
+**What would have made this prompt more efficient?**
+- Specifying "trace from the onClick handler on MaterialsScreen's 'Start Studying' button" would have immediately focused the investigation. The prompt said "from a material" which required reading the full MaterialsScreen to find the entry point.
+- Specifying "compare the MaterialsScreen entry path with CurriculumScreen entry path (known working)" would have accelerated the diagnosis by setting up a diff.
+
+**What can be added to future prompts to increase performance?**
+- For navigation/routing bugs: "Compare the broken navigation path with a known-working path to the same destination." This pattern (diff a broken path against a working one) is the fastest diagnostic for state-driven routing issues.
+- For black screen bugs: "Check each component's return-null guard condition" — this is the #1 cause in this codebase since all sub-components have null guards.
+- For study entry bugs: "There are 3 study entry paths: (1) enterStudy → selectMode (CourseHomepage), (2) bootWithFocus (CurriculumScreen), (3) direct setState (MaterialsScreen). Check which path is used."
+
+### 2026-03-21 — Study Developer — PPTX parsing path + phantom visual reference trace
+
+**Were any reads unnecessary?**
+- No. `parsers.js` (full file, 475 lines) was the essential starting point — the PPTX parser is an inline function, not a separate file. `extraction.js` needed targeted reads of `buildInitialExtractionPrompt` and `formatChapterContentWithIds`. `study.js` needed targeted reads of `buildImageCatalog` and `buildSystemPrompt`. `imageExtractor.js` confirmed the image pipeline flow. All reads were necessary.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4-part deliverable (parsing path, image fate, extraction guardrails, chunk reference count) naturally guided the investigation. The "skip specialist file and glossary reads" instruction saved time. The only part that couldn't be fully delivered was (d) — counting chunks requires DB access.
+
+**What would have made this prompt more efficient?**
+- The prompt correctly identified there's no `pptxParser.js` and suggested checking `docxParser.js` as a possible path — this was reasonable misdirection since both are Open XML. The actual path (inline `parsePptx` in `parsers.js`) was found immediately by reading the file.
+- For DB-dependent questions like (d), specify "if DB is not queryable, characterize the risk from code analysis instead."
+
+**What can be added to future prompts to increase performance?**
+- For parsing path traces: "Start with `parsers.js:readFile()` and follow the extension-based routing" — this is always the entry point for all file types.
+- For prompt guardrail analysis: "Check both the extraction prompt AND the study system prompt" — phantom references can originate at either layer.
+- For image pipeline questions: "Check `imageExtractor.js` — it runs as a separate post-upload pipeline, not during parsing."
+
 ---
 
 ## Patterns Identified
@@ -147,9 +183,86 @@ Agents write their own feedback directly to this file as part of their execution
 - **Token budget: count rendered chars, not source chars.** `\n` is 2 chars in source but 1 in output. `\"` is 2 chars in source but 1 in output. Source character counts overestimate by ~10%.
 - **Coherence checks should focus on contradiction risk.** New instructions most likely to conflict: (1) depth escalation vs. "start easy for new students", (2) proactive examples vs. "ask first, teach second", (3) within-session review vs. stealth assessment. List these in the QA prompt to focus analysis.
 
+### Study entry paths and navigation bugs
+- **Three distinct study entry paths exist.** (1) `enterStudy(course, mode)` → `selectMode()` — used by CourseHomepage, properly clears state and loads picker data. (2) `bootWithFocus(focus)` — used by CurriculumScreen, properly boots a session with context. (3) Direct setState (setPreviousScreen + setSessionMode + setFocusContext + setScreen) — used by MaterialsScreen, **broken**: sets focusContext to a truthy value which hides the picker, but never calls bootWithFocus to start a session.
+- **The `!focusContext` guard in StudyScreen:117 is the gatekeeper** for showing pickers. Setting `focusContext` to any truthy value (even `{ type: "skill", skill: null }`) hides all pickers. Only `bootWithFocus()` or `selectMode()` properly handle the transition.
+- **All StudyScreen sub-components have null guards.** MaterialsPanel (`!showManage`), SkillsPanel (`!showSkills`), PracticeMode (`!practiceMode`), InputBar (`msgs.length === 0`), MessageList (renders empty), SessionSummary (`!sessionSummary`), SkillPicker (`!pickerData`), AssignmentPanel (`!asgnWork || msgs.length === 0`), ChunkPicker (`!chunkPicker`), NotifPanel (`!showNotifs`). When all guards are false, the StudyScreen is an empty dark shell.
+
+### Parsing and extraction pipelines
+- **All file parsing routes through `parsers.js:readFile()`.** Extension-based routing. PPTX has its own inline parser (`parsePptx`), not docxParser.
+- **Text parsing and image extraction are separate pipelines.** `parsers.js` handles text (sync with upload). `imageExtractor.js` handles images (async, post-upload, depends on LibreOffice for PPTX).
+- **PPTX text extraction is `<a:t>` regex only.** No images, no shapes, no charts, no SmartArt, no alt-text. This is a known gap for visual-heavy slides.
+- **Two-layer prompt gap for visual references:** (1) extraction prompt has no warning that slide visuals are stripped, (2) study prompt guards `[SHOW_IMAGE]` tags but not prose-level phantom references like "as shown on this slide."
+
+### 2026-03-21 — Study Developer — Assignment decomposition gap trace for newly added materials
+
+**Were any reads unnecessary?**
+- No. Every read was essential: `skills.js` (decomposeAssignments definition), `StudyContext.jsx` (3 sections: createCourse, addMats, selectMode), `syllabusParser.js`, `db.js` (Assignments CRUD), `ChunkPicker.jsx`, `AssignmentPicker.jsx`, `AssignmentPanel.jsx`. The grep for call sites was the most efficient starting point.
+- vexp pipeline surfaced relevant pivots but returned `pdfParser.js` and `extraction.js` as top pivots despite low relevance to the actual task. Direct grep for `decomposeAssignments` was faster.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 3-axis investigation (decomposition triggers, picker query, syllabus vs standalone path) directly mapped to the 3 things needed to diagnose the bug. The 4-part deliverable (paths, query, exclusion check, gap) structured the output cleanly.
+- The "skip specialist file and glossary reads" instruction saved time — good for pure code tracing.
+
+**What would have made this prompt more efficient?**
+- Specifying "check `selectMode("assignment")` in StudyContext.jsx — this is the primary entry point for the assignment picker" would have been a faster starting point than the more general investigation.
+- The prompt correctly suspected the bug is in the `addMats` path. Starting with "diff `createCourse` vs `addMats` for decomposition steps" would have immediately highlighted the gap.
+
+**What can be added to future prompts to increase performance?**
+- For data flow bugs: "Trace the write path (who creates DB rows) AND the read path (who queries them) separately, then check if there's a gap between them."
+- For "feature works on first use but not on subsequent additions" bugs: "Check for all-or-nothing guards that skip re-processing when prior data exists."
+- `decomposeAssignments` call sites are now documented — future prompts can reference them directly.
+
+---
+
+### 2026-03-21 — Study Developer + QA — Bugfix batch execution (3 fixes)
+
+**Were any reads unnecessary?**
+- No. The prior diagnostic session had already identified all the relevant code paths, so this session only needed targeted reads of the exact modification points. The diagnostic-then-fix pattern is very efficient.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 3-fix batch format with independent parallel steps was efficient. Each step had clear instructions with exact file paths, line numbers, and expected behavior.
+- Step 1C (assignment decomposition) was the most complex. The prompt correctly identified both gaps but underestimated the duplicate prevention complexity. The `getPlaceholders` change to broaden title matching was a necessary addition not explicitly called for.
+
+**What would have made this prompt more efficient?**
+- Step 1C should have explicitly noted: "decomposeAssignments creates new assignment rows via Assignments.create, and findPlaceholderMatch only matches syllabus-sourced placeholders. Re-decomposing will create duplicates unless findPlaceholderMatch is broadened." This would have saved investigation time.
+- The prompt said "does at least one assignment row reference it?" but assignments don't track materialId from decomposition. The prompt should have noted this data model gap.
+
+**What can be added to future prompts to increase performance?**
+- For re-execution/idempotency fixes: "Check if the function creates new DB rows and whether re-running creates duplicates. If yes, specify the dedup strategy."
+- For multi-fix batches: the parallel execution format (Step 1A || 1B || 1C → Step 2 QA) is excellent. Keep using it.
+- For the selectMode guard: the heuristic "assignments with zero questions" is good but imperfect. A more robust approach would be a `last_decomposed_at` timestamp on the course, but that requires schema changes.
+
+---
+
+## Patterns Identified (continued)
+
+### Assignment decomposition and material addition (FIXED 2026-03-21)
+- **`decomposeAssignments` is now called proactively** from `runBackgroundExtraction` (after skill extraction) and from `addMats` else branch (assignment-only uploads).
+- **The `selectMode("assignment")` guard is now incremental**: triggers when zero assignments exist OR when assignment materials exist and some assignments have zero questions.
+- **`getPlaceholders` was broadened** to return all assignments (not just syllabus-sourced), so `findPlaceholderMatch` prevents duplicates on re-decomposition by matching any existing assignment by normalized title.
+
 ### What improves prompt quality
 - Cite exact function names for large files, not just file paths.
 - Reference the development knowledge index to check if a feature has been eliminated/redesigned (e.g., `modepicker-elimination-2026-03-14.md`).
 - Structured output format (per-dimension: what exists / prompt text / gaps) produces excellent diagnostics.
 - **"Adapt for AI tutoring context" should be standard** for any IES/classroom-research prompt. AI tutoring is a fundamentally different modality — naive application of classroom recommendations produces incorrect priorities.
 - **Include "What NOT to change" section** in gap analyses — prevents next-step agents from breaking well-implemented features while fixing gaps.
+
+---
+
+### QA — Bugfix Batch (2026-03-21)
+**Agent:** Security & Testing Analyst | **Prompt:** Step 2 QA of executable-study-bugfix-batch
+
+**What worked well in the prompt?**
+- Per-fix verification dimensions were clearly scoped (1A: code path trace, 1B: prompt string integrity + `[SHOW_IMAGE]` untouched, 1C: new call sites + guard logic + existing paths intact). Made QA systematic.
+- "Verify the `[SHOW_IMAGE]` mechanism was NOT modified" — explicit negative verification prevented false positives.
+- The "move plan to Done" + "deposit QA report" + "prompt feedback" post-QA steps are clear and consistent.
+
+**What was unclear or missing?**
+- The prompt says "Read your specialist file first" — in a context-limited continuation session, the specialist file wasn't available. Prompt should say "Read your specialist file if not already in context."
+- No instruction on whether to verify the QA report from a prior session or rewrite it. The report already existed from a previous execution — had to decide independently to verify rather than overwrite.
+
+**What can be added to future prompts to increase performance?**
+- For QA of prompt-text-only changes (1B): "Verify the surrounding prompt string is syntactically valid (no unclosed quotes/backticks)" was implicit — make it explicit.
+- For multi-session execution: add "If a QA report already exists from a prior session, verify its accuracy rather than rewriting."
