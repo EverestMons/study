@@ -6,8 +6,8 @@
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
-**Version:** 1.0
-**Last Updated:** 2026-03-05
+**Version:** 1.1
+**Last Updated:** 2026-03-21
 
 ---
 
@@ -26,15 +26,19 @@ The Study Security & Testing Analyst adversarially tests study app builds for se
 ### Domain Focus
 Tauri app security (IPC command validation, file system access controls), SQLite data integrity (migration correctness, foreign key constraints, transaction safety), document parsing edge cases (malformed files, scanned PDFs, oversized uploads), FSRS calculation correctness, skill extraction pipeline failure modes, session state consistency, and React component error boundaries.
 
+### Test Infrastructure
+No automated test suite exists. There is no test runner, no test framework (no Vitest, Jest, Cypress, or Playwright), no test scripts in `package.json`, and no `*.test.*` or `test_*` files in the project source. There are also no Rust-side `#[test]` blocks in `src-tauri/`. Verification is manual + build success + analyst QA reports deposited in `knowledge/qa/`.
+
 ### Key Sources / References
 - `src/lib/` — current implementation to test against
 - `docs/skill-architecture-redesign.md` — migration spec for migration correctness testing
 - `src-tauri/` — Rust backend for IPC security
+- `src-tauri/migrations/` — SQL migrations 001-007
 - OWASP Tauri/Electron security guidelines
 - SQLite integrity check documentation
 
 ### Project-Specific Context
-Study handles student academic data locally. The app processes uploaded course materials — some potentially large or malformed. The AI-powered skill extraction pipeline can fail silently if not properly handled. The database migration path (001 → 002 → 003 → 004) must be tested carefully — migration errors can corrupt student learning history. The FSRS mastery calculations must be mathematically correct — errors here directly affect what the app tells students to study. The Python sidecar processes arbitrary uploaded files, making it a potential security surface.
+Study handles student academic data locally. The app processes uploaded course materials — some potentially large or malformed. The AI-powered skill extraction pipeline can fail silently if not properly handled. The database migration path (001 → 002 → 003 → 004 → 005 → 006 → 007) must be tested carefully — migration errors can corrupt student learning history. A supplementary JS-based facet migration runs after migration 005 (guarded by a `facet_migration_done` settings flag). The FSRS mastery calculations must be mathematically correct — errors here directly affect what the app tells students to study. The Python sidecar processes arbitrary uploaded files, making it a potential security surface.
 
 ---
 
@@ -142,8 +146,57 @@ All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 
 ## Project Knowledge Base Index
 
-*Updated as knowledge files are created.*
+*Updated as knowledge files are created. 52 QA reports as of 2026-03-21.*
 
 | File | Date | Summary |
 |---|---|---|
-| *(none yet)* | — | — |
+| assignment-practice-qa-2026-03-17.md | 2026-03-17 | Assignment practice QA |
+| assignment-tutor-boundary-qa-2026-03-18.md | 2026-03-18 | Assignment tutor boundary QA |
+| batch-c-course-data-testing-2026-03-08.md | 2026-03-08 | Batch C course data testing |
+| batch-d-sessions-testing-2026-03-08.md | 2026-03-08 | Batch D sessions testing |
+| batch-e-mastery-testing-2026-03-08.md | 2026-03-08 | Batch E mastery testing |
+| batch-f-final-testing-2026-03-08.md | 2026-03-08 | Batch F final testing |
+| character-sheet-testing-2026-03-10.md | 2026-03-10 | Character sheet testing |
+| cip-taxonomy-testing-2026-03-08.md | 2026-03-08 | CIP taxonomy testing |
+| concept-link-ai-context-testing-2026-03-10.md | 2026-03-10 | Concept link AI context testing |
+| concept-link-generation-testing-2026-03-10.md | 2026-03-10 | Concept link generation testing |
+| concept-link-profile-testing-2026-03-10.md | 2026-03-10 | Concept link profile testing |
+| course-homepage-qa-2026-03-14.md | 2026-03-14 | Course homepage QA |
+| curriculum-dashboard-testing-2026-03-12.md | 2026-03-12 | Curriculum dashboard testing |
+| domain-drilldown-testing-2026-03-10.md | 2026-03-10 | Domain drilldown testing |
+| extraction-retry-testing-2026-03-08.md | 2026-03-08 | Extraction retry testing |
+| facet-architecture-testing-2026-03-12.md | 2026-03-12 | Facet architecture testing |
+| facet-mastery-qa-2026-03-14.md | 2026-03-14 | Facet mastery QA |
+| folder-import-polish-testing-2026-03-10.md | 2026-03-10 | Folder import polish testing |
+| folder-import-testing-2026-03-10.md | 2026-03-10 | Folder import testing |
+| hardening-sweep-2026-03-10.md | 2026-03-10 | Hardening sweep |
+| ies-prompt-enhancements-qa-2026-03-19.md | 2026-03-19 | IES prompt enhancements QA |
+| inline-image-qa-2026-03-19.md | 2026-03-19 | Inline image QA |
+| mastery-transfer-testing-2026-03-10.md | 2026-03-10 | Mastery transfer testing |
+| materials-staging-grid-qa-2026-03-17.md | 2026-03-17 | Materials staging grid QA |
+| materials-staging-grid-qa-summary-2026-03-17.md | 2026-03-17 | Materials staging grid QA summary |
+| materials-staging-testing-2026-03-13.md | 2026-03-13 | Materials staging testing |
+| materials-tabs-testing-2026-03-10.md | 2026-03-10 | Materials tabs testing |
+| migration-004-testing-2026-03-08.md | 2026-03-08 | Migration 004 testing |
+| minhash-near-dedup-testing-2026-03-10.md | 2026-03-10 | MinHash near-dedup testing |
+| ocr-engine-testing-2026-03-10.md | 2026-03-10 | OCR engine testing |
+| pdf-ocr-integration-testing-2026-03-10.md | 2026-03-10 | PDF OCR integration testing |
+| pdf-ocr-multilang-testing-2026-03-10.md | 2026-03-10 | PDF OCR multilang testing |
+| pdf-ocr-quality-testing-2026-03-10.md | 2026-03-10 | PDF OCR quality testing |
+| performance-verification-2026-03-10.md | 2026-03-10 | Performance verification |
+| phase1-assignment-migration-testing-2026-03-08.md | 2026-03-08 | Phase 1 assignment migration testing |
+| phase2-syllabus-parsing-testing-2026-03-08.md | 2026-03-08 | Phase 2 syllabus parsing testing |
+| phase3-due-date-testing-2026-03-08.md | 2026-03-08 | Phase 3 due date testing |
+| phase3-parent-ai-context-testing-2026-03-10.md | 2026-03-10 | Phase 3 parent AI context testing |
+| phase4-schedule-ui-testing-2026-03-08.md | 2026-03-08 | Phase 4 schedule UI testing |
+| phase4-security-testing-2026-03-06.md | 2026-03-06 | Phase 4 security testing |
+| phase5-deadline-intelligence-testing-2026-03-08.md | 2026-03-08 | Phase 5 deadline intelligence testing |
+| retry-all-testing-2026-03-10.md | 2026-03-10 | Retry-all testing |
+| security-verification-2026-03-10.md | 2026-03-10 | Security verification |
+| skill-picker-qa-2026-03-14.md | 2026-03-14 | Skill picker QA |
+| skill-update-notification-qa-2026-03-17.md | 2026-03-17 | Skill update notification QA |
+| stability-hardening-testing-2026-03-06.md | 2026-03-06 | Stability hardening testing |
+| stability-verification-2026-03-10.md | 2026-03-10 | Stability verification |
+| study-focus-mode-qa-2026-03-17.md | 2026-03-17 | Study focus mode QA |
+| syllabus-extraction-bugfix-2026-03-10.md | 2026-03-10 | Syllabus extraction bugfix |
+| update-cycle-verification-2026-03-13.md | 2026-03-13 | Update cycle verification |
