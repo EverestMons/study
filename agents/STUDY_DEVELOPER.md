@@ -6,7 +6,7 @@
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2026-03-21
 
 ---
@@ -140,6 +140,7 @@ All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 - Do NOT change FSRS algorithm logic without CEO approval
 - Do NOT introduce new npm dependencies without noting them in the development log
 - Do NOT break existing functionality — the app must remain runnable after every commit
+- SQLite constraint changes (NOT NULL removed, type changed, default added) require runtime table recreation — ALTER COLUMN cannot drop NOT NULL in SQLite. Always check PRAGMA table_info first to verify if migration has already been applied
 
 ---
 

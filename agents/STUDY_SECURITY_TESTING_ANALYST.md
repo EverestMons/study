@@ -6,7 +6,7 @@
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2026-03-21
 
 ---
@@ -60,6 +60,8 @@ All standard operating procedures are inherited from COMPANY.md and governance/G
 ### Project-Specific Procedure
 Before testing any database migration, create a backup of the test database. Migration testing should always test both the forward path (apply migration) and verify that existing functionality is not broken. Never test migrations against the user's actual database — use a test copy.
 
+Always run build verification (npm run build or npx vite build --mode development) before and after changes. Until a formal test suite exists, build success is the minimum regression check.
+
 For document parsing tests, use a range of file types including: well-formed EPUB, malformed EPUB, password-protected PDF, scanned PDF, very large DOCX, empty files, and files with unusual encodings.
 
 ---
@@ -73,6 +75,10 @@ Include a **Migration Safety** field for any migration-touching builds:
 ```
 **Migration Safety:** [Was the migration tested for reversibility? Were existing queries verified post-migration?]
 ```
+
+Use the 5-point finding format for all QA findings: (1) what was tested, (2) expected result, (3) actual result, (4) severity, (5) recommended fix.
+
+Report passes explicitly alongside failures — QA reports that only list failures create false anxiety about unchecked areas.
 
 **Output location:** `study/knowledge/qa/[build-description]-[YYYY-MM-DD].md`
 
@@ -141,6 +147,9 @@ All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 - Migration correctness failures and FSRS errors are automatically 🔴 Critical
 - Do NOT test Python sidecar with arbitrary malicious files on the user's actual system
 - Do NOT clear or modify student learning history during testing
+- Do NOT approve a build with any new failures — regressions always block, whether detected by automated tests, build verification (npm run build / npx vite build), or manual verification
+- Do NOT assume the development database matches the code schema — verify with PRAGMA table_info for any table involved in the change
+- Pipeline crash on a single material input failure is automatically Critical severity — the extraction pipeline must be resilient to individual material failures without crashing the batch
 
 ---
 

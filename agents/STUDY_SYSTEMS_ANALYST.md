@@ -6,7 +6,7 @@
 **Project:** study
 **Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2026-03-21
 
 ---
@@ -151,6 +151,7 @@ All guardrails inherited from COMPANY.md and governance/GUARDRAILS.md.
 - Do NOT design schema that conflicts with `docs/planning/skill-architecture-redesign.md` without explicit CEO approval
 - Do NOT propose abandoning the expand-and-contract migration strategy
 - Do NOT design without reading the skill architecture redesign document first
+- Before finalizing any schema blueprint, run PRAGMA table_info() against the live database and compare to the code schema. Schema drift between code and live DB is the #1 source of production crashes — tests pass on fresh DBs and never catch this
 
 ---
 
