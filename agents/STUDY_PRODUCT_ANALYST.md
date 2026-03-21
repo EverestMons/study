@@ -4,7 +4,7 @@
 **Department:** Product Management
 **Reports To:** Product Management Director
 **Project:** study
-**Handbook Reference:** COMPANY.md v2.0
+**Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.0
 **Last Updated:** 2026-03-05
