@@ -270,13 +270,13 @@ export default function MessageList() {
               <div style={{ background: T.sf, border: "1px solid " + T.gn, borderRadius: 14, padding: "20px 24px" }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: T.tx, marginBottom: 4 }}>{me.skillName}</div>
                 <div style={{ height: 1, background: T.bd, margin: "8px 0 12px" }} />
-                {me.levelBefore !== me.levelAfter && (
+                {(() => { var displayLevel = Math.max(me.levelAfter, me.levelBefore); return me.levelBefore !== displayLevel ? (
                   <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
                     <span style={{ color: T.ac }}>Lv {me.levelBefore}</span>
                     <span style={{ color: T.txD, margin: "0 8px" }}>{"\u2192"}</span>
-                    <span style={{ color: T.ac }}>Lv {me.levelAfter}</span>
+                    <span style={{ color: T.ac }}>Lv {displayLevel}</span>
                   </div>
-                )}
+                ) : null; })()}
                 {me.facets.map((f, fi) => (
                   <div key={fi} style={{ display: "flex", gap: 8, padding: "4px 0", alignItems: "center" }}>
                     <span style={{ color: T.gn, fontSize: 13, fontWeight: 600 }}>{"\u2713"}</span>

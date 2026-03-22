@@ -24,6 +24,7 @@ export default function PracticeMode() {
     active,
     practiceMode, setPracticeMode,
     addNotif,
+    sessionMasteryEvents, sessionMasteredSkills,
   } = useStudy();
 
   if (!practiceMode) return null;
@@ -293,13 +294,23 @@ export default function PracticeMode() {
                           else if (tierResult.passCount >= 4) practiceRating = 'hard';
                           else practiceRating = 'struggled';
 
-                          await applySkillUpdates(active.id, [{
+                          var masteryResult = await applySkillUpdates(active.id, [{
                             skillId: pm.skill.id,
                             rating: practiceRating,
                             reason: "Practice Tier " + tier + " (" + tierResult.tierName + ") - " + tierResult.passCount + "/5 on attempt " + tierResult.attemptNum,
                             source: 'practice',
                             context: 'guided',
-                          }]);
+                          }]) || [];
+
+                          // Wire mastery events to session refs + notification
+                          if (masteryResult.length > 0) {
+                            for (var me of masteryResult) {
+                              me.messageIndex = -1;
+                              sessionMasteryEvents.current.push(me);
+                              sessionMasteredSkills.current.add(me.skillId);
+                              addNotif("mastery", me.skillName + " \u2192 Lv " + me.levelAfter);
+                            }
+                          }
 
                           // Increment practice attempts for fitness tracking
                           try {

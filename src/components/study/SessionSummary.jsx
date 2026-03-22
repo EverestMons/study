@@ -73,9 +73,9 @@ export default function SessionSummary() {
                         <span style={{ color: T.gn, fontWeight: 600 }}>{"\u2713"}</span>
                         <span style={{ fontSize: 13, color: T.tx, fontWeight: 600 }}>{me.skillName}</span>
                       </div>
-                      {me.levelBefore !== me.levelAfter && (
-                        <span style={{ fontSize: 12, color: T.ac }}>Lv {me.levelBefore}{"\u2192"}{me.levelAfter}</span>
-                      )}
+                      {(() => { var displayLevel = Math.max(me.levelAfter, me.levelBefore); return me.levelBefore !== displayLevel ? (
+                        <span style={{ fontSize: 12, color: T.ac }}>Lv {me.levelBefore}{"\u2192"}{displayLevel}</span>
+                      ) : null; })()}
                     </div>
                     <div style={{ fontSize: 11, color: T.txD, marginTop: 4, paddingLeft: 22 }}>
                       {me.facets.length}/{me.facets.length} facets demonstrated
