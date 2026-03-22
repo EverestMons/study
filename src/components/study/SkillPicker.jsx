@@ -36,8 +36,38 @@ export default function SkillPicker() {
   var [typeFilter, setTypeFilter] = useState(null);
   var [expandedSkill, setExpandedSkill] = useState(null);
   var [collapsedCats, setCollapsedCats] = useState(new Set());
+  var [showingAll, setShowingAll] = useState(false);
 
   if (!pickerData) return null;
+
+  // --- Single-skill confirmation (material with 1 skill) ---
+  if (pickerData.singleSkill) {
+    var sk1 = pickerData.singleSkill;
+    var str1 = Math.round((sk1.strength || 0) * 100);
+    return (
+      <div style={{ padding: 32, maxWidth: 400, margin: "0 auto", animation: "fadeIn 0.3s" }}>
+        {pickerData.materialName && (
+          <div style={{ fontSize: 12, color: T.txD, marginBottom: 16 }}>{pickerData.materialName}</div>
+        )}
+        <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: strengthColor(sk1.strength || 0), flexShrink: 0 }} />
+            <span style={{ fontSize: 15, fontWeight: 600, color: T.tx, flex: 1 }}>{sk1.name}</span>
+            <span style={{ fontSize: 13, color: strengthColor(sk1.strength || 0), fontWeight: 500 }}>{sk1.strength > 0 ? str1 + "%" : "New"}</span>
+          </div>
+          {sk1.description && (
+            <div style={{ fontSize: 12, color: T.txD, marginBottom: 16, lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{sk1.description}</div>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { setPickerData(null); setSessionMode(null); }}
+              style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Back</button>
+            <button onClick={() => bootWithFocus({ type: "skill", skill: sk1 })}
+              style={{ flex: 1, padding: "10px 16px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Start</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // --- Empty state (no skills extracted) ---
   if (pickerData.empty) {
@@ -109,7 +139,7 @@ export default function SkillPicker() {
 
   // --- Populated state ---
   var today = new Date().toISOString().split("T")[0];
-  var items = pickerData.items;
+  var items = (showingAll && pickerData.allItems) ? pickerData.allItems : pickerData.items;
 
   // Due skills (from full set, not filtered)
   var dueSkills = items.filter(s => s.reviewDate === "now" || (s.reviewDate && s.reviewDate <= today));
@@ -218,6 +248,17 @@ export default function SkillPicker() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, background: T.gnS, border: "1px solid " + T.gn + "40", borderRadius: 14, padding: "14px 20px", marginBottom: 16 }}>
           <span style={{ color: T.gn, fontWeight: 600 }}>{"\u2713"}</span>
           <span style={{ fontSize: 13, color: T.gn, fontWeight: 500 }}>You're current — no reviews needed</span>
+        </div>
+      )}
+
+      {/* Material filter banner */}
+      {pickerData.materialFilter && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 16px", marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: T.txD }}>{showingAll ? "Showing all course skills" : "Showing skills from \"" + pickerData.materialFilter.name + "\""}</span>
+          <button onClick={() => setShowingAll(!showingAll)}
+            style={{ background: "none", border: "none", color: T.ac, cursor: "pointer", fontSize: 12, padding: 0 }}>
+            {showingAll ? "Show material skills \u2192" : "Show all skills \u2192"}
+          </button>
         </div>
       )}
 

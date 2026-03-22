@@ -1488,6 +1488,19 @@ export const SubSkills = {
     );
   },
 
+  async getByMaterial(materialId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT DISTINCT ss.id
+       FROM sub_skills ss
+       JOIN chunk_skill_bindings csb ON csb.sub_skill_id = ss.id
+       JOIN chunks c ON c.id = csb.chunk_id
+       WHERE c.material_id = ?
+         AND ss.is_archived = 0
+         AND ss.unified_into IS NULL`, [materialId]
+    );
+  },
+
   async getById(id) {
     const db = await getDb();
     const rows = await db.select('SELECT * FROM sub_skills WHERE id = ?', [id]);

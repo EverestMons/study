@@ -265,7 +265,7 @@ export default function MaterialsScreen() {
                 Retry {unfinished.length > 0 ? "(" + unfinished.length + " section" + (unfinished.length !== 1 ? "s" : "") + ")" : "Extraction"}
               </button>
               {trust.skillCount > 0 && (
-                <button onClick={() => enterStudy(active, "skills")}
+                <button onClick={() => enterStudy(active, "skills", mat.id)}
                   style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Study Available Skills</button>
               )}
             </div>
@@ -295,7 +295,7 @@ export default function MaterialsScreen() {
               </>
             )}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button onClick={() => enterStudy(active, "skills")}
+              <button onClick={() => enterStudy(active, "skills", mat.id)}
                 style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Start Studying</button>
               {trust.skillCount > 0 && (
                 <button onClick={async () => { const sk = await loadSkillsV2(active.id); setSkillViewData({ skills: sk, isV2: true }); setShowSkills(true); }}

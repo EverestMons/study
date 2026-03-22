@@ -871,7 +871,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     }
   };
 
-  const enterStudy = async (course, initialMode) => {
+  const enterStudy = async (course, initialMode, materialId) => {
     setPreviousScreen(screen);
     setActive(course); setScreen("study");
     setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
@@ -905,12 +905,12 @@ export function StudyProvider({ children, setErrorCtx }) {
       chatSessionId.current = await Sessions.create({ courseId: course.id, intent: 'study' });
     } catch (e) { console.error("Journal capture on enter:", e); }
     if (initialMode) {
-      selectMode(initialMode);
+      selectMode(initialMode, materialId);
     }
   };
 
   // --- Mode Selection ---
-  const selectMode = async (mode) => {
+  const selectMode = async (mode, materialId) => {
     setSessionMode(mode);
     try {
       const skills = await loadSkillsV2(active.id);
@@ -998,7 +998,7 @@ export function StudyProvider({ children, setErrorCtx }) {
           }
         } catch (e) { console.error("Deadline skill map failed:", e); }
 
-        const enriched = skills.map(s => {
+        var enriched = skills.map(s => {
           // Match deadline info via 3-tier resolution
           var dl = deadlineSkillMap[s.id] || deadlineSkillMap[s.conceptKey] || null;
           if (!dl && s.name) {
@@ -1029,7 +1029,35 @@ export function StudyProvider({ children, setErrorCtx }) {
           }
           return strengthDiff;
         });
-        setPickerData({ mode, items: enriched });
+        // Material-specific filtering
+        var allEnriched = enriched;
+        var materialName = null;
+        if (materialId) {
+          var matSkillRows = await SubSkills.getByMaterial(materialId);
+          var matSkillIds = new Set(matSkillRows.map(function(r) { return r.id; }));
+          enriched = enriched.filter(function(s) { return matSkillIds.has(s.id); });
+          var _mat = (active.materials || []).find(function(m) { return m.id === materialId; });
+          materialName = _mat?.name || null;
+        }
+
+        // Single-skill confirmation
+        if (materialId && enriched.length === 1) {
+          setPickerData({ mode, singleSkill: enriched[0], materialName: materialName });
+          return;
+        }
+
+        // Zero-skill edge case
+        if (materialId && enriched.length === 0) {
+          setPickerData({ mode, empty: true, message: 'No skills extracted from "' + (materialName || 'this material') + '" yet.' });
+          return;
+        }
+
+        // Normal and material-filtered multi-skill
+        if (materialId) {
+          setPickerData({ mode, items: enriched, materialFilter: { id: materialId, name: materialName }, allItems: allEnriched });
+        } else {
+          setPickerData({ mode, items: enriched });
+        }
       } else if (mode === "exam") {
         var mats = (active.materials || []).filter(m => (m.chunks || []).some(c => c.status === "extracted"));
         if (!mats.length) {
