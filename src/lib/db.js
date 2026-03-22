@@ -2659,6 +2659,70 @@ export const AssignmentQuestionFacets = {
 };
 
 // ============================================================
+// Skill Courses — junction table for many-to-many skill↔course
+// ============================================================
+
+export const SkillCourses = {
+  async add(skillId, courseId) {
+    const db = await getDb();
+    await db.execute(
+      'INSERT OR IGNORE INTO skill_courses (skill_id, course_id) VALUES (?, ?)',
+      [skillId, courseId]
+    );
+  },
+
+  async getBySkill(skillId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT sc.*, c.name AS course_name, c.course_number
+       FROM skill_courses sc
+       JOIN courses c ON sc.course_id = c.id
+       WHERE sc.skill_id = ?`,
+      [skillId]
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select('SELECT * FROM skill_courses WHERE course_id = ?', [courseId]);
+  },
+
+  async remove(skillId, courseId) {
+    const db = await getDb();
+    await db.execute(
+      'DELETE FROM skill_courses WHERE skill_id = ? AND course_id = ?',
+      [skillId, courseId]
+    );
+  },
+};
+
+/**
+ * Backfill skill_courses from existing sub_skills.source_course_id values.
+ * Idempotent via settings flag.
+ */
+export const backfillSkillCourses = async () => {
+  const db = await getDb();
+  const flag = await db.select(
+    "SELECT value FROM settings WHERE key = 'skill_courses_backfilled'"
+  );
+  if (flag.length > 0 && flag[0].value === '1') return { skipped: true };
+
+  const skills = await db.select(
+    'SELECT id, source_course_id FROM sub_skills WHERE source_course_id IS NOT NULL'
+  );
+  for (const s of skills) {
+    await db.execute(
+      'INSERT OR IGNORE INTO skill_courses (skill_id, course_id) VALUES (?, ?)',
+      [s.id, s.source_course_id]
+    );
+  }
+  await db.execute(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('skill_courses_backfilled', '1')"
+  );
+  return { skipped: false, backfilled: skills.length };
+};
+
+// ============================================================
 // Material Images
 // ============================================================
 
