@@ -9,7 +9,7 @@ import { callClaude, extractJSON, isApiError } from './api.js';
 import {
   Chunks, SubSkills, ChunkSkillBindings, SkillPrerequisites,
   ParentSkills, Materials, Facets, FacetMastery, ChunkFacetBindings,
-  withTransaction, getDb
+  SkillCourses, withTransaction, getDb
 } from './db.js';
 import { CIP_TAXONOMY } from './cipData.js';
 
@@ -1059,6 +1059,11 @@ export async function extractCourse(courseId, materialId, options = {}) {
 
         const skillIds = await SubSkills.createBatch(skillRecords, { externalTransaction: true });
 
+        // Track skill↔course in junction table
+        for (const sid of skillIds) {
+          await SkillCourses.add(sid, courseId);
+        }
+
         // Map conceptKey → id for cross-chapter wiring
         const skillIdMap = new Map();
         for (let j = 0; j < result.skills.length; j++) {
@@ -1419,6 +1424,7 @@ export async function enrichFromMaterial(courseId, materialId, options = {}) {
       extractionModel: 'claude-haiku-4-5',
       schemaVersion: 2,
     });
+    await SkillCourses.add(skillId, courseId);
 
     // Create facets
     for (const f of (ns.facets || [])) {
@@ -1588,6 +1594,7 @@ export async function extractChaptersOnly(courseId, materialId, chapterGroups, e
           extractionModel: 'claude-haiku-4-5',
           schemaVersion: 2,
         });
+        await SkillCourses.add(skillId, courseId);
         createdSkillIds.push(skillId);
         conceptKeyToId.set(ns.conceptKey, skillId);
 
@@ -1898,6 +1905,7 @@ export async function reExtractCourse(courseId, materialId, options = {}) {
           extractionModel: 'claude-haiku-4-5',
           schemaVersion: 2,
         });
+        await SkillCourses.add(skillId, courseId);
         conceptKeyToId.set(ns.conceptKey, skillId);
       }
 

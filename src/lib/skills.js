@@ -632,6 +632,12 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
             if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
           }
         } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
+        // --- Cross-course skill unification (non-blocking) ---
+        try {
+          const { detectAndUnify } = await import('./unification.js');
+          const uniResult = await detectAndUnify();
+          if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
+        } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
       }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
 
@@ -674,6 +680,12 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
             if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
           }
         } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
+        // --- Cross-course skill unification (non-blocking) ---
+        try {
+          const { detectAndUnify } = await import('./unification.js');
+          const uniResult = await detectAndUnify();
+          if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
+        } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
       }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
     }
