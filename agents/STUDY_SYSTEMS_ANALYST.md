@@ -4,7 +4,6 @@
 **Department:** Systems Architecture
 **Reports To:** Systems Architecture Director
 **Project:** study
-**Handbook Reference:** COMPANY.md v2.2
 **Guardrails Reference:** governance/GUARDRAILS.md
 **Version:** 1.2
 **Last Updated:** 2026-03-21
