@@ -82,7 +82,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState("");
-  const [codeMode, setCodeMode] = useState(false);
+  const [inputMode, setInputMode] = useState("text");
   const [detectedLanguage, setDetectedLanguage] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -355,7 +355,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   }, []);
 
   useEffect(() => { if (msgs.length) endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
-  useEffect(() => { if (taRef.current) { if (codeMode) { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, codeMode]);
+  useEffect(() => { if (taRef.current) { if (inputMode === "code") { taRef.current.style.height = ""; } else { taRef.current.style.height = "auto"; taRef.current.style.height = Math.min(taRef.current.scrollHeight, 150) + "px"; } } }, [input, inputMode]);
 
   useEffect(() => {
     if (!sessionStartTime.current) { setSessionElapsed(0); return; }
@@ -385,7 +385,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   }, [saveSessionToJournal]);
 
   const clearSessionState = useCallback(() => {
-    setMsgs([]); setInput(""); setCodeMode(false);
+    setMsgs([]); setInput(""); setInputMode("text");
     setSessionMode(null); setFocusContext(null);
     setPickerData(null); setChunkPicker(null);
     setAsgnWork(null); setPracticeMode(null);
@@ -874,7 +874,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const enterStudy = async (course, initialMode, materialId) => {
     setPreviousScreen(screen);
     setActive(course); setScreen("study");
-    setMsgs([]); setInput(""); setCodeMode(false); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
+    setMsgs([]); setInput(""); setInputMode("text"); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
     sessionMasteryEvents.current = [];
     sessionFacetUpdates.current = [];
@@ -1119,13 +1119,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
     if (focus.type === "assignment") {
       var lang = detectLanguage(active.name, focus.assignment?.title || "", "");
-      if (lang) { setCodeMode(true); setDetectedLanguage(lang); }
+      if (lang) { setInputMode("code"); setDetectedLanguage(lang); }
     } else if (focus.type === "skill") {
       var lang2 = detectLanguage(active.name, focus.skill?.name || "", focus.skill?.description || "");
-      if (lang2) { setCodeMode(true); setDetectedLanguage(lang2); }
+      if (lang2) { setInputMode("code"); setDetectedLanguage(lang2); }
     } else {
       var lang3 = detectLanguage(active.name, "", "");
-      if (lang3) { setCodeMode(true); setDetectedLanguage(lang3); }
+      if (lang3) { setInputMode("code"); setDetectedLanguage(lang3); }
     }
     try {
       const skills = await loadSkillsV2(active.id);
@@ -1205,10 +1205,10 @@ export function StudyProvider({ children, setErrorCtx }) {
     clearTimeout(skillNotifTimers.current.hold);
     clearTimeout(skillNotifTimers.current.clear);
     setCurrentSkillNotif(null);
-    const raw = codeMode ? input.trimEnd() : input.trim();
-    const userMsg = codeMode ? "```\n" + raw + "\n```" : raw;
-    const isCode = codeMode;
-    setInput(""); setCodeMode(false);
+    const raw = inputMode === "code" ? input.trimEnd() : input.trim();
+    const userMsg = inputMode === "code" ? "```\n" + raw + "\n```" : raw;
+    const isCode = inputMode === "code";
+    setInput("");
     // Reset textarea height after clearing input
     if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.style.overflowY = 'hidden'; }
     const userTs = Date.now();
@@ -1588,7 +1588,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     showSettings, setShowSettings, apiKeyLoaded, setApiKeyLoaded,
     apiKeyInput, setApiKeyInput, keyVerifying, setKeyVerifying, keyError, setKeyError,
     files, setFiles, cName, setCName, drag, setDrag, parsing,
-    msgs, setMsgs, input, setInput, codeMode, setCodeMode, detectedLanguage,
+    msgs, setMsgs, input, setInput, inputMode, setInputMode, detectedLanguage,
     exporting, setExporting, busy, setBusy, booting, setBooting,
     status, setStatus, processingMatId, setProcessingMatId,
     errorLogModal, setErrorLogModal,
@@ -1635,7 +1635,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     screen, previousScreen, courses, active, ready,
     showSettings, apiKeyLoaded, apiKeyInput, keyVerifying, keyError,
     files, cName, drag, parsing,
-    msgs, input, codeMode, detectedLanguage, exporting, busy, booting,
+    msgs, input, inputMode, detectedLanguage, exporting, busy, booting,
     status, processingMatId, errorLogModal,
     globalLock, lockElapsed, dupPrompt, bgExtraction, currentSkillNotif,
     showManage, showSkills, skillViewData, expandedCats,

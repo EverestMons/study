@@ -18,7 +18,7 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function StudyScreen() {
   const {
-    msgs, setMsgs, setInput, setCodeMode,
+    msgs, setMsgs, setInput, setInputMode,
     setScreen, active,
     previousScreen, clearSessionState,
     sessionMode, setSessionMode,
@@ -70,7 +70,7 @@ export default function StudyScreen() {
 
   const handleBackToOrigin = () => {
     setSessionMode(null); setPickerData(null); setChunkPicker(null);
-    setPracticeMode(null); setFocusContext(null); setCodeMode(false);
+    setPracticeMode(null); setFocusContext(null); setInputMode("text");
     setMsgs([]); setInput("");
     const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
     setScreen(safeScreen);

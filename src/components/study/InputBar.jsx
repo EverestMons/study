@@ -1,6 +1,7 @@
 import React from "react";
 import { T } from "../../lib/theme.jsx";
 import { useStudy } from "../../StudyContext.jsx";
+import MathToolbar from "./MathToolbar.jsx";
 
 const CodeEditor = React.lazy(() => import("./CodeEditor.jsx").catch(e => {
   console.error("CodeEditor chunk failed:", e);
@@ -14,11 +15,21 @@ const CodeEditor = React.lazy(() => import("./CodeEditor.jsx").catch(e => {
   }};
 }));
 
-const ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
+var ratingColor = { easy: T.gn, good: T.gn, hard: T.am, struggled: T.am };
+
+var modeBtn = function(mode, active) {
+  return {
+    flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+    padding: "0 6px", height: 28, border: "none", cursor: "pointer",
+    fontSize: 11, fontWeight: 600, transition: "all 0.15s ease",
+    background: active ? T.acS : "transparent",
+    color: active ? T.ac : T.txD,
+  };
+};
 
 export default function InputBar() {
-  const {
-    msgs, input, setInput, codeMode, setCodeMode, detectedLanguage,
+  var {
+    msgs, input, setInput, inputMode, setInputMode, detectedLanguage,
     busy, practiceMode,
     currentSkillNotif,
     taRef, sendMessage,
@@ -28,16 +39,20 @@ export default function InputBar() {
 
   return (
     <div style={{ borderTop: "1px solid " + T.bd, padding: "12px 16px", flexShrink: 0 }}
-      onKeyDown={e => {
-        // Ctrl/Cmd+Shift+C toggles code mode (works regardless of focus)
+      onKeyDown={function(e) {
         if (e.key === "C" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
-          setCodeMode(c => !c);
+          setInputMode(inputMode === "code" ? "text" : "code");
+          return;
+        }
+        if (e.key === "M" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          setInputMode(inputMode === "math" ? "text" : "math");
           return;
         }
       }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        {/* Skill update notification — always mounted for smooth expand/collapse */}
+        {/* Skill update notification */}
         <div style={{
           maxHeight: currentSkillNotif ? 32 : 0, overflow: "hidden",
           transition: "max-height 200ms ease",
@@ -62,8 +77,10 @@ export default function InputBar() {
             </>}
           </div>
         </div>
+        {/* Math toolbar */}
+        {inputMode === "math" && <MathToolbar taRef={taRef} input={input} setInput={setInput} />}
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-          {codeMode ? (
+          {inputMode === "code" ? (
             <div style={{ flex: 1 }}>
               <React.Suspense fallback={
                 <div style={{ minHeight: 240, maxHeight: 400, background: "#13151A", borderRadius: 10, border: "1px solid " + T.bd, display: "flex", alignItems: "center", justifyContent: "center", color: T.txM, fontSize: 12 }}>
@@ -77,30 +94,27 @@ export default function InputBar() {
                   minHeight={240}
                   maxHeight={400}
                   onSubmit={sendMessage}
-                  onEscape={() => setCodeMode(false)}
+                  onEscape={function() { setInputMode("text"); }}
                   autoFocus
                   placeholder="Enter code..."
                 />
               </React.Suspense>
             </div>
           ) : (
-            <textarea ref={taRef} value={input} onChange={e => {
+            <textarea ref={taRef} value={input} onChange={function(e) {
                 setInput(e.target.value);
-                // Auto-grow: reset height to measure scrollHeight, cap at ~10 lines
-                const ta = e.target;
+                var ta = e.target;
                 ta.style.height = 'auto';
-                const lineHeight = 14 * 1.5; // fontSize * lineHeight
-                const maxH = Math.round(lineHeight * 10) + 24; // 10 lines + padding
+                var lineHeight = 14 * 1.5;
+                var maxH = Math.round(lineHeight * 10) + 24;
                 ta.style.height = Math.min(ta.scrollHeight, maxH) + 'px';
                 ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
               }}
-              onKeyDown={e => {
-                // Cmd/Ctrl+Enter always sends
+              onKeyDown={function(e) {
                 if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); return; }
-                // Enter in prose mode sends
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
               }}
-              placeholder="Type your answer or ask a question..."
+              placeholder={inputMode === "math" ? "Type your answer (use toolbar for symbols)..." : "Type your answer or ask a question..."}
               rows={1}
               style={{
                 flex: 1, borderRadius: 12, padding: "12px 16px", color: T.tx,
@@ -109,23 +123,18 @@ export default function InputBar() {
                 border: "1px solid " + T.bd, resize: "none", overflowY: "hidden"
               }} />
           )}
-          <button onClick={() => setCodeMode(c => !c)}
-            aria-label="Toggle code input mode"
-            aria-pressed={codeMode}
-            style={{
-              width: 32, height: 44, borderRadius: 8, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 13, fontWeight: 600, fontFamily: "monospace", cursor: "pointer",
-              transition: "all 0.2s",
-              color: codeMode ? T.ac : T.txD,
-              background: codeMode ? T.acS : "transparent",
-              border: codeMode ? "1px solid " + T.acB : "none"
-            }}
-            title="Code mode (Ctrl+Shift+C)"
-          >&lt;/&gt;</button>
+          {/* 3-way mode selector */}
+          <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid " + T.bd, flexShrink: 0 }}>
+            <button onClick={function() { setInputMode("text"); }} title="Text mode"
+              style={modeBtn("text", inputMode === "text")}>T</button>
+            <button onClick={function() { setInputMode("code"); }} title="Code mode (Ctrl+Shift+C)"
+              style={modeBtn("code", inputMode === "code")}>&lt;/&gt;</button>
+            <button onClick={function() { setInputMode("math"); }} title="Math mode (Ctrl+Shift+M)"
+              style={modeBtn("math", inputMode === "math")}>&pi;</button>
+          </div>
           <button onClick={sendMessage} disabled={!input.trim() || busy}
-            onMouseEnter={e => { if (input.trim() && !busy) e.currentTarget.style.background = "#7DAAFD"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = input.trim() && !busy ? T.ac : T.sf; }}
+            onMouseEnter={function(e) { if (input.trim() && !busy) e.currentTarget.style.background = "#7DAAFD"; }}
+            onMouseLeave={function(e) { e.currentTarget.style.background = input.trim() && !busy ? T.ac : T.sf; }}
             style={{
               background: input.trim() && !busy ? T.ac : T.sf,
               color: input.trim() && !busy ? "#0F1115" : T.txM,
@@ -139,7 +148,8 @@ export default function InputBar() {
             </svg>
           </button>
         </div>
-        {codeMode && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>Esc exit &#xB7; &#x23CE; new line &#xB7; {navigator.platform?.includes("Mac") ? "&#x2318;" : "Ctrl+"}&#x23CE; send</div>}
+        {inputMode === "code" && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>Esc exit &#xB7; &#x23CE; new line &#xB7; {navigator.platform?.includes("Mac") ? "&#x2318;" : "Ctrl+"}&#x23CE; send</div>}
+        {inputMode === "math" && <div style={{ fontSize: 10, color: T.txM, marginTop: 4, textAlign: "right" }}>&#x23CE; send &#xB7; &#x21E7;&#x23CE; new line &#xB7; Click symbols to insert</div>}
       </div>
     </div>
   );
