@@ -184,7 +184,7 @@ export default function ProfileScreen() {
                         </span>
                       )}
                     </div>
-                    {(() => { var cs = new Set(); for (var s of subSkills) if (s.sourceCourseId) cs.add(s.sourceCourseId); var labels = [...cs].map(id => courseNames[id]).filter(Boolean); if (labels.length === 0) return null; var shown = labels.slice(0, 3); var extra = labels.length - 3; return <div style={{ fontSize: 11, color: T.txM, marginTop: 3 }}>From: {shown.join(", ")}{extra > 0 ? " +" + extra + " more" : ""}</div>; })()}
+                    {(() => { var cs = new Set(); for (var s of subSkills) for (var cid of (s.courseIds || [])) cs.add(cid); var labels = [...cs].map(id => courseNames[id]).filter(Boolean); if (labels.length === 0) return null; var shown = labels.slice(0, 3); var extra = labels.length - 3; return <div style={{ fontSize: 11, color: T.txM, marginTop: 3 }}>From: {shown.join(", ")}{extra > 0 ? " +" + extra + " more" : ""}</div>; })()}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
                       <div style={{ flex: 1, height: 5, background: T.bd, borderRadius: 3, overflow: "hidden" }}>
                         <div style={{ width: Math.round(readiness * 100) + "%", height: "100%", background: readinessColor, borderRadius: 3, transition: "width 0.3s" }} />
@@ -387,9 +387,7 @@ export default function ProfileScreen() {
                                     </div>
                                   )}
 
-                                  {sub.sourceCourseId && courseNames[sub.sourceCourseId] && (
-                                    <div style={{ fontSize: 11, color: T.txM, marginTop: 8 }}>From: {courseNames[sub.sourceCourseId]}</div>
-                                  )}
+                                  {(() => { var cIds = sub.courseIds || (sub.sourceCourseId ? [sub.sourceCourseId] : []); var cNames = cIds.map(id => courseNames[id]).filter(Boolean); return cNames.length > 0 ? <div style={{ fontSize: 11, color: T.txM, marginTop: 8 }}>From: {cNames.join(", ")}</div> : null; })()}
 
                                   {sub.sourceCourseId && (
                                     <button onClick={async (e) => {

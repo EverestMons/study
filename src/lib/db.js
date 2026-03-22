@@ -1472,19 +1472,19 @@ export const SubSkills = {
   async getByParent(parentSkillId) {
     const db = await getDb();
     return db.select(
-      'SELECT * FROM sub_skills WHERE parent_skill_id = ? AND is_archived = 0', [parentSkillId]
+      'SELECT * FROM sub_skills WHERE parent_skill_id = ? AND is_archived = 0 AND unified_into IS NULL', [parentSkillId]
     );
   },
 
   async getAllActive() {
     const db = await getDb();
-    return db.select('SELECT * FROM sub_skills WHERE is_archived = 0 AND parent_skill_id IS NOT NULL');
+    return db.select('SELECT * FROM sub_skills WHERE is_archived = 0 AND parent_skill_id IS NOT NULL AND unified_into IS NULL');
   },
 
   async getByCourse(courseId) {
     const db = await getDb();
     return db.select(
-      'SELECT * FROM sub_skills WHERE source_course_id = ? AND is_archived = 0', [courseId]
+      'SELECT * FROM sub_skills WHERE source_course_id = ? AND is_archived = 0 AND unified_into IS NULL', [courseId]
     );
   },
 
@@ -1572,7 +1572,7 @@ export const SubSkills = {
   async findByConceptKey(conceptKey) {
     const db = await getDb();
     const rows = await db.select(
-      'SELECT * FROM sub_skills WHERE concept_key = ? AND is_archived = 0', [conceptKey]
+      'SELECT * FROM sub_skills WHERE concept_key = ? AND is_archived = 0 AND unified_into IS NULL', [conceptKey]
     );
     return rows[0] || null;
   },
@@ -1580,7 +1580,7 @@ export const SubSkills = {
   async getAllConceptKeys() {
     const db = await getDb();
     return db.select(
-      'SELECT id, concept_key, name, category, mastery_criteria, evidence, parent_skill_id FROM sub_skills WHERE is_archived = 0'
+      'SELECT id, concept_key, name, category, mastery_criteria, evidence, parent_skill_id FROM sub_skills WHERE is_archived = 0 AND unified_into IS NULL'
     );
   },
 
@@ -1935,7 +1935,7 @@ export const Mastery = {
        FROM sub_skill_mastery ssm
        JOIN sub_skills ss ON ssm.sub_skill_id = ss.id
        WHERE ssm.next_review_at IS NOT NULL AND ssm.next_review_at <= ?
-         AND ss.is_archived = 0
+         AND ss.is_archived = 0 AND ss.unified_into IS NULL
        ORDER BY ssm.next_review_at`, [ts]
     );
   },
@@ -2237,7 +2237,7 @@ export const Facets = {
     return db.select(
       `SELECT f.* FROM facets f
        JOIN sub_skills ss ON f.skill_id = ss.id
-       WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND f.is_archived = 0
+       WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND ss.unified_into IS NULL AND f.is_archived = 0
        ORDER BY f.skill_id, f.id`,
       [courseId]
     );
@@ -2349,7 +2349,7 @@ export const FacetMastery = {
         `SELECT fm.* FROM facet_mastery fm
          JOIN facets f ON fm.facet_id = f.id
          JOIN sub_skills ss ON f.skill_id = ss.id
-         WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND f.is_archived = 0`,
+         WHERE ss.source_course_id = ? AND ss.is_archived = 0 AND ss.unified_into IS NULL AND f.is_archived = 0`,
         [courseId]
       );
     }
@@ -2685,6 +2685,11 @@ export const SkillCourses = {
   async getByCourse(courseId) {
     const db = await getDb();
     return db.select('SELECT * FROM skill_courses WHERE course_id = ?', [courseId]);
+  },
+
+  async getAll() {
+    const db = await getDb();
+    return db.select('SELECT * FROM skill_courses');
   },
 
   async remove(skillId, courseId) {

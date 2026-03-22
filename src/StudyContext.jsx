@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, MaterialImages, loadCoursesNested, saveCoursesNested, migrateFacets, backfillSkillCourses, Facets, FacetMastery } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, MaterialImages, loadCoursesNested, saveCoursesNested, migrateFacets, backfillSkillCourses, SkillCourses, Facets, FacetMastery } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -735,6 +735,12 @@ export function StudyProvider({ children, setErrorCtx }) {
       try { allFacetRows = await Facets.getAllActive(); } catch { /* facets table may not exist */ }
       try { allFacetMasteryRows = await FacetMastery.getAll(); } catch { /* facet_mastery table may not exist */ }
 
+      // Bulk-load skill_courses for multi-course attribution
+      var allSkillCoursesRows = [];
+      try { allSkillCoursesRows = await SkillCourses.getAll(); } catch { /* skill_courses table may not exist */ }
+      const skillCoursesMap = {};
+      for (const sc of allSkillCoursesRows) (skillCoursesMap[sc.skill_id] ||= []).push(sc.course_id);
+
       // Group in JavaScript — O(n) hash map builds
       const subsByParent = {};
       for (const s of allSubs) (subsByParent[s.parent_skill_id] ||= []).push(s);
@@ -821,11 +827,14 @@ export function StudyProvider({ children, setErrorCtx }) {
             };
           });
 
+          // Multi-course attribution: prefer skill_courses junction, fall back to source_course_id
+          const courseIds = skillCoursesMap[sub.id] || (sub.source_course_id ? [sub.source_course_id] : []);
+
           return {
             id: sub.id, name: sub.name, description: sub.description,
             conceptKey: sub.concept_key, category: sub.category,
             skillType: sub.skill_type, bloomsLevel: sub.blooms_level,
-            sourceCourseId: sub.source_course_id, masteryCriteria, evidence, fitness,
+            sourceCourseId: sub.source_course_id, courseIds, masteryCriteria, evidence, fitness,
             confidence: masteryConfidence(fitness),
             prerequisites: prereqs.map(p => ({ id: p.prerequisite_id, name: p.name, conceptKey: p.concept_key })),
             facets: subFacets,
