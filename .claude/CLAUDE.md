@@ -61,11 +61,10 @@ Use `index_status` to discover available repo aliases.
 Stale git lock files have caused repeated hangs, escalating workarounds, and corrupted index state across Eluvian projects. These rules are mandatory for all git operations.
 
 ### Before ANY git command
-Check for and remove stale lock files first:
-```bash
-rm -f .git/index.lock .git/"index "*.lock .git/"index "[0-9]* 2>/dev/null
-```
-Run this before `git add`, `git commit`, `git status`, or `git push`. No exceptions.
+Do NOT run `rm -f .git/index.lock` before every git command. This was a historical workaround that triggers permission prompts in Claude Code. Instead:
+- Just run the git command directly
+- If it fails with "fatal: Unable to create '.git/index.lock': File exists", THEN run `rm -f .git/index.lock` and retry
+- This is a reactive fix, not a preventive one — the lock file issue is rare and the permission prompt friction is not worth it
 
 ### Sequential execution only
 - Never chain git commands with `&&`. Run each command separately and verify it completed before running the next.
@@ -84,6 +83,6 @@ GIT_TERMINAL_PROMPT=0 git push
 
 ### If git operations fail repeatedly
 1. Kill all git processes: `pkill -f git`
-2. Remove all lock files: `rm -f .git/index.lock .git/"index "*.lock .git/"index "[0-9]*`
+2. Remove the lock file: `rm -f .git/index.lock`
 3. Verify index health: `git status`
 4. Then retry the operation
