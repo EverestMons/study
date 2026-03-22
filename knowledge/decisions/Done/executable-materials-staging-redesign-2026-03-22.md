@@ -1,0 +1,44 @@
+# study — Materials Staging UX Redesign
+**Date:** 2026-03-22 | **Tier:** Medium | **Execution:** Step 1 (SA) → Step 2 (DEV) → Step 3 (QA) → Step 4 (UXV)
+
+## How to Run This Plan
+
+Paste this into Claude Code:
+
+Read the orchestration plan at `study/knowledge/decisions/executable-materials-staging-redesign-2026-03-22.md`. Execute each step sequentially. After completing each step, stop and wait for user confirmation before proceeding. The plan has 4 steps.
+
+---
+---
+
+## STEP 1 — SA (Blueprint)
+
+---
+
+> You are the Study Systems Analyst. Read your specialist file at `study/agents/STUDY_SYSTEMS_ANALYST.md` and the domain glossary at `study/knowledge/research/domain-glossary.md` first. Then read the UXD design direction at `study/knowledge/design/materials-staging-ux-2026-03-13.md` — this is the approved visual spec. Then read `study/src/screens/MaterialsScreen.jsx` (full file). **Task:** Produce a component architecture blueprint for the MaterialsScreen staging area redesign. The UXD spec defines the visual design; your blueprint defines the component structure the developer implements against. **Specifically define:** (1) JSX skeleton for the staging container — show the exact nesting: staging wrapper → upload zone (centered, 280px) → "Add to Course" button (conditional) → staged files grid (3-col, grouped). (2) Grouping logic for staged files — how `files` array gets partitioned into Unclassified + classification groups, using existing `CLS_ORDER`. Show the data transformation (not pseudocode — actual JS logic the DEV copies). (3) Unclassified card component — exact props, dimensions (taller than 72px to fit classify buttons), button layout (2 rows: 4+3), click handler signature (`classify(index, classification)`). (4) Classified compact card — same 72px pattern as committed materials grid, with expand-to-reclassify on click (reuses `expandedStaged` state already in the file). (5) Classification transition — how React handles the card moving from Unclassified to a classification group. Specify whether this is CSS animation + key change, or `layoutId` style, or simple re-render. The UXD spec says 150ms fade — confirm the mechanism. (6) "Add to Course" button visibility logic — the exact conditional expression. (7) State variables — the file already has `expandedStaged`, `stagedCollapsedGroups`, `classifyingFile`. Confirm which are needed and which are dead. **Constraints:** Only `MaterialsScreen.jsx` is modified. No StudyContext changes. No new files. No new dependencies. The committed materials grid below the staging area is untouched. **Blueprint must include** a "How to verify" section with testable acceptance criteria. **Deposit:** `study/knowledge/architecture/materials-staging-blueprint-2026-03-22.md`. Next is Step 2 (DEV). Stop here and wait for user confirmation before proceeding.
+
+---
+---
+
+## STEP 2 — DEV (Implementation)
+
+---
+
+> You are the Study Developer. Read your specialist file at `study/agents/STUDY_DEVELOPER.md` and the domain glossary at `study/knowledge/research/domain-glossary.md` first. Then read the SA blueprint at `study/knowledge/architecture/materials-staging-blueprint-2026-03-22.md` — this is your implementation spec. Reference the UXD design direction at `study/knowledge/design/materials-staging-ux-2026-03-13.md` for token values and visual details. Then read `study/src/screens/MaterialsScreen.jsx` (full file). **Task:** Implement the staging area redesign in `MaterialsScreen.jsx` per the SA blueprint. The blueprint specifies exact JSX skeleton, grouping logic, card components, animation mechanism, and conditional rendering. Implement as a checklist against the blueprint sections. **Key implementation anchors:** The upload zone is currently inside a `div` with `maxWidth: 280` — center it within the 900px container via `margin: "0 auto"`. The staging container wraps upload zone + button + grid with `background: T.sf`, `border: "1px solid " + T.bd`, `borderRadius: 16`, `padding: 24`, `marginBottom: 32`. The pending files vertical list (`files.map(...)` block) is replaced with the grouped grid. The "Add Materials" button text changes to "Add to Course" and moves above the grid. Existing handlers `onDrop`, `onSelect`, `classify`, `removeF`, `addMats`, `importFromFolder` are unchanged — only the rendering changes. **Constraints:** Only modify `MaterialsScreen.jsx`. Do not change StudyContext.jsx or any other file. Do not change any state management, handler signatures, or data flow. Do not break the committed materials grid below. Build verify: `cd study && npx vite build --mode development`. Commit with message: `"feat: MaterialsScreen staging area redesign — grouped grid + inline classify"`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Next is Step 3 (QA). Stop here and wait for user confirmation before proceeding.
+
+---
+---
+
+## STEP 3 — QA
+
+---
+
+> You are the Study Security & Testing Analyst. Read your specialist file at `study/agents/STUDY_SECURITY_TESTING_ANALYST.md` first. Then read the SA blueprint at `study/knowledge/architecture/materials-staging-blueprint-2026-03-22.md` for acceptance criteria. Then read `study/src/screens/MaterialsScreen.jsx` (post-implementation). **Verification areas:** (1) **Upload flow** — drag-and-drop `onDrop` handler, click-to-browse via `fiRef`, and folder import via `importFromFolder` all still trigger file staging correctly. Expected: all 3 paths produce entries in `files` state. (2) **Classification** — clicking a classify button on an unclassified card calls `classify(index, classification)` with correct args for all 7 types. Classified files appear in correct group. Reclassification via expand works. Expected: PASS per type. (3) **"Add to Course" button** — hidden when any file is unclassified, visible when all classified, calls `addMats()` on click, label is "Add to Course". Expected: conditional logic correct. (4) **Grid layout** — 3-column grid renders, Unclassified group pinned top and always expanded, classification groups use `CLS_ORDER`, collapsible groups work via `stagedCollapsedGroups`. Expected: layout matches blueprint. (5) **Committed materials** — the existing materials grid below staging is completely unchanged — tab filters, expanded cards, retry, remove, status dots all functional. Expected: zero regressions. (6) **Edge cases** — 0 files (only upload zone visible), 1 file, 10+ files, all files same classification, mix of classified and unclassified. Expected: no layout breakage. (7) **Build verification** — `npx vite build --mode development` passes. **Deposit:** `study/knowledge/qa/materials-staging-qa-2026-03-22.md` with per-area PASS/FAIL. Commit with message: `"docs: materials staging QA report"`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Next is Step 4 (UXV). Stop here and wait for user confirmation before proceeding.
+
+---
+---
+
+## STEP 4 — UXV
+
+---
+
+> You are the Study UX Validator. Read your specialist file at `study/agents/STUDY_UX_VALIDATOR.md` first. Then read the UXD design direction at `study/knowledge/design/materials-staging-ux-2026-03-13.md` and the QA report at `study/knowledge/qa/materials-staging-qa-2026-03-22.md`. Then read `study/src/screens/MaterialsScreen.jsx` (post-implementation). **Validation areas:** (1) **Clarity** — is it immediately obvious that Unclassified files need action? Are classify buttons discoverable without instruction? (2) **Speed** — can a user classify 5 files in under 10 seconds (one click each)? Is the button size and spacing sufficient for rapid clicking? (3) **Visual distinction** — does the staging area (`T.sf` bg, border, padding) read as a distinct intake step vs the committed materials dashboard below? Is the separation clear? (4) **Feedback** — when a file is classified, does the transition feel responsive? Is there visual confirmation the file moved to the right group? (5) **"Add to Course" appearance** — is the button's conditional appearance clear and not jarring? Does it feel like progress (all classified → ready to commit)? (6) **Design consistency** — does the staging grid match the committed materials grid pattern (3-col, same card sizing, same group headers)? Are the theme tokens correctly applied per the UXD spec? (7) **Learning science risk** — LOW (this is a file management screen, not a learning interaction). Note any concerns. **Deposit:** `study/knowledge/design/validation/materials-staging-uxv-2026-03-22.md`. **Final:** Move this plan to Done: `mv study/knowledge/decisions/executable-materials-staging-redesign-2026-03-22.md study/knowledge/decisions/Done/`. Commit: `"chore: materials staging redesign complete"`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Plan complete — all steps executed.
