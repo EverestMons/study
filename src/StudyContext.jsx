@@ -17,7 +17,7 @@ import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry,
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
-  parseSkillUpdates, extractKeywords, detectLanguage, TIERS, strengthToTier,
+  parseSkillUpdates, parseInputMode, extractKeywords, detectLanguage, detectMathSubject, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
   completeTierAttempt, loadPracticeMaterialCtx
 } from "./lib/study.js";
@@ -1117,15 +1117,13 @@ export function StudyProvider({ children, setErrorCtx }) {
     if (screen !== "study") setPreviousScreen(screen);
     setScreen("study");
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
-    if (focus.type === "assignment") {
-      var lang = detectLanguage(active.name, focus.assignment?.title || "", "");
-      if (lang) { setInputMode("code"); setDetectedLanguage(lang); }
-    } else if (focus.type === "skill") {
-      var lang2 = detectLanguage(active.name, focus.skill?.name || "", focus.skill?.description || "");
-      if (lang2) { setInputMode("code"); setDetectedLanguage(lang2); }
-    } else {
-      var lang3 = detectLanguage(active.name, "", "");
-      if (lang3) { setInputMode("code"); setDetectedLanguage(lang3); }
+    var _skillName = focus.type === "skill" ? (focus.skill?.name || "") : (focus.type === "assignment" ? (focus.assignment?.title || "") : "");
+    var _skillDesc = focus.type === "skill" ? (focus.skill?.description || "") : "";
+    var _lang = detectLanguage(active.name, _skillName, _skillDesc);
+    if (_lang) {
+      setInputMode("code"); setDetectedLanguage(_lang);
+    } else if (detectMathSubject(active.name, _skillName, _skillDesc)) {
+      setInputMode("math");
     }
     try {
       const skills = await loadSkillsV2(active.id);
@@ -1322,6 +1320,13 @@ export function StudyProvider({ children, setErrorCtx }) {
           }
           cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, ctx: updatedCtx };
         }
+      }
+
+      // Parse INPUT_MODE tag from AI response
+      var parsedMode = parseInputMode(response);
+      if (parsedMode) {
+        setInputMode(parsedMode.mode);
+        if (parsedMode.language) setDetectedLanguage(parsedMode.language);
       }
 
       const unlockId = parseQuestionUnlock(response);

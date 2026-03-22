@@ -59,12 +59,15 @@ export const renderMd = (text) => {
     .replace(/\[SKILL_UPDATE\][\s\S]*?\[\/SKILL_UPDATE\]/g, "")
     .replace(/\[UNLOCK_QUESTION\][\s\S]*?\[\/UNLOCK_QUESTION\]/g, "")
     .replace(/\[SHOW_IMAGE\][\s\S]*?\[\/SHOW_IMAGE\]/g, "")
+    .replace(/\[INPUT_MODE:\s*[^\]]*\]/g, "")
     .replace(/\[SKILL_UPDATE\][\s\S]*$/g, "")
     .replace(/\[SKILL_UPDA[\s\S]*$/g, "")
     .replace(/\[UNLOCK_QUESTION\][\s\S]*$/g, "")
     .replace(/\[UNLOCK_QU[\s\S]*$/g, "")
     .replace(/\[SHOW_IMAGE\][\s\S]*$/g, "")
     .replace(/\[SHOW_IM[\s\S]*$/g, "")
+    .replace(/\[INPUT_MODE[^\]]*$/g, "")
+    .replace(/\[INPUT_MO[\s\S]*$/g, "")
     .trim();
   const lines = clean.split("\n");
   const els = [];
