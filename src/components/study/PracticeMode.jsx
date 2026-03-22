@@ -19,6 +19,19 @@ const CodeEditor = React.lazy(() => import("./CodeEditor.jsx").catch(e => {
   }};
 }));
 
+// IES Rec 6a: Confidence calibration analysis
+function computeCalibration(problems) {
+  var rated = problems.filter(function(p) { return p.confidenceRating !== null && p.passed !== null; });
+  if (rated.length < 3) return { tendency: "insufficient", sampleSize: rated.length, score: null };
+  var deltas = rated.map(function(p) { return ((p.confidenceRating - 1) / 4) - (p.passed ? 1 : 0); });
+  var avgDelta = deltas.reduce(function(s, d) { return s + d; }, 0) / deltas.length;
+  var tendency;
+  if (avgDelta > 0.15) tendency = "overconfident";
+  else if (avgDelta < -0.15) tendency = "underconfident";
+  else tendency = "well-calibrated";
+  return { tendency: tendency, sampleSize: rated.length, score: Math.round(avgDelta * 100) / 100 };
+}
+
 export default function PracticeMode() {
   const {
     active,
@@ -96,6 +109,17 @@ export default function PracticeMode() {
                 </div>
               ))}
             </div>
+            {/* IES Rec 6a: Confidence calibration feedback */}
+            {pm.tierComplete.calibration && pm.tierComplete.calibration.tendency !== "insufficient" && (
+              <div style={{ fontSize: 12, color: T.txD, marginBottom: 16, padding: "8px 12px", background: T.sf, borderRadius: 8, textAlign: "left" }}>
+                <span style={{ fontWeight: 600 }}>Calibration: </span>
+                {pm.tierComplete.calibration.tendency === "well-calibrated"
+                  ? "Your confidence matched your performance. Good self-awareness."
+                  : pm.tierComplete.calibration.tendency === "overconfident"
+                    ? "You tended to rate higher confidence than your results showed. Notice which topics feel solid vs. actually are."
+                    : "You underestimated yourself -- you did better than expected. Trust your preparation more."}
+              </div>
+            )}
             <button onClick={async () => {
               if (pm.tierComplete.advanced) {
                 // Generate problems for new tier
@@ -321,11 +345,14 @@ export default function PracticeMode() {
                           if (tierResult.points > 0) {
                             addNotif("skill", pm.skill.name + ": +" + tierResult.points + " pts (Tier " + tier + " " + tierResult.tierName + ")");
                           }
+                          // Compute confidence calibration for this tier attempt
+                          var calibration = computeCalibration(attempt.problems);
+
                           // Show tier complete after a brief delay to let feedback show
                           setTimeout(() => {
                             setPracticeMode(prev => ({
                               ...prev, set: updatedSet,
-                              tierComplete: { ...tierResult, problems: attempt.problems }
+                              tierComplete: { ...tierResult, problems: attempt.problems, calibration: calibration }
                             }));
                           }, 2000);
                         }
