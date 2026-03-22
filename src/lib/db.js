@@ -2371,7 +2371,7 @@ export const FacetMastery = {
        JOIN facets f ON fm.facet_id = f.id
        JOIN sub_skills ss ON f.skill_id = ss.id
        WHERE fm.next_review_at IS NOT NULL AND fm.next_review_at <= ?
-         AND f.is_archived = 0 AND ss.is_archived = 0
+         AND f.is_archived = 0 AND ss.is_archived = 0 AND ss.unified_into IS NULL
          ${courseFilter}
        ORDER BY fm.next_review_at`, params
     );
