@@ -67,7 +67,10 @@ export function htmlToMarkdown(html) {
     image_count: 0,
     images: [],
     list_count: 0,
+    ordered_list_count: 0,
+    unordered_list_count: 0,
     equation_indicators: 0,
+    blockquote_count: 0,
   };
 
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -196,6 +199,7 @@ export function htmlToMarkdown(html) {
       // === Lists ===
       case 'ul': {
         metadata.list_count++;
+        metadata.unordered_list_count++;
         listDepth++;
         const result = '\n' + childText();
         listDepth--;
@@ -204,6 +208,7 @@ export function htmlToMarkdown(html) {
 
       case 'ol': {
         metadata.list_count++;
+        metadata.ordered_list_count++;
         listDepth++;
         olCounters.push(0);
         const result = '\n' + childText();
@@ -261,6 +266,7 @@ export function htmlToMarkdown(html) {
 
       // === Block quotes ===
       case 'blockquote': {
+        metadata.blockquote_count++;
         const text = childText().trim();
         if (!text) return '';
         return '\n> ' + text.replace(/\n/g, '\n> ') + '\n\n';
@@ -435,7 +441,8 @@ export function computeSectionMetadata(markdown) {
   const meta = {
     bold_term_count: 0, bold_terms: [], definition_count: 0, definitions: [],
     example_count: 0, code_block_count: 0, table_count: 0, image_count: 0,
-    images: [], list_count: 0, equation_indicators: 0,
+    images: [], list_count: 0, ordered_list_count: 0, unordered_list_count: 0,
+    equation_indicators: 0, blockquote_count: 0, subsection_count: 0, subsections: [],
   };
 
   const boldMatches = markdown.match(/\*\*([^*]+)\*\*/g) || [];
@@ -450,8 +457,43 @@ export function computeSectionMetadata(markdown) {
   meta.table_count = (markdown.match(/^\|\s*---/gm) || []).length;
   meta.image_count = (markdown.match(/!\[[^\]]*\]\([^)]+\)/g) || []).length;
 
-  const listStarts = markdown.match(/^(?:- |\d+\. )/gm) || [];
-  meta.list_count = listStarts.length > 0 ? 1 : 0;
+  // Count list blocks by scanning lines for list-start transitions
+  var _inOl = false, _inUl = false;
+  var _inBq = false;
+  for (const _line of markdown.split('\n')) {
+    const _trimmed = _line.trimStart();
+    // List detection
+    if (/^\d+\.\s/.test(_trimmed)) {
+      if (!_inOl) { meta.ordered_list_count++; _inOl = true; }
+      _inUl = false;
+    } else if (/^[-*]\s/.test(_trimmed)) {
+      if (!_inUl) { meta.unordered_list_count++; _inUl = true; }
+      _inOl = false;
+    } else if (_trimmed !== '') {
+      _inOl = false;
+      _inUl = false;
+    }
+    // Blockquote detection
+    if (_line.startsWith('> ')) {
+      if (!_inBq) { meta.blockquote_count++; _inBq = true; }
+    } else {
+      _inBq = false;
+    }
+  }
+  meta.list_count = meta.ordered_list_count + meta.unordered_list_count;
+
+  // Subsection headings
+  const _headingRe = /^#{1,6}\s+(.+)$/gm;
+  var _hm;
+  const _allHeadings = [];
+  while ((_hm = _headingRe.exec(markdown))) {
+    _allHeadings.push({ text: _hm[1].trim(), pos: _hm.index });
+  }
+  // Skip the first heading if it's the section's own heading (at the start of content)
+  const _subsections = _allHeadings.length > 0 && _allHeadings[0].pos < 3
+    ? _allHeadings.slice(1) : _allHeadings;
+  meta.subsection_count = _subsections.length;
+  meta.subsections = _subsections.map(h => h.text);
 
   const defMatches = markdown.match(/\*\*[^*]+\*\*\s*[:—–-]\s*[A-Z]/g) || [];
   meta.definition_count = defMatches.length;

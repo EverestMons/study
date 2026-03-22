@@ -8,6 +8,8 @@
 // oversized/undersized chunks, computes content hashes.
 // ============================================================
 
+import { computeSectionMetadata } from './htmlToMarkdown.js';
+
 // --- Target chunk sizes (chars) ---
 const MIN_CHUNK = 2000;
 const IDEAL_MAX = 15000;
@@ -153,6 +155,7 @@ function splitLargeSections(sections) {
             section_path: sec.section_path + '.' + (i + 1),
             content: subContent,
             char_count: subContent.length,
+            structural_metadata: computeSectionMetadata(subContent),
           });
         }
         continue;
@@ -170,6 +173,7 @@ function splitLargeSections(sections) {
         section_path: sec.section_path + (paragraphSplits.length > 1 ? '.' + (i + 1) : ''),
         content: part,
         char_count: part.length,
+        structural_metadata: computeSectionMetadata(part),
       });
     }
   }
@@ -342,7 +346,12 @@ function mergeMetadata(a, b) {
     image_count: (a.image_count || 0) + (b.image_count || 0),
     images: [...(a.images || []), ...(b.images || [])],
     list_count: (a.list_count || 0) + (b.list_count || 0),
+    ordered_list_count: (a.ordered_list_count || 0) + (b.ordered_list_count || 0),
+    unordered_list_count: (a.unordered_list_count || 0) + (b.unordered_list_count || 0),
     equation_indicators: (a.equation_indicators || 0) + (b.equation_indicators || 0),
+    blockquote_count: (a.blockquote_count || 0) + (b.blockquote_count || 0),
+    subsection_count: (a.subsection_count || 0) + (b.subsection_count || 0),
+    subsections: [...(a.subsections || []), ...(b.subsections || [])],
   };
 }
 

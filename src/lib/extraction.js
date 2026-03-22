@@ -103,6 +103,11 @@ function aggregateMetadata(chunks) {
   let tableCount = 0;
   let imageCount = 0;
   let codeBlockCount = 0;
+  let blockquoteCount = 0;
+  let subsectionCount = 0;
+  const subsections = [];
+  let orderedListCount = 0;
+  let unorderedListCount = 0;
 
   for (const chunk of chunks) {
     const meta = typeof chunk.structural_metadata === 'string'
@@ -117,6 +122,11 @@ function aggregateMetadata(chunks) {
     tableCount += meta.table_count || 0;
     imageCount += meta.image_count || 0;
     codeBlockCount += meta.code_block_count || 0;
+    blockquoteCount += meta.blockquote_count || 0;
+    subsectionCount += meta.subsection_count || 0;
+    for (const sub of (meta.subsections || [])) subsections.push(sub);
+    orderedListCount += meta.ordered_list_count || 0;
+    unorderedListCount += meta.unordered_list_count || 0;
   }
 
   return {
@@ -128,6 +138,11 @@ function aggregateMetadata(chunks) {
     tableCount,
     imageCount,
     codeBlockCount,
+    blockquoteCount,
+    subsectionCount,
+    subsections,
+    orderedListCount,
+    unorderedListCount,
   };
 }
 
@@ -209,6 +224,7 @@ export function buildChapterProfile(chapterGroup) {
     quantitative: (meta.equationIndicators || 0) > 10,
     referenceHeavy: (meta.tableCount || 0) > 3,
     codeHeavy: (meta.codeBlockCount || 0) > 2,
+    structured: (meta.subsectionCount || 0) > 2,
   };
 
   // Build candidate skill list from structural elements
@@ -305,6 +321,8 @@ STRUCTURAL ANALYSIS (from document parsing):
 - Equation/math content: ${eqLevel}
 - Tables: ${profile.contentSignals?.referenceHeavy ? 'many' : 'few/none'}
 - Code blocks: ${profile.contentSignals?.codeHeavy ? 'yes' : 'few/none'}
+- Blockquotes: ${(chapterGroup.aggregateMetadata?.blockquoteCount || 0) > 0 ? chapterGroup.aggregateMetadata.blockquoteCount : 'none'}
+- Internal structure: ${(chapterGroup.aggregateMetadata?.subsectionCount || 0) > 0 ? chapterGroup.aggregateMetadata.subsectionCount + ' subsections' : 'flat (no sub-headings)'}
 
 TARGET: Extract ${min}-${max} skills, each with 2-6 facets.
 

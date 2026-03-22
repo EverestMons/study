@@ -451,7 +451,12 @@ function mergeSectionMetadata(metadataArray) {
     image_count: 0,
     images: [],
     list_count: 0,
+    ordered_list_count: 0,
+    unordered_list_count: 0,
     equation_indicators: 0,
+    blockquote_count: 0,
+    subsection_count: 0,
+    subsections: [],
   };
 
   for (const m of metadataArray) {
@@ -459,13 +464,18 @@ function mergeSectionMetadata(metadataArray) {
     combined.bold_terms.push(...(m.bold_terms || []));
     combined.definitions.push(...(m.definitions || []));
     combined.images.push(...(m.images || []));
+    combined.subsections.push(...(m.subsections || []));
     combined.example_count += m.example_count || 0;
     combined.code_block_count += m.code_block_count || 0;
     combined.table_count += m.table_count || 0;
     combined.image_count += m.image_count || 0;
     combined.list_count += m.list_count || 0;
+    combined.ordered_list_count += m.ordered_list_count || 0;
+    combined.unordered_list_count += m.unordered_list_count || 0;
     combined.equation_indicators += m.equation_indicators || 0;
     combined.definition_count += m.definition_count || 0;
+    combined.blockquote_count += m.blockquote_count || 0;
+    combined.subsection_count += m.subsection_count || 0;
   }
 
   combined.bold_terms = [...new Set(combined.bold_terms)];
