@@ -62,7 +62,21 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [asyncError, setAsyncError] = useState(null);
 
   const [screen, setScreen] = useState("home");
-  const [previousScreen, setPreviousScreen] = useState("courseHome");
+  const [navStack, setNavStack] = useState([]);
+
+  const navigateTo = (target) => {
+    if (target === screen) return;
+    setNavStack(prev => [...prev, screen]);
+    setScreen(target);
+  };
+  const goBack = () => {
+    setNavStack(prev => {
+      if (prev.length === 0) { setScreen("home"); return []; }
+      setScreen(prev[prev.length - 1]);
+      return prev.slice(0, -1);
+    });
+  };
+  const resetNav = (target) => { setNavStack([]); setScreen(target || "home"); };
   const [courses, setCourses] = useState([]);
   const [active, setActive] = useState(null);
   const [ready, setReady] = useState(false);
@@ -689,7 +703,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
     // Phase 1 complete — unblock UI
     setGlobalLock(null); setStatus("");
-    setScreen("materials");
+    navigateTo("materials");
 
     // === PHASE 2 (non-blocking): skill extraction ===
     var extractable = mats.filter(m => m.classification !== "assignment" && m.classification !== "syllabus" && (m.chunks || []).length > 0);
@@ -887,8 +901,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   };
 
   const enterStudy = async (course, initialMode, materialId) => {
-    setPreviousScreen(screen);
-    setActive(course); setScreen("study");
+    setActive(course); navigateTo("study");
     setMsgs([]); setInput(""); setInputMode("text"); setDetectedLanguage(null); setSessionMode(null); setFocusContext(null); setPickerData(null); setChunkPicker(null); setAsgnWork(null); setPracticeMode(null);
     sessionSkillLog.current = [];
     sessionMasteryEvents.current = [];
@@ -1129,8 +1142,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   // --- Boot with focused context ---
   const bootWithFocus = async (focus) => {
     if (!active) return;
-    if (screen !== "study") setPreviousScreen(screen);
-    setScreen("study");
+    if (screen !== "study") navigateTo("study");
     setFocusContext(focus); setPickerData(null); setBooting(true); setStatus("Loading...");
     var _skillName = focus.type === "skill" ? (focus.skill?.name || "") : (focus.type === "assignment" ? (focus.assignment?.title || "") : "");
     var _skillDesc = focus.type === "skill" ? (focus.skill?.description || "") : "";
@@ -1382,7 +1394,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       } catch (e) { console.warn('[ImageCleanup] Course:', e); }
       await Courses.delete(id);
       setCourses(p => p.filter(c => c.id !== id));
-      if (active?.id === id) { setActive(null); setScreen("home"); }
+      if (active?.id === id) { setActive(null); resetNav("home"); }
     } catch (e) {
       addNotif("error", "Failed to delete course: " + e.message);
     } finally { setGlobalLock(null); }
@@ -1603,7 +1615,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const value = useMemo(() => ({
     // State
     asyncError, setAsyncError, showAsyncNuclear, setShowAsyncNuclear,
-    screen, setScreen, previousScreen, setPreviousScreen,
+    screen, setScreen, navigateTo, goBack, resetNav,
     courses, setCourses, active, setActive, ready,
     showSettings, setShowSettings, apiKeyLoaded, setApiKeyLoaded,
     apiKeyInput, setApiKeyInput, keyVerifying, setKeyVerifying, keyError, setKeyError,
@@ -1653,7 +1665,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     testApiKey,
   }), [ // eslint-disable-line react-hooks/exhaustive-deps -- setters, refs, callbacks, and lib re-exports are stable
     asyncError, showAsyncNuclear,
-    screen, previousScreen, courses, active, ready,
+    screen, navStack, courses, active, ready,
     showSettings, apiKeyLoaded, apiKeyInput, keyVerifying, keyError,
     files, cName, drag, parsing,
     msgs, input, inputMode, detectedLanguage, exporting, busy, booting,

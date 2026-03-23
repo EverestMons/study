@@ -3,7 +3,7 @@ import { T, CSS } from "../lib/theme.jsx";
 import { useStudy } from "../StudyContext.jsx";
 
 export default function ExtractionProgress() {
-  const { bgExtraction, status, setScreen, extractionCancelledRef } = useStudy();
+  const { bgExtraction, status, navigateTo, extractionCancelledRef } = useStudy();
 
   if (!bgExtraction) return null;
 
@@ -16,7 +16,7 @@ export default function ExtractionProgress() {
 
   return (
     <div
-      onClick={() => setScreen("materials")}
+      onClick={() => navigateTo("materials")}
       style={{
         position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)",
         zIndex: 100, cursor: "pointer",

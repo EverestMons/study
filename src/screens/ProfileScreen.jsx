@@ -13,7 +13,7 @@ export default function ProfileScreen() {
   const {
     courses, profileData,
     expandedProfile, setExpandedProfile, expandedSubSkill, setExpandedSubSkill,
-    setScreen, setSessionMode, setPracticeMode,
+    navigateTo, goBack, setSessionMode, setPracticeMode,
     enterStudy, addNotif,
   } = useStudy();
 
@@ -110,7 +110,7 @@ export default function ProfileScreen() {
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <button onClick={() => {
           if (profileView) { setProfileView(null); setExpandedSubSkill(null); }
-          else { setScreen("home"); setExpandedSubSkill(null); }
+          else { goBack(); setExpandedSubSkill(null); }
         }} style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
           onMouseLeave={e => e.currentTarget.style.background = "none"}>
@@ -454,7 +454,7 @@ export default function ProfileScreen() {
             <div style={{ textAlign: "center", padding: "32px 16px", color: T.txD, fontSize: 15, background: T.sf, borderRadius: 10, border: "1px solid " + T.bd }}>
               Upload course materials to start building your skill profile
               <div style={{ marginTop: 12 }}>
-                <button onClick={() => setScreen("upload")}
+                <button onClick={() => navigateTo("upload")}
                   style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid " + T.ac, background: T.acS, color: T.ac, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   Go to Upload
                 </button>

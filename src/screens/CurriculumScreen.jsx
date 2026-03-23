@@ -41,7 +41,7 @@ function masteryToStrength(m) {
 var URGENCY_COLORS = { overdue: T.rd, urgent: T.rd, soon: T.am, normal: T.ac, none: T.txM };
 
 export default function CurriculumScreen() {
-  var { active, setScreen, bootWithFocus } = useStudy();
+  var { active, goBack, navigateTo, bootWithFocus } = useStudy();
 
   var [activeAssignments, setActiveAssignments] = useState(null);
   var [reviewPool, setReviewPool] = useState([]);
@@ -182,7 +182,7 @@ export default function CurriculumScreen() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={function () { setScreen("courseHome"); }}
+        <button onClick={function () { goBack(); }}
           style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={function (e) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={function (e) { e.currentTarget.style.background = "none"; }}>&lt; Back</button>
@@ -203,7 +203,7 @@ export default function CurriculumScreen() {
             <div style={{ textAlign: "center", padding: "24px 16px", background: "rgba(251,191,36,0.06)", borderRadius: 10, border: "1px solid rgba(251,191,36,0.15)", marginBottom: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, marginBottom: 8 }}>Upload course materials first</div>
               <div style={{ fontSize: 13, color: T.txD, marginBottom: 14 }}>Assignment decomposition requires extracted skills from your course materials.</div>
-              <button onClick={function () { setScreen("materials"); }}
+              <button onClick={function () { navigateTo("materials"); }}
                 style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
                 Go to Materials
               </button>
@@ -485,11 +485,11 @@ export default function CurriculumScreen() {
                 Activate assignments on the schedule to start tracking readiness, or go to materials to manage your uploads.
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button onClick={function () { setScreen("schedule"); }}
+                <button onClick={function () { navigateTo("schedule"); }}
                   style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   Go to Schedule
                 </button>
-                <button onClick={function () { setScreen("materials"); }}
+                <button onClick={function () { navigateTo("materials"); }}
                   style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
                   Materials
                 </button>

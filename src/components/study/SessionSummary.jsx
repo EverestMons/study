@@ -7,8 +7,8 @@ const formatKey = (k) => k.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCas
 
 export default function SessionSummary() {
   const {
-    msgs, setScreen,
-    previousScreen, clearSessionState,
+    msgs, goBack,
+    clearSessionState,
     exporting, setExporting,
     sessionSummary, setSessionSummary,
   } = useStudy();
@@ -181,8 +181,7 @@ export default function SessionSummary() {
 
         <button onClick={function() {
           clearSessionState();
-          var safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
-          setScreen(safeScreen);
+          goBack();
         }}
           style={{ width: "100%", padding: "14px 20px", borderRadius: 12, border: "none", background: T.ac, color: "#0F1115", fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 8 }}>
           Done

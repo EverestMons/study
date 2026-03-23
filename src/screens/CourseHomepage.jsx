@@ -7,7 +7,7 @@ import { useStudy } from "../StudyContext.jsx";
 import TopBarButtons from "../components/TopBarButtons.jsx";
 
 export default function CourseHomepage() {
-  var { active, setScreen, enterStudy } = useStudy();
+  var { active, navigateTo, goBack, enterStudy } = useStudy();
   var [data, setData] = useState(null);
 
   useEffect(function () {
@@ -128,19 +128,19 @@ export default function CourseHomepage() {
       title: "Curriculum",
       subtitle: data ? (data.curActiveCount > 0 ? data.curActiveCount + " active \u00B7 " + data.curTotalSkills + " skills" : "No assignments") : "",
       urgency: null,
-      onClick: function () { setScreen("curriculum"); },
+      onClick: function () { navigateTo("curriculum"); },
     },
     {
       title: "Materials",
       subtitle: data ? data.matCount + " material" + (data.matCount !== 1 ? "s" : "") + (data.totalSections > 0 ? " \u00B7 " + data.totalSections + " sections" : "") : "",
       urgency: null,
-      onClick: function () { setScreen("materials"); },
+      onClick: function () { navigateTo("materials"); },
     },
     {
       title: "Schedule",
       subtitle: data ? (data.totalWeeks > 0 ? "Week " + (data.currentWeek || "?") + " of " + data.totalWeeks : "No schedule") : "",
       urgency: null,
-      onClick: function () { setScreen("schedule"); },
+      onClick: function () { navigateTo("schedule"); },
     },
   ];
 
@@ -149,7 +149,7 @@ export default function CourseHomepage() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={function () { setScreen("home"); }}
+        <button onClick={function () { goBack(); }}
           style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={function (e) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={function (e) { e.currentTarget.style.background = "none"; }}>&lt; Back</button>

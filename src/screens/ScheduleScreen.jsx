@@ -37,7 +37,7 @@ function readinessColor(v) { return v >= 0.6 ? T.gn : v >= 0.3 ? "#F59E0B" : T.t
 
 export default function ScheduleScreen() {
   var {
-    active, setScreen, enterStudy, setActive,
+    active, goBack, navigateTo, enterStudy, setActive,
   } = useStudy();
 
   var [items, setItems] = useState(null);
@@ -361,7 +361,7 @@ export default function ScheduleScreen() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={function () { setScreen("courseHome"); }}
+        <button onClick={function () { goBack(); }}
           style={{ background: "none", border: "none", color: T.txD, cursor: "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, transition: "all 0.15s ease" }}
           onMouseEnter={function (e) { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={function (e) { e.currentTarget.style.background = "none"; }}>&lt; Back</button>
@@ -391,7 +391,7 @@ export default function ScheduleScreen() {
                 {currSummary.completedCount > 0 && (
                   <span style={{ fontSize: 12, color: T.txD }}>{currSummary.completedCount} submitted</span>
                 )}
-                <button onClick={function () { setScreen("curriculum"); }}
+                <button onClick={function () { navigateTo("curriculum"); }}
                   style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
                   View Curriculum
                 </button>

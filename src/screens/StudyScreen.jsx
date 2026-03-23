@@ -19,8 +19,8 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 export default function StudyScreen() {
   const {
     msgs, setMsgs, setInput, setInputMode,
-    setScreen, active,
-    previousScreen, clearSessionState,
+    goBack, active,
+    clearSessionState,
     sessionMode, setSessionMode,
     pickerData, setPickerData,
     chunkPicker, setChunkPicker,
@@ -44,8 +44,7 @@ export default function StudyScreen() {
     // Practice mode: exit cleanly (progress already auto-saved)
     if (practiceMode && msgs.length === 0) {
       clearSessionState();
-      const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
-      setScreen(safeScreen);
+      goBack();
       return;
     }
     if (msgs.length > 1 && sessionStartTime.current) {
@@ -63,8 +62,7 @@ export default function StudyScreen() {
     } else {
       await saveSessionToJournal();
       clearSessionState();
-      const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
-      setScreen(safeScreen);
+      goBack();
     }
   };
 
@@ -72,8 +70,7 @@ export default function StudyScreen() {
     setSessionMode(null); setPickerData(null); setChunkPicker(null);
     setPracticeMode(null); setFocusContext(null); setInputMode("text");
     setMsgs([]); setInput("");
-    const safeScreen = (previousScreen && previousScreen !== "study") ? previousScreen : "courseHome";
-    setScreen(safeScreen);
+    goBack();
   };
 
   return (

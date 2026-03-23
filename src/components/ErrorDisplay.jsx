@@ -8,7 +8,7 @@ export default function ErrorDisplay() {
   if (!ctx) return null;
   const {
     asyncError, setAsyncError, showAsyncNuclear, setShowAsyncNuclear,
-    screen, active, sessionMode, addNotif, setScreen,
+    screen, active, sessionMode, addNotif, resetNav,
   } = ctx;
 
   const report = [
@@ -46,7 +46,7 @@ export default function ErrorDisplay() {
             style={{ padding: "10px 20px", background: T.ac, color: "#0F1115", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Copy to clipboard</button>
           <button onClick={() => setAsyncError(null)}
             style={{ padding: "10px 20px", background: T.sf, color: T.tx, border: "1px solid " + T.bd, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Dismiss</button>
-          <button onClick={() => { setAsyncError(null); setScreen("home"); }}
+          <button onClick={() => { setAsyncError(null); resetNav("home"); }}
             style={{ padding: "10px 20px", background: T.sf, color: T.tx, border: "1px solid " + T.bd, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Go home</button>
         </div>
         <div style={{ marginTop: 32, paddingTop: 20, borderTop: "1px solid " + T.bd }}>

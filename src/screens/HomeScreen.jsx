@@ -7,7 +7,7 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 export default function HomeScreen() {
   const {
     courses, cName, setCName, pendingConfirm, setPendingConfirm,
-    setScreen, setActive, quickCreateCourse, delCourse,
+    navigateTo, setActive, quickCreateCourse, delCourse,
   } = useStudy();
 
   var [showAddForm, setShowAddForm] = useState(false);
@@ -49,7 +49,7 @@ export default function HomeScreen() {
               const types = [...new Set(mats.map(m => m.classification))].filter(Boolean).map(v => CLS.find(cl => cl.v === v)?.l || v).join(", ");
 
               return (
-                <div key={c.id} onClick={() => { setActive(c); setScreen("courseHome"); }}
+                <div key={c.id} onClick={() => { setActive(c); navigateTo("courseHome"); }}
                   style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "12px 14px", cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
                   onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
                   onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>

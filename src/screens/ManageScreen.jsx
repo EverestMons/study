@@ -8,7 +8,7 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 export default function ManageScreen() {
   const {
     active, processingMatId, globalLock,
-    setScreen, setSkillViewData,
+    goBack, navigateTo, setSkillViewData,
   } = useStudy();
 
   return (
@@ -18,7 +18,7 @@ export default function ManageScreen() {
       <style>{CSS}</style>
       {/* Top bar */}
       <div style={{ borderBottom: "1px solid " + T.bd, padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <button onClick={() => { if (!processingMatId) setScreen("courseHome"); }}
+        <button onClick={() => { if (!processingMatId) goBack(); }}
           style={{ background: "none", border: "none", color: processingMatId ? T.txM : T.txD, cursor: processingMatId ? "not-allowed" : "pointer", fontSize: 14, padding: "4px 8px", borderRadius: 6, opacity: processingMatId ? 0.5 : 1, transition: "all 0.15s ease" }}
           onMouseEnter={e => { if (!processingMatId) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
           onMouseLeave={e => e.currentTarget.style.background = "none"}>
@@ -32,7 +32,7 @@ export default function ManageScreen() {
           <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32 }}>Manage your course content</p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <button onClick={() => setScreen("materials")}
+            <button onClick={() => navigateTo("materials")}
               style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
               onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
               onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
@@ -43,7 +43,7 @@ export default function ManageScreen() {
             <button onClick={async () => {
               var sk = await loadSkillsV2(active.id);
               setSkillViewData({ skills: sk, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
-              setScreen("skills");
+              navigateTo("skills");
             }}
               style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
               onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
