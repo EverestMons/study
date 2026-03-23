@@ -6,16 +6,46 @@ import { effectiveStrength, nextReviewDate } from "../lib/study.js";
 import { useStudy } from "../StudyContext.jsx";
 import TopBarButtons from "../components/TopBarButtons.jsx";
 
+function getNextSkill(skills) {
+  if (!Array.isArray(skills) || skills.length === 0) return null;
+  var today = new Date().toISOString().split("T")[0];
+  var strengthMap = new Map();
+  for (var s of skills) strengthMap.set(s.id, effectiveStrength(s));
+
+  var eligible = skills.filter(function (s) {
+    var str = strengthMap.get(s.id) || 0;
+    if (str >= 0.7) return false;
+    var prereqsSatisfied = (s.prerequisites || []).every(function (p) {
+      return (strengthMap.get(p.id) || 0) >= 0.5;
+    });
+    return prereqsSatisfied;
+  });
+
+  if (eligible.length === 0) return null;
+
+  eligible.sort(function (a, b) {
+    var rdA = nextReviewDate(a);
+    var rdB = nextReviewDate(b);
+    var dueA = rdA && rdA <= today ? 1 : 0;
+    var dueB = rdB && rdB <= today ? 1 : 0;
+    if (dueA !== dueB) return dueB - dueA;
+    return (strengthMap.get(a.id) || 0) - (strengthMap.get(b.id) || 0);
+  });
+
+  return eligible[0];
+}
+
 export default function CourseHomepage() {
-  var { active, navigateTo, goBack, enterStudy } = useStudy();
+  var { active, navigateTo, goBack, enterStudy, bootWithFocus } = useStudy();
   var [data, setData] = useState(null);
+  var [skills, setSkills] = useState(null);
 
   useEffect(function () {
     if (!active) return;
     var cancelled = false;
     (async function () {
       try {
-        var [asgn, skills, schedule, curSum] = await Promise.all([
+        var [asgn, loadedSkills, schedule, curSum] = await Promise.all([
           Assignments.getByCourse(active.id),
           loadSkillsV2(active.id),
           CourseSchedule.getByCourse(active.id),
@@ -31,8 +61,8 @@ export default function CourseHomepage() {
         // Exam card
         var nextExam = null;
         var allSkillAvg = 0;
-        if (Array.isArray(skills) && skills.length > 0) {
-          allSkillAvg = skills.reduce(function (s, sk) { return s + effectiveStrength(sk); }, 0) / skills.length;
+        if (Array.isArray(loadedSkills) && loadedSkills.length > 0) {
+          allSkillAvg = loadedSkills.reduce(function (s, sk) { return s + effectiveStrength(sk); }, 0) / loadedSkills.length;
         }
         for (var week of schedule) {
           try {
@@ -50,9 +80,9 @@ export default function CourseHomepage() {
         }
 
         // Skills card
-        var skillTotal = Array.isArray(skills) ? skills.length : 0;
+        var skillTotal = Array.isArray(loadedSkills) ? loadedSkills.length : 0;
         var today = new Date().toISOString().split("T")[0];
-        var dueForReview = Array.isArray(skills) ? skills.filter(function (s) {
+        var dueForReview = Array.isArray(loadedSkills) ? loadedSkills.filter(function (s) {
           var rd = nextReviewDate(s);
           return rd && rd <= today;
         }).length : 0;
@@ -82,6 +112,7 @@ export default function CourseHomepage() {
         }
 
         if (!cancelled) {
+          setSkills(loadedSkills);
           setData({
             activeCount: activeAsgn.length,
             overdueCount: overdueCount,
@@ -104,6 +135,17 @@ export default function CourseHomepage() {
     })();
     return function () { cancelled = true; };
   }, [active?.id]);
+
+  var nextSkill = skills ? getNextSkill(skills) : null;
+  var nextStrength = nextSkill ? effectiveStrength(nextSkill) : 0;
+  var nextStrPct = Math.round(nextStrength * 100);
+  var nextIsNew = nextSkill && !nextSkill.mastery;
+  var nextIsDue = false;
+  if (nextSkill) {
+    var rd = nextReviewDate(nextSkill);
+    var today = new Date().toISOString().split("T")[0];
+    nextIsDue = rd && rd <= today;
+  }
 
   var cards = [
     {
@@ -165,6 +207,35 @@ export default function CourseHomepage() {
               {active ? (active.materials || []).length + " material" + ((active.materials || []).length !== 1 ? "s" : "") : ""}
             </p>
           </div>
+          {/* Continue Studying button */}
+          {nextSkill && (
+            <button
+              onClick={function () { bootWithFocus({ type: "skill", skill: nextSkill }); }}
+              style={{
+                background: T.ac, border: "none", borderRadius: 12, padding: "14px 20px",
+                cursor: "pointer", textAlign: "left", marginBottom: 16, width: "100%",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={function (e) { e.currentTarget.style.opacity = "0.9"; }}
+              onMouseLeave={function (e) { e.currentTarget.style.opacity = "1"; }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "#0F1115" }}>Continue Studying</div>
+                <div style={{ fontSize: 12, color: "rgba(15,17,21,0.7)", marginTop: 2 }}>{nextSkill.name}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {nextIsDue && (
+                  <span style={{ fontSize: 11, fontWeight: 500, color: "#92400E", background: "rgba(245,158,11,0.2)", padding: "2px 8px", borderRadius: 6 }}>Due for review</span>
+                )}
+                {nextIsNew && !nextIsDue && (
+                  <span style={{ fontSize: 11, fontWeight: 500, color: "#0F1115", background: "rgba(15,17,21,0.1)", padding: "2px 8px", borderRadius: 6 }}>New</span>
+                )}
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#0F1115" }}>
+                  {nextIsNew ? "" : nextStrPct + "%"}
+                </span>
+              </div>
+            </button>
+          )}
           {/* Card grid */}
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
