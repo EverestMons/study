@@ -1895,7 +1895,7 @@ export const evaluateAnswer = async (skill, problem, studentAnswer, tier) => {
     (tier === 2 ? "For Tier 2 (fill): the filled portion must make the code work correctly.\n" : "") +
     "\nReturn ONLY JSON:\n{\"passed\": true/false, \"feedback\": \"brief explanation, 2-3 sentences max\"}";
 
-  var result = await callClaude(prompt, [{ role: "user", content: "Evaluate the answer." }], 1024);
+  var result = await callClaude(prompt, [{ role: "user", content: "Evaluate the answer." }], 1024, true);
   if (isApiError(result)) {
     console.warn("[evaluateAnswer] API error:", result);
     return { passed: false, feedback: "Could not evaluate response. Please try again." };

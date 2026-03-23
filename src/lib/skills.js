@@ -242,7 +242,7 @@ export const verifyDocument = async (courseId, mat) => {
   if (loaded.chunks.length > 1) {
     contentPreview = mat.classification.toUpperCase() + ": " + mat.name + " (" + loaded.chunks.length + " chunks)\n\n";
     for (const ch of loaded.chunks) {
-      contentPreview += "--- " + ch.label + " (" + ch.charCount.toLocaleString() + " chars) ---\n" + ch.content.substring(0, 300) + "...\n\n";
+      contentPreview += "--- " + ch.label + " (" + ch.charCount.toLocaleString() + " chars) ---\n" + ch.content.substring(0, 150) + "...\n\n";
     }
   } else {
     contentPreview = mat.classification.toUpperCase() + ": " + mat.name + "\nContent length: " + loaded.content.length.toLocaleString() + " characters\n\n" + loaded.content.substring(0, 8000);
@@ -309,7 +309,18 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
     const skillNameMap = {};
     if (Array.isArray(skills)) for (const s of skills) skillNameMap[s.id] = s.name;
 
-    referenceList = courseFacets.map(f => {
+    // Pre-filter facets by keyword relevance to assignment content
+    const STOPWORDS = new Set(["the","a","an","is","are","was","were","be","been","being","have","has","had","do","does","did","will","would","shall","should","may","might","must","can","could","of","in","to","for","with","on","at","by","from","as","into","through","during","before","after","above","below","between","out","off","over","under","again","further","then","once","and","but","or","nor","not","so","if","than","that","this","these","those","each","every","all","both","few","more","most","other","some","such","no","only","own","same","very","just","about","also","it","its","what","which","who","whom","how","when","where","why"]);
+    const asgnWords = new Set(
+      asgnContent.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !STOPWORDS.has(w))
+    );
+    let filteredFacets = courseFacets.filter(f => {
+      const words = ((f.name || "") + " " + (f.category || "")).toLowerCase().split(/\s+/);
+      return words.some(w => asgnWords.has(w));
+    });
+    if (filteredFacets.length < 10) filteredFacets = courseFacets;
+
+    referenceList = filteredFacets.map(f => {
       const parentName = skillNameMap[f.skill_id] || "";
       return (f.concept_key || String(f.id)) + ": " + f.name + (parentName ? " [under: " + parentName + "]" : "");
     }).join("\n");

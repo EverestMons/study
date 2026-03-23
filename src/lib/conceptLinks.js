@@ -191,7 +191,11 @@ export async function generateFacetConceptLinks(courseId, newFacetIds, options =
     return stats;
   }
 
-  // Batch existing facets if there are too many for a single prompt
+  // Batch both new and existing facets
+  const newBatches = [];
+  for (let i = 0; i < newFacets.length; i += FACET_BATCH_SIZE) {
+    newBatches.push(newFacets.slice(i, i + FACET_BATCH_SIZE));
+  }
   const existBatches = [];
   for (let i = 0; i < existingFacets.length; i += FACET_BATCH_SIZE) {
     existBatches.push(existingFacets.slice(i, i + FACET_BATCH_SIZE));
@@ -199,9 +203,10 @@ export async function generateFacetConceptLinks(courseId, newFacetIds, options =
 
   const validTypes = new Set(['same_concept', 'prerequisite', 'related']);
 
+  for (const newBatch of newBatches) {
   for (const existBatch of existBatches) {
     try {
-      const { system, user } = buildFacetPrompt(newFacets, existBatch);
+      const { system, user } = buildFacetPrompt(newBatch, existBatch);
       const response = await callClaude(system, [{ role: 'user', content: user }], 4096, true);
       stats.batches++;
 
@@ -216,7 +221,7 @@ export async function generateFacetConceptLinks(courseId, newFacetIds, options =
         continue;
       }
 
-      const validNewIds = new Set(newFacets.map(f => f.id));
+      const validNewIds = new Set(newBatch.map(f => f.id));
       const validExistIds = new Set(existBatch.map(f => f.id));
 
       const validLinks = [];
@@ -243,6 +248,7 @@ export async function generateFacetConceptLinks(courseId, newFacetIds, options =
     } catch (e) {
       stats.issues.push({ batch: stats.batches, error: e.message });
     }
+  }
   }
 
   return stats;
