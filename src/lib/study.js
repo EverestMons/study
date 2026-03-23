@@ -827,10 +827,20 @@ const loadChunksForBindings = async (bindings, { charLimit = 24000 } = {}) => {
     seen.add(b.chunk_id);
     uniqueBindings.push(b);
   }
-  // Batch-load content
+  // Batch-load content + metadata (ordering, section_path, material_id)
   var chunkIds = uniqueBindings.map(b => b.chunk_id);
   var contentRows = await Chunks.getContentBatch(chunkIds);
   var contentMap = new Map(contentRows.map(r => [r.id, r.content]));
+  // Load metadata for position info
+  var metaMap = new Map();
+  try {
+    if (chunkIds.length > 0) {
+      for (var cid of chunkIds) {
+        var chRow = await Chunks.getById(cid);
+        if (chRow) metaMap.set(chRow.id, chRow);
+      }
+    }
+  } catch { /* metadata enrichment non-critical */ }
 
   var results = [];
   var totalChars = 0;
@@ -842,27 +852,27 @@ const loadChunksForBindings = async (bindings, { charLimit = 24000 } = {}) => {
       try { var parsed = JSON.parse(raw); if (parsed.content) raw = parsed.content; } catch { /* ignore */ }
     }
     var content = extractContentRange(raw, ub.content_range);
-    if (totalChars + content.length > charLimit) {
-      // Truncate last chunk to fit
-      var remaining = charLimit - totalChars;
-      if (remaining > 200) {
-        results.push({
-          chunkId: ub.chunk_id,
-          label: ub.chunk_label || '',
-          content: content.substring(0, remaining),
-          bindingType: ub.binding_type,
-          facetId: ub.facet_id,
-        });
-      }
-      break;
-    }
-    results.push({
+    var meta = metaMap.get(ub.chunk_id);
+    var chunkResult = {
       chunkId: ub.chunk_id,
       label: ub.chunk_label || '',
       content,
       bindingType: ub.binding_type,
       facetId: ub.facet_id,
-    });
+      ordering: meta?.ordering ?? null,
+      sectionPath: meta?.section_path || null,
+      materialId: meta?.material_id || null,
+    };
+    if (totalChars + content.length > charLimit) {
+      // Truncate last chunk to fit
+      var remaining = charLimit - totalChars;
+      if (remaining > 200) {
+        chunkResult.content = content.substring(0, remaining);
+        results.push(chunkResult);
+      }
+      break;
+    }
+    results.push(chunkResult);
     totalChars += content.length;
   }
   return results;
@@ -970,6 +980,67 @@ const facetsForSkill = async (skill) => {
   try { return await Facets.getBySkill(skill.id); } catch { return []; }
 };
 
+// --- Section Path Parsing ---
+
+/** Parse a section_path string into structured parts. */
+const parseSectionPath = (path) => {
+  if (!path || typeof path !== 'string' || !path.trim()) {
+    return { parts: [], depth: 0, parent: null, isRoot: true };
+  }
+  var parts = path.split(' > ').map(p => p.trim()).filter(Boolean);
+  return {
+    parts,
+    depth: parts.length,
+    parent: parts.length > 1 ? parts.slice(0, -1).join(' > ') : null,
+    isRoot: parts.length <= 1,
+  };
+};
+
+/** Build a tree structure from chunks in a material using section_path. */
+const getChunkTree = async (materialId) => {
+  var chunks = await Chunks.getMetadataByMaterial(materialId);
+  var root = { label: null, chunkId: null, children: [] };
+
+  for (var ch of chunks) {
+    var parsed = parseSectionPath(ch.section_path);
+    var node = root;
+    for (var i = 0; i < parsed.parts.length; i++) {
+      var part = parsed.parts[i];
+      var child = node.children.find(c => c.label === part);
+      if (!child) {
+        child = { label: part, chunkId: null, children: [] };
+        node.children.push(child);
+      }
+      node = child;
+    }
+    node.chunkId = ch.id;
+  }
+  return root;
+};
+
+/** Render a chunk tree as a compact indented outline for tutor context. */
+const buildOutline = (tree, maxTokens = 200) => {
+  var lines = [];
+  var walk = (node, depth) => {
+    if (node.label) lines.push('  '.repeat(depth) + node.label);
+    for (var child of node.children) walk(child, node.label ? depth + 1 : depth);
+  };
+  walk(tree, 0);
+
+  var result = '';
+  var estTokens = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var lineTokens = Math.ceil(lines[i].split(/\s+/).length * 1.3);
+    if (estTokens + lineTokens > maxTokens) {
+      result += '  ... (' + (lines.length - i) + ' more sections)\n';
+      break;
+    }
+    result += lines[i] + '\n';
+    estTokens += lineTokens;
+  }
+  return result;
+};
+
 /** Main orchestrator: load facet-based content with optional cross-domain chunks. */
 const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 24000, includeCrossDomain = true } = {}) => {
   if (!facetIds.length) return '';
@@ -979,10 +1050,37 @@ const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 
   // 2. Load primary chunks
   var primary = await loadChunksForBindings(bindings, { charLimit });
   if (!primary.length) return '';
-  // 3. Format primary content
+  // 2b. Count total chunks per material for position metadata
+  var materialTotals = {};
+  var uniqueMatIds = [...new Set(primary.map(c => c.materialId).filter(Boolean))];
+  try {
+    for (var mid of uniqueMatIds) {
+      var matChunks = await Chunks.getMetadataByMaterial(mid);
+      materialTotals[mid] = matChunks.length;
+    }
+  } catch { /* fallback: use loaded count */ }
+  // 2c. DOCUMENT STRUCTURE outline (when chunks come from a single material)
   var ctx = '';
+  var uniqueMaterials = [...new Set(primary.map(c => c.materialId).filter(Boolean))];
+  try {
+    if (uniqueMaterials.length === 1) {
+      var tree = await getChunkTree(uniqueMaterials[0]);
+      var outline = buildOutline(tree);
+      if (outline.trim()) ctx += '\nDOCUMENT STRUCTURE:\n' + outline;
+    } else if (uniqueMaterials.length > 1) {
+      for (var matId of uniqueMaterials) {
+        var mTree = await getChunkTree(matId);
+        var mOutline = buildOutline(mTree, 80);
+        if (mOutline.trim()) ctx += '\nDOCUMENT STRUCTURE:\n' + mOutline;
+      }
+    }
+  } catch { /* outline non-critical */ }
+  // 3. Format primary content with position metadata
   for (var ch of primary) {
-    ctx += '\n--- ' + ch.label + ' ---\n' + ch.content + '\n';
+    var posInfo = ch.ordering != null ? (ch.ordering + 1) + '/' + (materialTotals[ch.materialId] || '?') : '';
+    var secInfo = ch.sectionPath || '';
+    var meta = [posInfo, secInfo].filter(Boolean).join(', ');
+    ctx += '\n--- ' + ch.label + (meta ? ' [' + meta + ']' : '') + ' ---\n' + ch.content + '\n';
   }
   // 4. Cross-domain content
   if (includeCrossDomain) {
@@ -1522,11 +1620,21 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
       var nameLower = mat.name.toLowerCase();
       var isSelected = selectedNames.has(nameLower) || [...selectedNames].some(function(n) { return nameLower.includes(n) || n.includes(nameLower.substring(0, 15)); });
       if (!isSelected) continue;
+      // Per-material outline
+      try {
+        var examTree = await getChunkTree(mat.id);
+        var examOutline = buildOutline(examTree, 80);
+        if (examOutline.trim()) ctx += '\nDOCUMENT STRUCTURE (' + (mat.name || 'Material') + '):\n' + examOutline;
+      } catch { /* outline non-critical */ }
       var loaded = await getMatContent(courseId, mat);
       var activeChunks = loaded.chunks.filter(function(ch) { return ch.status !== "skipped"; });
       if (!activeChunks.length) continue;
+      var examTotal = activeChunks.length;
       for (var ch of activeChunks) {
-        ctx += "\n--- " + ch.label + " ---\n" + ch.content + "\n";
+        var examPos = ch.ordering != null ? (ch.ordering + 1) + '/' + examTotal : '';
+        var examSec = ch.section_path || '';
+        var examMeta = [examPos, examSec].filter(Boolean).join(', ');
+        ctx += "\n--- " + ch.label + (examMeta ? ' [' + examMeta + ']' : '') + " ---\n" + ch.content + "\n";
       }
     }
 
