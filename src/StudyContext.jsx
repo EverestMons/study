@@ -103,6 +103,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const [showNotifs, _setShowNotifs] = useState(false);
   const [lastSeenNotif, setLastSeenNotif] = useState(0);
   const [extractionErrors, setExtractionErrors] = useState([]);
+  const [duplicateAlert, setDuplicateAlert] = useState(null);
   const [sessionMode, setSessionMode] = useState(null);
   const [focusContext, setFocusContext] = useState(null);
   const [pickerData, setPickerData] = useState(null);
@@ -409,14 +410,16 @@ export function StudyProvider({ children, setErrorCtx }) {
     const existingNames = new Set(files.map(f => f.name));
     if (active) for (const m of active.materials || []) existingNames.add(m.name);
     const unique = [];
+    var dupNames = [];
     for (const f of newFiles) {
       if (existingNames.has(f.name)) {
-        addNotif("warn", "Skipped duplicate: " + f.name);
+        dupNames.push(f.name);
       } else {
         existingNames.add(f.name);
         unique.push(f);
       }
     }
+    if (dupNames.length > 0) setDuplicateAlert(dupNames);
     return unique;
   };
 
@@ -1405,7 +1408,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
     const dedupNames = newMeta.filter(m => m._deduplicated).map(m => m.name);
     if (dedupNames.length > 0) {
-      addNotif("warn", "Skipped duplicate(s): " + dedupNames.join(", "));
+      setDuplicateAlert(dedupNames);
     }
     trulyNew = newMeta.filter(m => !m._deduplicated);
 
@@ -1604,6 +1607,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     notifs, setNotifs, showNotifs, _setShowNotifs,
     lastSeenNotif, setLastSeenNotif,
     extractionErrors, setExtractionErrors,
+    duplicateAlert, setDuplicateAlert,
     sessionMode, setSessionMode, focusContext, setFocusContext,
     pickerData, setPickerData, chunkPicker, setChunkPicker,
     asgnWork, setAsgnWork, practiceMode, setPracticeMode,
@@ -1645,7 +1649,7 @@ export function StudyProvider({ children, setErrorCtx }) {
     globalLock, lockElapsed, dupPrompt, bgExtraction, currentSkillNotif,
     showManage, showSkills, skillViewData, expandedCats,
     pendingConfirm, notifs, showNotifs, lastSeenNotif,
-    extractionErrors, sessionMode, focusContext,
+    extractionErrors, duplicateAlert, sessionMode, focusContext,
     pickerData, chunkPicker, asgnWork, practiceMode,
     profileData, expandedProfile, expandedSubSkill,
     materialSkillCounts, expandedMaterial,

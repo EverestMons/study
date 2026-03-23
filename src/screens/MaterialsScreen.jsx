@@ -1,7 +1,7 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
 import { CLS } from "../lib/classify.js";
-import { loadCoursesNested, saveCoursesNested, Chunks, MaterialImages } from "../lib/db.js";
+import { loadCoursesNested, saveCoursesNested, Chunks, Materials, MaterialImages } from "../lib/db.js";
 import { loadSkillsV2, runExtractionV2 } from "../lib/skills.js";
 import FolderPickerModal from "../components/FolderPickerModal.jsx";
 import { useStudy } from "../StudyContext.jsx";
@@ -27,6 +27,7 @@ export default function MaterialsScreen() {
     getMaterialState, computeTrustSignals, refreshMaterialSkillCounts,
     importFromFolder, confirmFolderImport, folderImportData, setFolderImportData,
     retryAllFailed,
+    duplicateAlert, setDuplicateAlert,
   } = useStudy();
 
   var [materialFilter, setMaterialFilter] = React.useState("all");
@@ -192,6 +193,27 @@ export default function MaterialsScreen() {
             <button onClick={() => setExpandedCard(null)} style={{ background: "none", border: "none", color: T.txM, cursor: "pointer", fontSize: 16, padding: "2px 6px" }}>&times;</button>
           </div>
         </div>
+
+        {/* Reclassify pills */}
+        {(isReady || isIncomplete || isError) && (
+          <div style={{ padding: "0 14px 8px", display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {CLS.map(c => {
+              var isCurrent = mat.classification === c.v;
+              return (
+                <button key={c.v} onClick={async () => {
+                  if (isCurrent) return;
+                  await Materials.update(mat.id, { classification: c.v });
+                  var refreshed = await loadCoursesNested();
+                  var uc = refreshed.find(cr => cr.id === active.id);
+                  if (uc) { setCourses(refreshed); setActive(uc); }
+                }}
+                  style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, cursor: isCurrent ? "default" : "pointer", border: "1px solid " + (isCurrent ? T.ac : T.bd), background: isCurrent ? T.acS : "transparent", color: isCurrent ? T.ac : T.txM, transition: "all 0.15s", fontWeight: isCurrent ? 600 : 400 }}>
+                  {c.l}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Queued */}
         {isQueued && (
@@ -527,6 +549,31 @@ export default function MaterialsScreen() {
           )}
         </div>
 
+        {/* Inline extraction progress */}
+        {bgExtraction && (() => {
+          var _mats = bgExtraction.materials;
+          var _cur = _mats.find(m => m.status === "extracting" || m.status === "awaiting_decision");
+          var _done = _mats.filter(m => m.status === "done" || m.status === "skipped" || m.status === "error").length;
+          var _total = _mats.length;
+          var _pct = _total > 0 ? Math.round((_done / _total) * 100) : 0;
+          return (
+            <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 12, padding: "8px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.ac, flexShrink: 0, animation: "pulse 1.5s ease-in-out infinite" }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: T.tx, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{_cur ? _cur.name : "Extracting..."}</span>
+                  <span style={{ fontSize: 11, color: T.txM, flexShrink: 0 }}>({_done}/{_total})</span>
+                </div>
+                <div style={{ width: "100%", height: 3, borderRadius: 2, background: T.bg, overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 2, background: T.ac, width: _pct + "%", transition: "width 0.4s ease" }} />
+                </div>
+              </div>
+              <button onClick={() => { extractionCancelledRef.current = true; }}
+                style={{ background: "transparent", border: "1px solid " + T.rd + "60", borderRadius: 6, padding: "3px 10px", fontSize: 10, color: T.rd, cursor: "pointer", flexShrink: 0, fontWeight: 500 }}>Cancel</button>
+            </div>
+          );
+        })()}
+
         {/* Materials header + status tabs */}
         <div style={{ fontSize: 12, color: T.txD, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Course Materials ({active.materials.length})</div>
         {active.materials.length > 0 && (
@@ -739,6 +786,28 @@ export default function MaterialsScreen() {
         onImport={confirmFolderImport}
         onClose={() => setFolderImportData(null)}
       />
+    )}
+    {duplicateAlert && (
+      <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+        <div style={{ background: T.sf, borderRadius: 16, padding: 24, maxWidth: 400, width: "90%" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.tx, marginBottom: 12 }}>Material already uploaded</div>
+          <div style={{ fontSize: 13, color: T.txD, marginBottom: 16, lineHeight: 1.5 }}>
+            {duplicateAlert.length === 1
+              ? <><span style={{ fontWeight: 600, color: T.tx }}>{duplicateAlert[0]}</span> is already in this course and was skipped.</>
+              : <>The following files are already in this course and were skipped:</>
+            }
+          </div>
+          {duplicateAlert.length > 1 && (
+            <div style={{ marginBottom: 16 }}>
+              {duplicateAlert.map((name, i) => (
+                <div key={i} style={{ fontSize: 12, color: T.tx, padding: "4px 10px", background: T.bg, borderRadius: 6, marginBottom: 4 }}>{name}</div>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setDuplicateAlert(null)}
+            style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>OK</button>
+        </div>
+      </div>
     )}
     </div>
     </>
