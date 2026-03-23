@@ -1,4 +1,4 @@
-import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets, ChunkSimilarities } from './db.js';
+import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets, ChunkSimilarities, ChunkPrerequisites, ChunkFacetBindings, FacetConceptLinks } from './db.js';
 import { computeMinHash, findNearDuplicates } from './minhash.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { chunkDocument } from './chunker.js';
@@ -504,6 +504,80 @@ function getAlreadyExtractedChapters(chunks) {
   return skip;
 }
 
+/** Infer chunk-level prerequisite ordering from document order + skill link transitivity. */
+async function inferChunkPrerequisites(materialId, courseId) {
+  var chunks = await Chunks.getByMaterial(materialId);
+  if (chunks.length < 2) return;
+
+  var records = [];
+
+  // --- Method A: Document order heuristic ---
+  var chunkFacets = {};
+  for (var ch of chunks) {
+    try {
+      var bindings = await ChunkFacetBindings.getByChunk(ch.id);
+      chunkFacets[ch.id] = bindings.map(b => ({ facetId: b.facet_id || b.id, skillId: b.skill_id }));
+    } catch { chunkFacets[ch.id] = []; }
+  }
+
+  for (var i = 0; i < chunks.length; i++) {
+    var chA = chunks[i];
+    var facetsA = chunkFacets[chA.id] || [];
+    var skillsA = new Set(facetsA.map(f => f.skillId).filter(Boolean));
+
+    for (var j = i + 1; j < chunks.length; j++) {
+      var chB = chunks[j];
+      var facetsB = chunkFacets[chB.id] || [];
+      var skillsB = new Set(facetsB.map(f => f.skillId).filter(Boolean));
+
+      var shared = false;
+      for (var sk of skillsA) { if (skillsB.has(sk)) { shared = true; break; } }
+
+      if (shared) {
+        records.push({ chunkId: chB.id, prereqChunkId: chA.id, source: 'document_order' });
+      }
+    }
+  }
+
+  // --- Method B: Skill prerequisite transitivity ---
+  var allFacetIds = new Set();
+  for (var ch2 of chunks) {
+    for (var f of (chunkFacets[ch2.id] || [])) allFacetIds.add(f.facetId);
+  }
+
+  if (allFacetIds.size > 0) {
+    try {
+      var links = await FacetConceptLinks.getByFacetBatch([...allFacetIds]);
+      var prereqLinks = links.filter(l => l.link_type === 'prerequisite');
+
+      var facetToChunks = {};
+      for (var ch3 of chunks) {
+        for (var f2 of (chunkFacets[ch3.id] || [])) {
+          if (!facetToChunks[f2.facetId]) facetToChunks[f2.facetId] = [];
+          facetToChunks[f2.facetId].push(ch3.id);
+        }
+      }
+
+      for (var link of prereqLinks) {
+        var chunksA = facetToChunks[link.facet_a_id] || [];
+        var chunksB = facetToChunks[link.facet_b_id] || [];
+        for (var ca of chunksA) {
+          for (var cb of chunksB) {
+            if (ca !== cb) {
+              records.push({ chunkId: cb, prereqChunkId: ca, source: 'skill_link' });
+            }
+          }
+        }
+      }
+    } catch { /* skill link inference non-critical */ }
+  }
+
+  if (records.length > 0) {
+    await ChunkPrerequisites.createBatch(records);
+    console.log(`[ChunkPrereqs] ${records.length} prerequisite records created for material ${materialId}`);
+  }
+}
+
 export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNearDedupCheck = false } = {}) => {
   const { onStatus, onNotif, onChapterComplete } = callbacks;
 
@@ -663,6 +737,10 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
           if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
         } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
       }
+      // --- Chunk prerequisite inference (non-blocking) ---
+      try {
+        await inferChunkPrerequisites(materialId, courseId);
+      } catch (e) { console.warn('[ChunkPrereqs] Prerequisite inference failed:', e); }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
 
     } else {
@@ -711,6 +789,10 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
           if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
         } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
       }
+      // --- Chunk prerequisite inference (non-blocking) ---
+      try {
+        await inferChunkPrerequisites(materialId, courseId);
+      } catch (e) { console.warn('[ChunkPrereqs] Prerequisite inference failed:', e); }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
     }
   } catch (e) {

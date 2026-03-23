@@ -1,4 +1,4 @@
-import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills, Facets, FacetMastery, FacetConceptLinks, Chunks, ChunkFacetBindings, AssignmentQuestionFacets, MaterialImages } from './db.js';
+import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills, Facets, FacetMastery, FacetConceptLinks, Chunks, ChunkFacetBindings, AssignmentQuestionFacets, MaterialImages, ChunkPrerequisites } from './db.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { getMatContent } from './skills.js';
 import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
@@ -1075,12 +1075,21 @@ const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 
       }
     }
   } catch { /* outline non-critical */ }
+  // 2d. Load prerequisite labels for primary chunks
+  var prereqLabels = {};
+  try {
+    for (var pc2 of primary) {
+      var prereqs = await ChunkPrerequisites.getByChunk(pc2.chunkId);
+      if (prereqs.length > 0) prereqLabels[pc2.chunkId] = prereqs[0].prereq_label || '';
+    }
+  } catch { /* prereq lookup non-critical */ }
   // 3. Format primary content with position metadata
   for (var ch of primary) {
     var posInfo = ch.ordering != null ? (ch.ordering + 1) + '/' + (materialTotals[ch.materialId] || '?') : '';
     var secInfo = ch.sectionPath || '';
     var meta = [posInfo, secInfo].filter(Boolean).join(', ');
-    ctx += '\n--- ' + ch.label + (meta ? ' [' + meta + ']' : '') + ' ---\n' + ch.content + '\n';
+    var prereqInfo = prereqLabels[ch.chunkId] ? ' | builds on: ' + prereqLabels[ch.chunkId] : '';
+    ctx += '\n--- ' + ch.label + (meta || prereqInfo ? ' [' + meta + prereqInfo + ']' : '') + ' ---\n' + ch.content + '\n';
   }
   // 4. Cross-domain content
   if (includeCrossDomain) {
@@ -1634,7 +1643,12 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
         var examPos = ch.ordering != null ? (ch.ordering + 1) + '/' + examTotal : '';
         var examSec = ch.section_path || '';
         var examMeta = [examPos, examSec].filter(Boolean).join(', ');
-        ctx += "\n--- " + ch.label + (examMeta ? ' [' + examMeta + ']' : '') + " ---\n" + ch.content + "\n";
+        var examPrereq = '';
+        try {
+          var ePrereqs = await ChunkPrerequisites.getByChunk(ch.id);
+          if (ePrereqs.length > 0 && ePrereqs[0].prereq_label) examPrereq = ' | builds on: ' + ePrereqs[0].prereq_label;
+        } catch { /* non-critical */ }
+        ctx += "\n--- " + ch.label + (examMeta || examPrereq ? ' [' + examMeta + examPrereq + ']' : '') + " ---\n" + ch.content + "\n";
       }
     }
 
