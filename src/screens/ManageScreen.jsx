@@ -1,6 +1,5 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
-import { loadSkillsV2 } from "../lib/skills.js";
 import GlobalLockOverlay from "../components/GlobalLockOverlay.jsx";
 import { useStudy } from "../StudyContext.jsx";
 import TopBarButtons from "../components/TopBarButtons.jsx";
@@ -8,7 +7,7 @@ import TopBarButtons from "../components/TopBarButtons.jsx";
 export default function ManageScreen() {
   const {
     active, processingMatId, globalLock,
-    goBack, navigateTo, setSkillViewData,
+    goBack,
   } = useStudy();
 
   return (
@@ -31,26 +30,8 @@ export default function ManageScreen() {
           <h1 style={{ fontSize: 28, fontWeight: 700, color: T.tx, margin: 0, marginBottom: 4 }}>{active.name}</h1>
           <p style={{ fontSize: 14, color: T.txD, margin: 0, marginBottom: 32 }}>Manage your course content</p>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <button onClick={() => navigateTo("materials")}
-              style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-              onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-              onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Materials</div>
-              <div style={{ fontSize: 12, color: T.txD }}>{active.materials.length} files uploaded</div>
-            </button>
-
-            <button onClick={async () => {
-              var sk = await loadSkillsV2(active.id);
-              setSkillViewData({ skills: sk, isV2: sk.length > 0 && sk[0]?.conceptKey != null });
-              navigateTo("skills");
-            }}
-              style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 14, padding: "20px 24px", cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}
-              onMouseEnter={e => { e.currentTarget.style.background = T.sfH; e.currentTarget.style.borderColor = T.acB; }}
-              onMouseLeave={e => { e.currentTarget.style.background = T.sf; e.currentTarget.style.borderColor = T.bd; }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: T.tx, marginBottom: 4 }}>Skills</div>
-              <div style={{ fontSize: 12, color: T.txD }}>View skill tree from active sections</div>
-            </button>
+          <div style={{ fontSize: 13, color: T.txD, lineHeight: 1.6 }}>
+            Access Materials and Skills from Course Home.
           </div>
         </div>
       </div>

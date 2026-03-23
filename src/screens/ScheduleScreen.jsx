@@ -37,7 +37,7 @@ function readinessColor(v) { return v >= 0.6 ? T.gn : v >= 0.3 ? "#F59E0B" : T.t
 
 export default function ScheduleScreen() {
   var {
-    active, goBack, navigateTo, enterStudy, setActive,
+    active, goBack, enterStudy, setActive,
   } = useStudy();
 
   var [items, setItems] = useState(null);
@@ -387,15 +387,9 @@ export default function ScheduleScreen() {
                   </span>
                 )}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-                {currSummary.completedCount > 0 && (
-                  <span style={{ fontSize: 12, color: T.txD }}>{currSummary.completedCount} submitted</span>
-                )}
-                <button onClick={function () { navigateTo("curriculum"); }}
-                  style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  View Curriculum
-                </button>
-              </div>
+              {currSummary.completedCount > 0 && (
+                <span style={{ fontSize: 12, color: T.txD, flexShrink: 0 }}>{currSummary.completedCount} submitted</span>
+              )}
             </div>
           )}
 

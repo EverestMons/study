@@ -41,7 +41,7 @@ function masteryToStrength(m) {
 var URGENCY_COLORS = { overdue: T.rd, urgent: T.rd, soon: T.am, normal: T.ac, none: T.txM };
 
 export default function CurriculumScreen() {
-  var { active, goBack, navigateTo, bootWithFocus } = useStudy();
+  var { active, goBack, bootWithFocus } = useStudy();
 
   var [activeAssignments, setActiveAssignments] = useState(null);
   var [reviewPool, setReviewPool] = useState([]);
@@ -203,10 +203,7 @@ export default function CurriculumScreen() {
             <div style={{ textAlign: "center", padding: "24px 16px", background: "rgba(251,191,36,0.06)", borderRadius: 10, border: "1px solid rgba(251,191,36,0.15)", marginBottom: 24 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: T.tx, marginBottom: 8 }}>Upload course materials first</div>
               <div style={{ fontSize: 13, color: T.txD, marginBottom: 14 }}>Assignment decomposition requires extracted skills from your course materials.</div>
-              <button onClick={function () { navigateTo("materials"); }}
-                style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: T.ac, color: "#0F1115", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-                Go to Materials
-              </button>
+              <div style={{ fontSize: 12, color: T.txM, marginTop: 4 }}>Upload materials from Course Home to enable assignment decomposition.</div>
             </div>
           )}
 
@@ -484,16 +481,10 @@ export default function CurriculumScreen() {
               <div style={{ fontSize: 14, color: T.txD, lineHeight: 1.5, marginBottom: 20 }}>
                 Activate assignments on the schedule to start tracking readiness, or go to materials to manage your uploads.
               </div>
-              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-                <button onClick={function () { navigateTo("schedule"); }}
-                  style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: T.ac, color: "#0F1115", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  Go to Schedule
-                </button>
-                <button onClick={function () { navigateTo("materials"); }}
-                  style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
-                  Materials
-                </button>
-              </div>
+              <button onClick={function () { goBack(); }}
+                style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid " + T.bd, background: "transparent", color: T.txD, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+                Back to Course Home
+              </button>
             </div>
           )}
         </div>
