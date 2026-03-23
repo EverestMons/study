@@ -1,0 +1,26 @@
+# study — Continue Studying Feature
+**Date:** 2026-03-22 | **Tier:** Small | **Execution:** Step 1 (DEV) → Step 2 (QA)
+
+## How to Run This Plan
+
+Paste this into Claude Code:
+
+Read the orchestration plan at `study/knowledge/decisions/executable-continue-feature-2026-03-22.md`. Execute each step sequentially. After completing each step, stop and wait for user confirmation before proceeding. The plan has 2 steps.
+
+---
+---
+
+## STEP 1 — DEV
+
+---
+
+> You are the Study Developer. Read your specialist file at `study/agents/STUDY_DEVELOPER.md` first. Read the diagnostic at `study/knowledge/research/continue-feature-diagnostic-2026-03-22.md` — it maps CourseHomepage layout, the next-skill algorithm, data availability, and `bootWithFocus` requirements. **Task:** Add a "Continue Studying" button to CourseHomepage that recommends and launches the next logical skill based on prerequisite ordering + mastery state. **Implementation:** (1) **`getNextSkill(skills)` function.** Add to CourseHomepage (or a utility imported from study.js). The algorithm from the diagnostic: filter skills to those with `effectiveStrength < 0.7` and all prerequisites satisfied (`effectiveStrength >= 0.5`). Sort: due-for-review first, then weakest first. Return the top result or null. Use `effectiveStrength` and `nextReviewDate` already imported in CourseHomepage. (2) **Store skills in component state.** CourseHomepage's `useEffect` already calls `loadSkillsV2(active.id)` for the Skill Development card's count. Store the full skills array in local state so `getNextSkill` can access it. If skills are already stored, use the existing state. (3) **Continue button UI.** Position above the 3×2 card grid, below the header/back button. Full-width, prominent. Show: "Continue Studying" as primary text, the recommended skill name as secondary text (e.g., "Continue Studying · Chain Rule Application"), a readiness indicator (strength % or "New" if untested), and a "Due for review" badge if the skill is overdue. Style: `T.ac` background, `#0F1115` text (same as "Add to Course" button pattern), `borderRadius: 12`, `padding: "14px 20px"`. Click calls `bootWithFocus({ type: "skill", skill: nextSkill })`. (4) **Empty states.** If `getNextSkill` returns null (all skills mastered or no skills extracted), hide the Continue button entirely — don't show an empty/disabled state. The card grid handles navigation in that case. If skills are still loading, hide the button (avoid flash). (5) **Due-for-review priority.** If the top result from `getNextSkill` is due for review, add a small badge: "Due for review" in amber. If it's untested, badge: "New" in accent blue. If it's just weak, no badge — the strength % is sufficient. **Constraints:** No new DB queries — use `loadSkillsV2` data already loaded. No new API calls. No changes to StudyContext, study.js, or any other file — this is purely CourseHomepage.jsx. `bootWithFocus` is already available via `useStudy()`. Build verify: `cd study && npx vite build --mode development`. Commit with message: `"feat: Continue Studying button on CourseHomepage — prerequisite-aware next skill"`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Next is Step 2 (QA). Stop here and wait for user confirmation before proceeding.
+
+---
+---
+
+## STEP 2 — QA
+
+---
+
+> You are the Study Security & Testing Analyst. Read your specialist file at `study/agents/STUDY_SECURITY_TESTING_ANALYST.md` first. Read the diagnostic at `study/knowledge/research/continue-feature-diagnostic-2026-03-22.md` for the algorithm spec. **Verification areas:** (1) **`getNextSkill` algorithm** — read `CourseHomepage.jsx`, find the function. Verify: filters to strength < 0.7, checks prerequisites satisfied (strength >= 0.5), sorts due-for-review first then weakest. Expected: algorithm matches diagnostic spec. (2) **Button visibility** — verify the Continue button only appears when `getNextSkill` returns a non-null skill. When all skills are mastered or no skills exist, button is hidden. When skills are loading, button is hidden. Expected: no empty/disabled states shown. (3) **Button content** — verify: shows skill name, shows strength % (or "New" badge for untested), shows "Due for review" badge when applicable. Expected: all data points present. (4) **Click action** — verify clicking calls `bootWithFocus({ type: "skill", skill: nextSkill })` where `nextSkill` is the enriched skill object from `loadSkillsV2`. Expected: launches skill-focused study session. (5) **No new queries** — verify no new `callClaude`, DB query, or fetch calls added. All data comes from existing `loadSkillsV2` result. Expected: zero new data fetching. (6) **Card grid unchanged** — verify the 3×2 card grid below the Continue button is untouched. All 6 cards still present with correct actions. Expected: zero regressions. (7) **Build verification.** **Deposit:** `study/knowledge/qa/continue-feature-qa-2026-03-22.md` with per-area PASS/FAIL. **Final:** Move this plan to Done: `mv study/knowledge/decisions/executable-continue-feature-2026-03-22.md study/knowledge/decisions/Done/`. Commit: `"chore: continue feature complete"`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Plan complete — all steps executed.
