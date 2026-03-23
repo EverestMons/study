@@ -1465,6 +1465,91 @@ export const ChunkFingerprints = {
 };
 
 // ============================================================
+// Chunk Similarities (MinHash persistence)
+// ============================================================
+
+export const ChunkSimilarities = {
+  async createBatch(pairs) {
+    if (!pairs.length) return;
+    return withTransaction(async (db) => {
+      for (const p of pairs) {
+        const [a, b] = p.chunkAId < p.chunkBId ? [p.chunkAId, p.chunkBId] : [p.chunkBId, p.chunkAId];
+        await db.execute(
+          'INSERT OR IGNORE INTO chunk_similarities (chunk_a_id, chunk_b_id, similarity, created_at) VALUES (?, ?, ?, ?)',
+          [a, b, p.similarity, now()]
+        );
+      }
+    });
+  },
+
+  async getByChunk(chunkId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM chunk_similarities WHERE chunk_a_id = ? OR chunk_b_id = ? ORDER BY similarity DESC',
+      [chunkId, chunkId]
+    );
+  },
+
+  async getByCourse(courseId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cs.* FROM chunk_similarities cs
+       JOIN chunks ca ON cs.chunk_a_id = ca.id
+       WHERE ca.course_id = ?
+       ORDER BY cs.similarity DESC`,
+      [courseId]
+    );
+  },
+};
+
+// ============================================================
+// Chunk Prerequisites
+// ============================================================
+
+export const ChunkPrerequisites = {
+  async create(chunkId, prereqChunkId, source) {
+    const db = await getDb();
+    await db.execute(
+      'INSERT OR IGNORE INTO chunk_prerequisites (chunk_id, prerequisite_chunk_id, source, created_at) VALUES (?, ?, ?, ?)',
+      [chunkId, prereqChunkId, source, now()]
+    );
+  },
+
+  async createBatch(records) {
+    if (!records.length) return;
+    return withTransaction(async (db) => {
+      for (const r of records) {
+        await db.execute(
+          'INSERT OR IGNORE INTO chunk_prerequisites (chunk_id, prerequisite_chunk_id, source, created_at) VALUES (?, ?, ?, ?)',
+          [r.chunkId, r.prereqChunkId, r.source, now()]
+        );
+      }
+    });
+  },
+
+  async getByChunk(chunkId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cp.*, c.label AS prereq_label, c.section_path AS prereq_section_path
+       FROM chunk_prerequisites cp
+       JOIN chunks c ON cp.prerequisite_chunk_id = c.id
+       WHERE cp.chunk_id = ?`,
+      [chunkId]
+    );
+  },
+
+  async getByMaterial(materialId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT cp.* FROM chunk_prerequisites cp
+       JOIN chunks c ON cp.chunk_id = c.id
+       WHERE c.material_id = ?`,
+      [materialId]
+    );
+  },
+};
+
+// ============================================================
 // Sub-Skills
 // ============================================================
 

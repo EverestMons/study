@@ -1,4 +1,4 @@
-import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets } from './db.js';
+import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets, ChunkSimilarities } from './db.js';
 import { computeMinHash, findNearDuplicates } from './minhash.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { chunkDocument } from './chunker.js';
@@ -538,6 +538,19 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
 
           if (existingFps.length > 0) {
             const dupMatches = findNearDuplicates(newFingerprints, existingFps, 0.7);
+
+            // Persist all similarity pairs >= 0.5 (broader than dedup threshold)
+            try {
+              const allSimilarities = findNearDuplicates(newFingerprints, existingFps, 0.5);
+              if (allSimilarities.length > 0) {
+                await ChunkSimilarities.createBatch(
+                  allSimilarities.map(m => ({ chunkAId: m.newChunkId, chunkBId: m.existingChunkId, similarity: m.similarity }))
+                );
+              }
+            } catch (e) {
+              console.warn('[MinHash] Similarity persistence failed:', e);
+            }
+
             const dupChunkIds = new Set(dupMatches.map(m => m.newChunkId));
 
             if (dupChunkIds.size === newFingerprints.length) {
