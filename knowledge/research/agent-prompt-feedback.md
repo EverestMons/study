@@ -266,3 +266,20 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For QA of prompt-text-only changes (1B): "Verify the surrounding prompt string is syntactically valid (no unclosed quotes/backticks)" was implicit — make it explicit.
 - For multi-session execution: add "If a QA report already exists from a prior session, verify its accuracy rather than rewriting."
+
+### 2026-03-22 — Study Developer — Token usage diagnostic for extraction pipeline
+
+**Were any reads unnecessary?**
+- None. Every file read was needed. The prompt correctly identified all 7 investigation areas and every one had relevant code.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 7-point investigation structure (call sites, extraction flow, concept links, chunking, syllabus, assignments, waste) mapped cleanly to the actual codebase. No dead ends.
+- Minor over-scope: asking about `chunker.js`, `epubParser.js`, `docxParser.js`, `pdfParser.js` for LLM calls was quickly confirmed negative. Could have been a one-liner "Confirm parsers have no LLM calls" instead of a full investigation point.
+
+**What would have made this prompt more efficient?**
+- The prompt could have included the actual count of CIP_TAXONOMY entries (416) and cipData.js file size (85KB) to avoid having to check. This was knowable at prompt-writing time.
+- Listing the known call sites by file would have narrowed the search, but the "search for all callClaude" approach was correct for an audit — you shouldn't assume you know all sites.
+
+**What can be added to future prompts to increase performance?**
+- For token diagnostics: include the current pricing tier (Haiku vs Sonnet per-token cost) so the agent can compute actual dollar savings, not just percentage estimates.
+- The "rank by estimated savings" instruction was excellent — it forced prioritization rather than a flat list.
