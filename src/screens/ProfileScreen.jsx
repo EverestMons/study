@@ -29,10 +29,12 @@ export default function ProfileScreen() {
   const byDomain = {};
   for (const p of (profileData || [])) {
     const domKey = p.cipDomain || "00";
-    if (!byDomain[domKey]) byDomain[domKey] = { name: CIP_DOMAINS[domKey] || "General", items: [], totalLevel: 0, totalSubs: 0, readinessSum: 0, readinessCount: 0 };
+    if (!byDomain[domKey]) byDomain[domKey] = { name: CIP_DOMAINS[domKey] || "General", items: [], totalLevel: 0, totalSubs: 0, readinessSum: 0, readinessCount: 0, testedFacets: 0, totalFacets: 0 };
     byDomain[domKey].items.push(p);
     byDomain[domKey].totalLevel += p.level;
     byDomain[domKey].totalSubs += p.subCount;
+    byDomain[domKey].testedFacets += p.parentTestedFacets || 0;
+    byDomain[domKey].totalFacets += p.parentTotalFacets || 0;
     if (p.readiness > 0) { byDomain[domKey].readinessSum += p.readiness * p.subCount; byDomain[domKey].readinessCount += p.subCount; }
   }
 
@@ -53,6 +55,7 @@ export default function ProfileScreen() {
       parentCount: dom.items.length, totalSubs: dom.totalSubs,
       readiness: dom.readinessCount > 0 ? dom.readinessSum / dom.readinessCount : 0,
       dueCount: dom.items.reduce((s, p) => s + p.dueForReview, 0),
+      testedFacets: dom.testedFacets, totalFacets: dom.totalFacets,
     }))
     .sort((a, b) => b.totalLevel - a.totalLevel);
 
@@ -143,7 +146,7 @@ export default function ProfileScreen() {
           {/* Parent skill cards */}
           {selectedDomain.items.length === 0 ? (
             <div style={{ textAlign: "center", padding: "32px 20px", color: T.txD, fontSize: 14 }}>No skills in this domain yet.</div>
-          ) : [...selectedDomain.items].sort((a, b) => domainSort === "weakest" ? (a.readiness - b.readiness || b.dueForReview - a.dueForReview) : (b.level - a.level || b.totalPoints - a.totalPoints)).map(({ parent, subSkills, level, progressToNext, progressNeeded, readiness, subCount, reviewedCount, dueForReview, lastActivityDate: lastAct }) => {
+          ) : [...selectedDomain.items].sort((a, b) => domainSort === "weakest" ? (a.readiness - b.readiness || b.dueForReview - a.dueForReview) : (b.level - a.level || b.totalPoints - a.totalPoints)).map(({ parent, subSkills, level, progressToNext, progressNeeded, readiness, parentCoverage, parentTestedFacets, parentTotalFacets, subCount, reviewedCount, dueForReview, lastActivityDate: lastAct }) => {
             const readinessColor = readiness > 0.8 ? T.gn : readiness > 0.5 ? "#F59E0B" : T.rd;
             const isExpanded = expandedProfile[parent.id];
             const progressPct = progressNeeded > 0 ? Math.min(100, Math.round((progressToNext / progressNeeded) * 100)) : 0;
@@ -191,6 +194,14 @@ export default function ProfileScreen() {
                       </div>
                       <span style={{ fontSize: 11, color: readinessColor, flexShrink: 0 }}>{Math.round(readiness * 100)}%</span>
                     </div>
+                    {parentTotalFacets > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3 }}>
+                        <div style={{ flex: 1, height: 3, background: T.bd, borderRadius: 2, overflow: "hidden" }}>
+                          <div style={{ width: Math.round(parentCoverage * 100) + "%", height: "100%", background: T.ac + "80", borderRadius: 2, transition: "width 0.3s" }} />
+                        </div>
+                        <span style={{ fontSize: 10, color: T.txM, flexShrink: 0 }}>{parentTestedFacets}/{parentTotalFacets} facets</span>
+                      </div>
+                    )}
                   </div>
                   <span style={{ color: T.txD, fontSize: 11, flexShrink: 0 }}>{isExpanded ? "\u25B2" : "\u25BC"}</span>
                 </div>
@@ -284,6 +295,7 @@ export default function ProfileScreen() {
                                         <div><span style={{ color: T.txD }}>Lapses: </span><span style={{ color: (sub.mastery.lapses || 0) > 2 ? "#F59E0B" : T.tx }}>{sub.mastery.lapses || 0}</span></div>
                                         <div><span style={{ color: T.txD }}>Next review: </span><span style={{ color: sub.mastery.isDue ? "#F59E0B" : T.tx }}>{sub.mastery.isDue ? "Due now" : sub.mastery.nextReview ? sub.mastery.nextReview.toLocaleDateString() : "\u2014"}</span></div>
                                         <div><span style={{ color: T.txD }}>Points: </span><span style={{ color: T.ac }}>{sub.mastery.totalMasteryPoints || 0}</span></div>
+                                        {sub.totalFacetCount > 0 && <div><span style={{ color: T.txD }}>Coverage: </span><span style={{ color: T.ac }}>{sub.testedFacetCount}/{sub.totalFacetCount} facets ({Math.round(sub.coverage * 100)}%)</span></div>}
                                       </div>
                                     </div>
                                   )}
@@ -524,6 +536,7 @@ export default function ProfileScreen() {
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 13, color: T.txD }}>Lv {dom.totalLevel}</span>
                             {dom.readiness > 0 && <span style={{ fontSize: 13, color: domRColor }}>{Math.round(dom.readiness * 100)}%</span>}
+                            {dom.totalFacets > 0 && <span style={{ fontSize: 11, color: T.txM }}>{dom.testedFacets}/{dom.totalFacets}</span>}
                             <span style={{ color: T.txM, fontSize: 11 }}>{"\u203A"}</span>
                           </div>
                         </div>

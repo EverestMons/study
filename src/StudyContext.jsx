@@ -833,6 +833,12 @@ export function StudyProvider({ children, setErrorCtx }) {
           // Multi-course attribution: prefer skill_courses junction, fall back to source_course_id
           const courseIds = skillCoursesMap[sub.id] || (sub.source_course_id ? [sub.source_course_id] : []);
 
+          // Coverage: how many facets have been tested
+          var allSubFacets = facetsBySkill[sub.id] || [];
+          var totalFacetCount = allSubFacets.length;
+          var testedFacetCount = allSubFacets.filter(f => facetMasteryById[f.id]).length;
+          var coverage = totalFacetCount > 0 ? testedFacetCount / totalFacetCount : 0;
+
           return {
             id: sub.id, name: sub.name, description: sub.description,
             conceptKey: sub.concept_key, category: sub.category,
@@ -840,7 +846,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             sourceCourseId: sub.source_course_id, courseIds, masteryCriteria, evidence, fitness,
             confidence: masteryConfidence(fitness),
             prerequisites: prereqs.map(p => ({ id: p.prerequisite_id, name: p.name, conceptKey: p.concept_key })),
-            facets: subFacets,
+            facets: subFacets, coverage, testedFacetCount, totalFacetCount,
             mastery: m ? {
               retrievability, stability, difficulty: m.difficulty,
               reps: m.reps, lapses: m.lapses,
@@ -854,6 +860,11 @@ export function StudyProvider({ children, setErrorCtx }) {
         const acquiredSubs = enrichedSubs.filter(s => s.mastery !== null);
         if (acquiredSubs.length === 0) continue;
 
+        // Parent-level facet coverage
+        var parentTestedFacets = 0, parentTotalFacets = 0;
+        for (var as of acquiredSubs) { parentTestedFacets += as.testedFacetCount; parentTotalFacets += as.totalFacetCount; }
+        var parentCoverage = parentTotalFacets > 0 ? parentTestedFacets / parentTotalFacets : 0;
+
         const level = Math.floor(Math.sqrt(totalPoints));
         const nextLevelThreshold = (level + 1) * (level + 1);
         const progressToNext = totalPoints - (level * level);
@@ -863,6 +874,7 @@ export function StudyProvider({ children, setErrorCtx }) {
           parent, cipDomain: parent.cip_code ? parent.cip_code.substring(0, 2) : null,
           subSkills: acquiredSubs, masteryMap, level, progressToNext, progressNeeded,
           readiness: readinessCount > 0 ? readinessSum / readinessCount : 0,
+          parentCoverage, parentTestedFacets, parentTotalFacets,
           subCount: acquiredSubs.length, reviewedCount, dueForReview, totalPoints, lastActivityDate,
         });
       }
