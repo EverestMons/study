@@ -1248,6 +1248,13 @@ export const buildContext = async (courseId, materials, skills, assignments, rec
     }
   }
 
+  // Facet assessment block for relevant skills (enables per-facet FSRS in recap/explore)
+  var allSkills = Array.isArray(skills) ? skills : [];
+  if (relevantSkillIds.length > 0) {
+    var facetBlock = await buildFacetAssessmentBlock(relevantSkillIds, allSkills);
+    if (facetBlock) ctx += "\n" + facetBlock + "\n";
+  }
+
   // SECURITY: User-uploaded chunk content injected below. Prompt injection risk mitigated
   // by system prompt CONTENT SAFETY directive instructing the model to treat this as teaching material.
   ctx += "\nLOADED SOURCE MATERIAL:\n";
