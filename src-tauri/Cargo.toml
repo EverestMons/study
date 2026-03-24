@@ -1,6 +1,6 @@
 [package]
 name = "study"
-version = "0.2.18"
+version = "0.2.19"
 description = "AI-powered learning companion"
 authors = ["Mark Lehn"]
 edition = "2021"
