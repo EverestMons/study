@@ -459,3 +459,21 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For SQLite NULLS LAST QA: "Confirm CASE WHEN IS NULL THEN 1 ELSE 0 END idiom is used (not NULLS LAST syntax)" — SQLite-specific verification.
 - The stale session check (enterStudy line 928 not wired) should be a standard QA item for any session-end feature.
+
+### 2026-03-24 — Study Developer — Tutor Phase 4 prerequisite audit (diagnostic)
+
+**Were any reads unnecessary?**
+- No. All 4 investigation points produced critical findings. The capabilities file was the most important discovery — the `fs:allow-write-file` sandbox restriction means the roadmap's plan to write to `knowledge/research/` won't work without permission changes.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4-point structure covered the right concerns: fs permissions, session end flow, dependency check, and Forge config. The Forge config question was essential — surfaced the missing ChunkType + classification rule.
+- Slightly redundant: point (2c) asking about existing `plugin-fs` usage overlaps with point (1) about permissions. The permission check alone reveals the sandbox constraints.
+
+**What would have made this prompt more efficient?**
+- Point (2b) could have been "confirm Phase 3 wiring is in place" — the exact code was already verified in Phase 3 QA. A simple confirmation reference would suffice.
+- The Forge config read required navigating to a sibling repository (`forge/` not `study/`). The prompt should note when reads cross repository boundaries.
+
+**What can be added to future prompts to increase performance?**
+- For Tauri permission audits: "Read `src-tauri/capabilities/default.json` — this is the single source of truth for all plugin permissions." The tauri.conf.json doesn't contain permission config in Tauri v2.
+- For cross-repo reads: explicitly note "this file is in a sibling repository at `../forge/src/config.py`" to avoid path confusion.
+- **Critical finding for Phase 4 planning**: `fs:allow-write-file` is sandboxed to `$APPDATA`. Writing to `knowledge/research/` requires either expanding permissions or using `$APPDATA/tutor-sessions/` as the write target.
