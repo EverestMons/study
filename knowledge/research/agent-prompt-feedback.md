@@ -283,3 +283,119 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For token diagnostics: include the current pricing tier (Haiku vs Sonnet per-token cost) so the agent can compute actual dollar savings, not just percentage estimates.
 - The "rank by estimated savings" instruction was excellent — it forced prioritization rather than a flat list.
+
+### 2026-03-24 — Study Systems Analyst — Facet assessment coverage audit + blueprint
+
+**Were any reads unnecessary?**
+- The specialist file (`STUDY_SYSTEMS_ANALYST.md`) was discovered via glob but not read — the prompt instructions were self-contained enough. For pure audit tasks with explicit function-level instructions, the specialist file adds little value.
+- All study.js reads were essential. The function-by-function audit list in the prompt (6 functions) mapped exactly to what needed checking.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 6-function audit + 5-mode coverage matrix + 5-point blueprint structure covered exactly what was needed. No wasted investigation.
+- The prompt correctly identified the exact line references for `asgnFacetBlock` and `skillFacetBlock` — this saved search time.
+- Minor: the prompt assumed 5 modes receive facet blocks (assignment, skills, exam, recap, explore) but only 2 currently do. The audit confirmed this quickly.
+
+**What would have made this prompt more efficient?**
+- The prompt could have specified `buildContext()`'s section ordering (SKILL TREE → cross-skill → ASSIGNMENTS → deadline → STUDENT PROFILE → domain → `relevantSkillIds` computation → SOURCE MATERIAL) to save the agent from having to trace it.
+- Specifying the exact line range for `relevantSkillIds` computation (1243-1249) would have been helpful since the prompt already knew this array exists.
+
+**What can be added to future prompts to increase performance?**
+- For context builder audits: "List the section ordering of the context string" — this is critical for insertion point decisions.
+- The "same pattern as `buildFocusedContext`" instruction for placement was excellent — it gave a concrete reference pattern instead of abstract guidance.
+- For coverage audits: the StudyContext.jsx routing conditional (line 1253) is the single source of truth for which modes use which builder. Future prompts should cite this directly.
+
+### 2026-03-24 — Study Security & Testing Analyst — Tutor Phase 1 QA
+
+**Were any reads unnecessary?**
+- No. The QA was efficient: `git diff` + `git show --stat` confirmed the change scope, targeted greps confirmed unchanged functions, build confirmed no regressions. No full file reads needed.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 8-point verification checklist mapped exactly to what needed checking. The "search for removed or modified function signatures" instruction was efficiently answered via `git diff` zero-deletion check.
+
+**What would have made this prompt more efficient?**
+- The prompt could have specified "use `git show --stat HEAD` to verify only study.js was changed" — this is the fastest single check for additive-only verification.
+
+**What can be added to future prompts to increase performance?**
+- For QA of single-function additive changes: "`git diff HEAD~1` + build pass is sufficient. Skip full file reads." This was done correctly here but should be standard guidance.
+
+### 2026-03-24 — Study UX Validator — Tutor Phase 1 UXV
+
+**Were any reads unnecessary?**
+- No. Only needed: (1) `buildFacetAssessmentBlock` output format (lines 1337-1378), (2) system prompt FACET-LEVEL ASSESSMENT section. Both were essential for the format match check. The `parseSkillUpdates` facet regex was already read in Step 1 — no re-read needed.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. Two focused UXV checks (cap + format match) mapped directly to the two concerns. No wasted investigation.
+
+**What can be added to future prompts to increase performance?**
+- For format match UXV: "Extract the relevant system prompt section using `node -e` since the prompt is a single concatenated string" — this is faster than trying to grep/read a 2000-char line.
+- When the new code uses the exact same function as existing code, the UXV can be shortened to "structurally guaranteed — same function, same output format."
+
+### 2026-03-24 — Study Developer — Tutor Phase 2 schema audit (session exchange logging)
+
+**Were any reads unnecessary?**
+- No. All 9 migration files needed reading to build the complete migration index and confirm 009 is taken. The db.js reads (Sessions, FacetMastery) were essential for the module pattern. The study.js reads (loadFacetBasedContent, loadChunksForBindings, discussedChunks) were essential for the chunk ID tracking gap analysis.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 5-point investigation structure mapped cleanly to distinct findings. Point (3) — chunk ID tracking — was the most valuable discovery: it surfaced a prerequisite gap (context builders return strings, not chunk metadata) that the roadmap didn't call out.
+- The "skip specialist file" instruction saved time for a pure schema/code audit.
+
+**What would have made this prompt more efficient?**
+- Point (3) could have been more specific: "search for any mechanism that returns chunk IDs from context building back to the caller" — this would have immediately focused on return types rather than internal variables.
+- Including "also check if discussedChunks is ever populated via .add()" would have accelerated the dead infrastructure finding.
+
+**What can be added to future prompts to increase performance?**
+- For schema audits: "Read all migration files AND check the next available migration number" — the prompt asked both implicitly but stating it explicitly would make the deliverable clearer.
+- For Phase 2 planning: "Check whether the context builders return chunk metadata or just strings" — this is the key architectural question for any feature that needs to know which chunks were used.
+- `discussedChunks` is dead infrastructure — future prompts can skip investigating it and note "never populated" directly.
+
+### 2026-03-24 — Study Systems Analyst — Tutor Phase 2 blueprint (session exchange logging)
+
+**Were any reads unnecessary?**
+- No. The diagnostic from the prior step provided most findings, but the specific call sites and code paths needed re-verification for exact line references. The `applySkillUpdates` per-facet routing path (lines 316-417) and all `loadFacetBasedContent` call sites (5 in study.js, 0 in StudyContext.jsx) were essential reads.
+
+**Was the prompt over-scoped or under-scoped?**
+- Slightly under-scoped on one key point: the prompt specified `loadFacetBasedContent()` API change and listed "every call site in study.js and StudyContext.jsx" but didn't mention that `buildContext()` and `buildFocusedContext()` also need return type changes to propagate chunk IDs to the StudyContext caller. This is the critical intermediate step — `loadFacetBasedContent` is never called from StudyContext directly.
+- The `practiceTier` specification ("`strengthToTier(effectiveStrength(skillRow))`") was misleading — this gives the student's current tier, not a practice mode tier. During tutoring, `practiceTier` should be null. The blueprint corrected this.
+
+**What would have made this prompt more efficient?**
+- Explicitly noting "loadFacetBasedContent is only called from within study.js context builders, not from StudyContext directly" would have saved verification time and immediately flagged the need for context builder return type changes.
+- The `chatSessionId.current` ref name should have been cited as the session ID source — saves a grep.
+
+**What can be added to future prompts to increase performance?**
+- For API return type changes that propagate through layers: "List the full call chain from the function being changed to the final consumer" — this catches intermediate layers that also need updates.
+- For `practiceTier`: clarify "null during tutoring, 1-6 only from PracticeMode" — the TIERS array maps to practice mode tiers, not tutor tiers.
+
+### 2026-03-24 — Study Developer — Tutor Phase 2 implementation (session exchange logging)
+
+**Were any reads unnecessary?**
+- No. The blueprint was comprehensive and the diagnostic provided the foundation. All reads during implementation were targeted at exact modification points. The prior SA work saved significant investigation time.
+
+**Was the prompt over-scoped or under-scoped?**
+- Under-scoped in one critical area: the prompt specified `loadFacetBasedContent()` call site updates and `applySkillUpdates()` params but didn't explicitly list the context builder return type changes (`buildContext` and `buildFocusedContext` must also return `{ ctx, chunkIds }`). The blueprint caught this gap.
+- The prompt specified 4 changes but the implementation required 6 logical changes (migration, db module, loadFacetBasedContent, context builders, applySkillUpdates, StudyContext destructuring).
+
+**What would have made this prompt more efficient?**
+- Listing the full propagation chain: `loadFacetBasedContent → buildContext/buildFocusedContext → StudyContext.jsx` with return type changes at each level.
+- Specifying the `cachedSessionCtx.current` shape change (needs `chunkIds` field) — this is the mechanism that persists chunk IDs across the cache hit path.
+
+**What can be added to future prompts to increase performance?**
+- For return type propagation: "When changing a function's return type, list every intermediate caller up to the final consumer and specify the return type change at each level."
+- For db module additions: "Follow the FacetMastery pattern" is sufficient — no additional guidance needed.
+- Wrap new DB calls in try/catch when the table may not exist yet (migration not applied) — standard defensive pattern for this codebase.
+
+### 2026-03-24 — Study Security & Testing Analyst — Tutor Phase 2 QA (session exchange logging)
+
+**Were any reads unnecessary?**
+- No. Verification greps were efficient: targeted checks at exact line numbers from the dev log. The `git diff` approach was not needed since the dev log provided complete line references. Build pass was the final gate.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 7-point verification checklist covered all critical paths: migration schema, db module, API return type change, call site propagation, logging hook, backward compat, and build. No wasted checks.
+- One implicit check not in the prompt but essential: verifying that `buildContext()` and `buildFocusedContext()` also return `{ ctx, chunkIds }` — these intermediate layers were a blueprint addition not in the original plan.
+
+**What would have made this prompt more efficient?**
+- The prompt could have specified "verify the full return type propagation chain: loadFacetBasedContent → buildContext/buildFocusedContext → StudyContext.jsx" as a single check instead of splitting across checks 3, 4, and 6.
+- Including the dev log's exact line numbers for each check point would have eliminated grep overhead entirely.
+
+**What can be added to future prompts to increase performance?**
+- For QA of API return type changes: "Verify the return type at each level of the call chain" as a single compound check — this is the most important verification for propagation changes.
+- The dev log's line numbers are reliable enough to skip re-discovery via grep — "verify at line X" is faster than "search for the pattern."

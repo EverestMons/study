@@ -58,7 +58,7 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 | Syllabus parsing | Auto-extracts schedule, grading, exams, placeholder assignments via Haiku |
 | Materials staging + grid layout | 3-column grid, grouped by type, expand-in-place, status filter tabs, batch retry |
 | DOCX export | Assignment submission export |
-| SQLite-only storage | WAL mode, transaction serialization, 8 migrations (001–008) |
+| SQLite-only storage | WAL mode, transaction serialization, 10 migrations (001–010) |
 | Security hardening | CSP, prompt injection defense, database backup, stream truncation markers |
 | Performance optimization | Context value memoization, batch profile queries, request dedup, extractJSON repair cap |
 | Error safety net | ErrorBoundary + async listeners + 3s mount-failure fallback + StrictMode guard |
@@ -89,6 +89,8 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 | 006 — Assignment activation | Applied | study_active column + partial index |
 | 007 — Material images | Applied | Image storage for materials |
 | 008 — Skill courses | Applied | skill_courses junction table + unified_into column for cross-course unification |
+| 009 — Chunk relationships | Applied | chunk_relationships table for inter-chunk connections |
+| 010 — Session exchanges | Applied | session_exchanges table for per-facet exchange logging with mastery deltas |
 
 ---
 
@@ -112,6 +114,7 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 
 | Date | Work |
 |---|---|
+| 2026-03-24 | **Tutor Phase 2 — Session Exchange Logging:** `session_exchanges` table (migration 010), `SessionExchanges` db module (`log()`, `getBySession()`), `loadFacetBasedContent()` returns `{ctx, chunkIds}`, per-facet exchange logging with mastery_before/after, practice_tier, and chunk_ids_used. SA blueprint → DEV (4 files modified, 1 created, +108 lines) → QA 7/7 PASS. |
 | 2026-03-24 | **Tutor Phase 1 — Facet Assessment in All Modes:** Facet assessment block added to general context builder (`buildContext()`) — all 5 study modes now expose facets to the AI for per-facet FSRS routing during tutoring. SA audit → DEV (1 file, +7 lines) → QA → UXV. |
 | 2026-03-22 | **Materials Staging UX Redesign:** SA blueprint → DEV (grouped 3-column grid, inline classify buttons, centered upload zone, progressive reveal, classification animation) → QA 7/7 PASS → UXV 7/7 PASS. **Chunk Metadata Enrichment:** Diagnostic (8 gaps identified) → SA blueprint → DEV (3 files: htmlToMarkdown.js, chunker.js, extraction.js) → QA 5/5 PASS. **Cross-Course Skill Unification (3 phases):** CEO scoping → SA blueprint (migration 008, merge engine) → DEV Phase 1 (migration, DB module, merge engine) → QA Phase 1 → DEV Phase 2 (extraction hook) → DEV Phase 3 (display filters, ProfileScreen attribution, AI context) → QA Full 7/7 PASS → UXV 5/5 PASS. **Self-Updater:** Confirmed fully operational. **IES Diagnostics:** Prompt enhancement audit + full implementation status audit (mapped all 7 IES recommendations to codebase). **IES Gaps + Open Flags Batch:** SA blueprint (5 changes across 2 lanes) → DEV Lane A (gap identification prompt in study.js, PracticeMode mastery event wiring, level decrease display guard in MessageList + SessionSummary) → DEV Lane B (confidence calibration tracking with `computeCalibration()` in PracticeMode, review mode closed as addressed) → QA 7/7 PASS → UXV 5/5 PASS. |
 | 2026-03-21 | **Bugfix Batch:** 3 diagnostics + executable plan — (1) black screen from MaterialsScreen skill study, (2) PPTX phantom slide references, (3) assignment decomposition gap for new materials. |
