@@ -215,3 +215,45 @@ knowledge/
 | `Done/background-extraction-orchestration-2026-03-17.md` | 2026-03-17 | Background extraction orchestration plan — 4-lane parallel pipeline (A: background extraction, B: assignment practice fix, C: study focus mode, D: skill update notification). 17 steps total across SA→DEV→QA→UXV. | CEO + Planner |
 | `Done/assignment-tutor-boundary-orchestration-2026-03-18.md` | 2026-03-18 | Assignment tutor question boundary fix — 2-step pipeline (DEV→QA). Context restructure + prompt tightening to prevent AI from asking assignment questions directly. | CEO + Planner |
 | `executable-study-bugfix-batch-2026-03-21.md` | 2026-03-21 | Bugfix batch — 3 parallel DEV steps (1A: black screen from MaterialsScreen, 1B: phantom slide reference guardrails in extraction + study prompts, 1C: proactive assignment decomposition on material addition + incremental fallback) → 1 QA step. | CEO + Planner |
+
+
+## Session: 2026-03-22
+
+### Architecture
+| File | Date | Summary |
+|---|---|---|
+| materials-staging-blueprint-2026-03-22.md | 2026-03-22 | JSX skeleton, grouping logic, card specs, animation mechanism for staging redesign |
+| chunk-metadata-enrichment-blueprint-2026-03-22.md | 2026-03-22 | 4 metadata changes: blockquote, subsections, list count split, split inflation fix |
+| cross-course-unification-blueprint-2026-03-22.md | 2026-03-22 | Migration 008 (skill_courses + unified_into), merge engine design, optimistic FSRS formula |
+
+### Research
+| File | Date | Summary |
+|---|---|---|
+| chunk-metadata-diagnostic-2026-03-22.md | 2026-03-22 | Metadata pipeline investigation: field coverage table, 8 gaps, parser quality matrix |
+
+### QA
+| File | Date | Summary |
+|---|---|---|
+| materials-staging-qa-2026-03-22.md | 2026-03-22 | 7/7 PASS, 19 test points, 0 findings |
+| chunk-metadata-enrichment-qa-2026-03-22.md | 2026-03-22 | 5/5 PASS, 9/9 acceptance criteria |
+| cross-course-unification-phase1-qa-2026-03-22.md | 2026-03-22 | Phase 1: schema + backfill + merge engine verified |
+| cross-course-unification-full-qa-2026-03-22.md | 2026-03-22 | 7/7 PASS, 1 gap found + fixed, FSRS integrity confirmed |
+
+### Design / Validation
+| File | Date | Summary |
+|---|---|---|
+| materials-staging-uxv-2026-03-22.md | 2026-03-22 | 7/7 PASS, abbreviation tooltips noted as minor enhancement |
+| cross-course-unification-uxv-2026-03-22.md | 2026-03-22 | 5/5 PASS, silent merge correct for v1, cross-course AI context net positive |
+
+### Decisions (Done/)
+| File | Date | Summary |
+|---|---|---|
+| diagnostic-chunk-metadata-2026-03-22.md | 2026-03-22 | Metadata pipeline investigation diagnostic |
+| executable-materials-staging-redesign-2026-03-22.md | 2026-03-22 | 4-step: SA → DEV → QA → UXV |
+| executable-chunk-metadata-enrichment-2026-03-22.md | 2026-03-22 | 3-step: SA → DEV → QA |
+| executable-cross-course-unification-2026-03-22.md | 2026-03-22 | 7-step: SA → DEV → QA → DEV → DEV → QA → UXV |
+
+### Decisions (Active)
+| File | Date | Summary |
+|---|---|---|
+| roadmap-cross-course-unification-2026-03-22.md | 2026-03-22 | Roadmap (now executed) — architectural decisions, phase plan, risk notes |

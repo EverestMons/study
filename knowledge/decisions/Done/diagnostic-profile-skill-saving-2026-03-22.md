@@ -1,0 +1,17 @@
+# study — Profile Skill Saving Diagnostic
+**Date:** 2026-03-22 | **Tier:** Small | **Execution:** Step 1 (DEV diagnostic)
+
+## How to Run This Plan
+
+Paste this into Claude Code:
+
+Read the orchestration plan at `study/knowledge/decisions/diagnostic-profile-skill-saving-2026-03-22.md`. Execute Step 1, then stop.
+
+---
+---
+
+## STEP 1 — DEV (Diagnostic)
+
+---
+
+> You are the Study Developer. Read your specialist file at `study/agents/STUDY_DEVELOPER.md` first. Skip glossary — this is a data flow investigation task. **Task:** The CEO reports that even progress on a single facet should be noticeable on the user's profile, but it may not be. Investigate the full chain from facet-level FSRS update to profile display. **Investigate:** (1) **FSRS update path:** In `src/lib/study.js`, trace `applySkillUpdates()`. When the AI rates a single facet (e.g., one facet rated "good"), what exactly happens? Does `FacetMastery.upsert()` fire? Does `Mastery.upsert()` (skill-level) also fire? What are the aggregate computations — how does a single facet's progress roll up to the skill-level mastery? Show the exact computation: if a skill has 5 facets and 1 gets rated "good" (the rest untested), what does the skill-level `retrievability`, `stability`, and `strength` look like? (2) **Profile data loading:** In `StudyContext.jsx`, trace `loadProfile()`. How does it load skills and their mastery? Does it load facet-level mastery, or only skill-level? What fields from mastery does it put on the enriched skill objects? (3) **ProfileScreen display:** In `src/screens/ProfileScreen.jsx`, what determines whether a skill appears on the profile? Is there a minimum mastery threshold? A minimum strength? Is there a filter that hides skills with very low or zero mastery? If a skill has 1/5 facets rated with a "good" grade, would it appear on the profile? What would its readiness bar show? (4) **`effectiveStrength` computation:** Find `effectiveStrength()` in `study.js` or `fsrs.js`. How does it compute the displayed strength percentage? Does it factor in facet-level data or only skill-level aggregates? If a skill has 1 facet at 80% retrievability and 4 untested facets, what does effectiveStrength return? (5) **Parent skill level computation:** How does a parent skill's level and readiness reflect its sub-skills? If one sub-skill has minimal facet progress, does the parent show any change? Or does the parent need multiple sub-skills with significant mastery before it registers? (6) **Edge case: first interaction.** Walk through the exact scenario: student starts studying, AI rates one facet as "good" on their first message. What DB writes happen? What would the profile show immediately after navigating to it? Is the update visible, or is there a caching/loading issue that delays it? **Report:** the full chain with exact computations, any thresholds or filters that could hide early progress, and whether a single facet "good" rating is actually visible on the profile. If it's not visible, identify exactly where the signal is lost. **Deposit:** `study/knowledge/research/profile-skill-saving-diagnostic-2026-03-22.md`. After your output receipt, standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`. Commit with message: `"docs: profile skill saving diagnostic"`. **Final:** Move this diagnostic to Done: `mv study/knowledge/decisions/diagnostic-profile-skill-saving-2026-03-22.md study/knowledge/decisions/Done/`. Plan complete — all steps executed.
