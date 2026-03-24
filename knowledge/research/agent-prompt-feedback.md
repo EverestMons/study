@@ -399,3 +399,20 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For QA of API return type changes: "Verify the return type at each level of the call chain" as a single compound check — this is the most important verification for propagation changes.
 - The dev log's line numbers are reliable enough to skip re-discovery via grep — "verify at line X" is faster than "search for the pattern."
+
+### 2026-03-24 — Study Developer — Tutor Phase 3 prerequisite audit (diagnostic)
+
+**Were any reads unnecessary?**
+- No. All 4 investigation points required targeted reads. The migration file was small and essential for the `teaching_effectiveness` column analysis. The db.js reads for both `ChunkFacetBindings` and `SessionExchanges` were non-overlapping. The study.js reads for `collectFacetBindings` and `loadFacetBasedContent` covered the full content pipeline.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4-point investigation structure was clean: schema → db module → study.js pipeline → session logging verification. Each point produced distinct, non-overlapping findings.
+- Point (2) asking for "all methods in full" was slightly over-broad — listing 7 methods was thorough but the key insight (no method writes `teaching_effectiveness`) could have been targeted with "does any method write `teaching_effectiveness`?"
+
+**What would have made this prompt more efficient?**
+- Point (2) could have been split: "Does any ChunkFacetBindings method write `teaching_effectiveness`?" (quick grep) + "Show `getByFacetRanked()` ordering logic" (targeted read). The "show all methods in full" instruction led to reading the entire module when only 2 methods were critical.
+- Point (3c) asking whether call sites destructure correctly was already fully verified in Phase 2 QA — this was redundant confirmation. A simple "confirm call sites unchanged since Phase 2" would have sufficed.
+
+**What can be added to future prompts to increase performance?**
+- For "dead column" audits: "Search for any INSERT or UPDATE that references column X" is the fastest path — a single grep across db.js answers the question.
+- For post-Phase-N diagnostics: "Skip re-verifying Phase N changes that passed QA" — cite the QA report instead of re-auditing.
