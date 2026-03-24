@@ -416,3 +416,46 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For "dead column" audits: "Search for any INSERT or UPDATE that references column X" is the fastest path — a single grep across db.js answers the question.
 - For post-Phase-N diagnostics: "Skip re-verifying Phase N changes that passed QA" — cite the QA report instead of re-auditing.
+
+### 2026-03-24 — Study Systems Analyst — Tutor Phase 3 blueprint (chunk teaching effectiveness)
+
+**Were any reads unnecessary?**
+- No. The roadmap Phase 3 section, diagnostic findings, and session end flow reads were all essential. The critical discovery was that `chatSessionId` is a private ref NOT exposed to StudyScreen — this changed where the wiring goes.
+
+**Was the prompt over-scoped or under-scoped?**
+- Slightly under-scoped on the wiring location. The prompt specified "called from the session end handler in StudyContext.jsx alongside the existing `generateSessionEntry()` call, after the session is marked complete." But `generateSessionEntry()` is called from StudyScreen.jsx (line 51), not StudyContext.jsx. The actual convergence point is `saveSessionToJournal` in StudyContext.jsx (line 383). The prompt assumed `generateSessionEntry` and the session end handler were in the same file.
+- The `NULLS LAST` SQL syntax doesn't work in SQLite — the prompt specified it but the blueprint had to use the `CASE WHEN ... IS NULL THEN 1 ELSE 0 END` idiom instead.
+
+**What would have made this prompt more efficient?**
+- Specifying "find where `chatSessionId.current` is accessible and where `generateSessionEntry()` is called — they may be in different files" would have immediately surfaced the wiring constraint.
+- Noting "SQLite doesn't support NULLS LAST — use CASE WHEN IS NULL idiom" would have avoided the need to blueprint the workaround.
+
+**What can be added to future prompts to increase performance?**
+- For session end wiring: "`saveSessionToJournal` in StudyContext.jsx (line 383) is the canonical session-end hook — all exit paths converge here. `chatSessionId` is a private ref not exposed through context." This saves the discovery work.
+- For SQLite ORDER BY: "SQLite NULLS LAST requires `CASE WHEN col IS NULL THEN 1 ELSE 0 END` pattern" — standard idiom for this codebase.
+- The mastery delta threshold (> 0.05 for positive deltas) is a good design decision that should be standard for any effectiveness signal — prevents rewarding content when mastery didn't actually improve.
+
+### 2026-03-24 — Study Developer — Tutor Phase 3 implementation (chunk teaching effectiveness)
+
+**Were any reads unnecessary?**
+- No. The blueprint was comprehensive. Only needed to verify exact insertion points: `updateQualityRanks` location in db.js (for placing new methods before it), `loadPracticeMaterialCtx` end in study.js (for placing new function after it), and the `saveSessionToJournal` body in StudyContext.jsx.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The blueprint's SA step identified the correct wiring point (`saveSessionToJournal`), the SQLite NULLS LAST idiom, and the mastery delta threshold — DEV just implemented. The 3-change structure was accurate.
+- One minor mismatch: the prompt says "add `updateChunkEffectiveness` immediately after the session is marked complete" — but the actual placement is after journal entry creation inside `saveSessionToJournal`, before session state reset. The session is never "marked complete" in `saveSessionToJournal` — that's just a journal write. Precision would help.
+
+**What can be added to future prompts to increase performance?**
+- The blueprint-to-DEV handoff was clean. When the SA step produces exact code snippets, DEV execution is nearly mechanical. This is the ideal pattern.
+- For db.js methods: "Place new methods before `updateQualityRanks`" — the prompt didn't specify placement within the module, but the blueprint did. DEV prompts should always specify insertion points.
+
+### 2026-03-24 — Study Security & Testing Analyst — Tutor Phase 3 QA (chunk effectiveness)
+
+**Were any reads unnecessary?**
+- No. Targeted greps + reads at exact line numbers from the dev log. The NULLS LAST safety analysis required reading the full ORDER BY clause (5 lines) which was efficient.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. 7 checks covered all critical paths. Check 7 (NULLS LAST safety) was the most valuable — confirms backward compatibility for existing data. The "unchanged paths" verification was efficient via grep-only confirmation.
+
+**What can be added to future prompts to increase performance?**
+- For SQLite NULLS LAST QA: "Confirm CASE WHEN IS NULL THEN 1 ELSE 0 END idiom is used (not NULLS LAST syntax)" — SQLite-specific verification.
+- The stale session check (enterStudy line 928 not wired) should be a standard QA item for any session-end feature.

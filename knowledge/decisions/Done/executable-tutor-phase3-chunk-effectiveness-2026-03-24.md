@@ -1,0 +1,39 @@
+# study — Tutor Phase 3: Chunk Teaching Effectiveness Feedback
+**Date:** 2026-03-24 | **Tier:** Medium | **Execution:** Step 1 (SA) → Step 2 (DEV) → Step 3 (QA)
+
+## How to Run This Plan
+
+Paste the following into Claude Code:
+
+```
+Read the plan at /Users/marklehn/Desktop/GitHub/study/knowledge/decisions/executable-tutor-phase3-chunk-effectiveness-2026-03-24.md. Execute Step 1. After completing Step 1, stop and wait for my confirmation before proceeding to Step 2.
+```
+
+---
+---
+
+## STEP 1 — STUDY SYSTEMS ANALYST (chunk effectiveness blueprint)
+
+---
+
+> You are the Study Systems Analyst. Read specialist file at `study/agents/STUDY_SYSTEMS_ANALYST.md`. Read `study/knowledge/decisions/roadmap-tutor-facet-grounded-teaching-2026-03-24.md` (Phase 3 section). Read `study/knowledge/development/tutor-phase3-diagnostic-2026-03-24.md` for all findings — specifically: `teaching_effectiveness` is REAL nullable with no default, currently NULL for all rows; `getByFacetRanked()` orders by binding_type priority → quality_rank → confidence DESC with `teaching_effectiveness` not participating; `SessionExchanges.getBySession()` returns session_id, facet_id, chunk_ids_used, mastery_before, mastery_after, rating. Blueprint two changes. **Change 1 — db.js ChunkFacetBindings.updateEffectiveness():** specify a new method `updateEffectiveness(chunkId, facetId, delta)` that executes: `UPDATE chunk_facet_bindings SET teaching_effectiveness = COALESCE(teaching_effectiveness, 0) + ?, updated_at = ? WHERE chunk_id = ? AND facet_id = ?` with parameters [delta, now(), chunkId, facetId]. COALESCE handles the NULL-to-0 bootstrap for existing rows. Delta is positive for mastery improvements (good/easy with mastery_after > mastery_before), negative or zero for regressions (struggled/hard). Specify the exact delta values: +0.1 for easy, +0.05 for good, -0.05 for hard, -0.1 for struggled — capped via a separate UPDATE after: `UPDATE chunk_facet_bindings SET teaching_effectiveness = MAX(-1.0, MIN(1.0, teaching_effectiveness)) WHERE chunk_id = ? AND facet_id = ?`. Also specify `getEffectivenessByFacet(facetId)` — `SELECT chunk_id, teaching_effectiveness FROM chunk_facet_bindings WHERE facet_id = ? AND teaching_effectiveness IS NOT NULL ORDER BY teaching_effectiveness DESC`. **Change 2 — study.js updateChunkEffectiveness(sessionId) + getByFacetRanked() ordering:** specify `updateChunkEffectiveness(sessionId)` function — reads `SessionExchanges.getBySession(sessionId)`, for each exchange: parse `chunk_ids_used` JSON, compute delta from rating + mastery delta (mastery_after - mastery_before > 0.05 = improvement), call `ChunkFacetBindings.updateEffectiveness(chunkId, facetId, delta)` for each chunk ID in the exchange. Specify where in the session end flow this is called — it should be called from the session end handler in StudyContext.jsx alongside the existing `generateSessionEntry()` call, after the session is marked complete. Specify the `getByFacetRanked()` ORDER BY change: add `teaching_effectiveness DESC NULLS LAST` as a secondary sort key between quality_rank and confidence — full order becomes: binding_type priority → quality_rank → teaching_effectiveness DESC NULLS LAST → confidence DESC. No schema migration needed — `teaching_effectiveness` column already exists in migration 005. Deposit: `study/knowledge/architecture/tutor-phase3-blueprint-2026-03-24.md`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`.
+
+---
+---
+
+## STEP 2 — STUDY DEVELOPER (chunk effectiveness implementation)
+
+---
+
+> You are the Study Developer. Before starting, read `study/knowledge/architecture/tutor-phase3-blueprint-2026-03-24.md` and check Output Receipt status. If not Complete, stop and report. Read specialist file at `study/agents/STUDY_DEVELOPER.md`. Implement per blueprint exactly. Three changes: **(1) db.js ChunkFacetBindings additions** — add `updateEffectiveness(chunkId, facetId, delta)` using COALESCE pattern per blueprint, and the cap UPDATE immediately after. Add `getEffectivenessByFacet(facetId)` SELECT query. Both follow the existing FacetMastery async pattern (getDb, db.execute/db.select). **(2) db.js getByFacetRanked() ORDER BY change** — update the SQL ORDER BY clause from `binding_type priority → quality_rank → confidence DESC` to `binding_type priority → quality_rank → teaching_effectiveness DESC NULLS LAST → confidence DESC`. One line change in the existing query. **(3) study.js updateChunkEffectiveness(sessionId)** — new exported function that reads session exchanges via `SessionExchanges.getBySession(sessionId)`, iterates exchanges, parses `chunk_ids_used` JSON (handle null/empty gracefully), computes delta per blueprint delta table (easy=+0.1, good=+0.05, hard=-0.05, struggled=-0.1), applies mastery delta check (only apply positive delta when mastery_after - mastery_before > 0.05), calls `ChunkFacetBindings.updateEffectiveness()` for each chunkId+facetId pair. Wire `updateChunkEffectiveness()` into the session end handler in `StudyContext.jsx` — find where `generateSessionEntry()` is called and add `await updateChunkEffectiveness(activeSessionId)` immediately after the session is marked complete. Import `updateChunkEffectiveness` in StudyContext.jsx. No migration needed. Run `npx vite build --mode development` — confirm clean build. Commit: `"feat: tutor phase 3 — chunk teaching effectiveness feedback loop, updateChunkEffectiveness(), getByFacetRanked ordering update"`. Deposit: `study/knowledge/development/tutor-phase3-dev-2026-03-24.md`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`.
+
+---
+---
+
+## STEP 3 — STUDY SECURITY & TESTING ANALYST (phase 3 QA)
+
+---
+
+> You are the Study Security & Testing Analyst. Before starting, read `study/knowledge/development/tutor-phase3-dev-2026-03-24.md` and check Output Receipt status. If not Complete, stop and report. Read specialist file at `study/agents/STUDY_SECURITY_TESTING_ANALYST.md`. Verify: (1) `ChunkFacetBindings.updateEffectiveness(chunkId, facetId, delta)` exists in db.js — confirm it uses COALESCE and the cap UPDATE; (2) `ChunkFacetBindings.getEffectivenessByFacet(facetId)` exists and filters `teaching_effectiveness IS NOT NULL`; (3) `getByFacetRanked()` ORDER BY now includes `teaching_effectiveness DESC NULLS LAST` between quality_rank and confidence — read the SQL query and confirm the full order: binding_type priority → quality_rank → teaching_effectiveness DESC NULLS LAST → confidence DESC; (4) `updateChunkEffectiveness(sessionId)` exists in study.js — confirm it handles null/empty `chunk_ids_used` gracefully and applies the mastery_after - mastery_before > 0.05 threshold for positive deltas; (5) StudyContext.jsx calls `updateChunkEffectiveness()` at session end alongside `generateSessionEntry()`; (6) build passes cleanly — run `npx vite build --mode development`; (7) NULLS LAST safety check — confirm that existing rows with NULL `teaching_effectiveness` will sort after rows with real values (not before), preserving existing quality_rank ordering for all current bindings until effectiveness data accumulates. Update `study/PROJECT_STATUS.md` — add milestone: "Tutor Phase 3 (2026-03-24): chunk teaching effectiveness feedback loop complete. updateChunkEffectiveness() writes teaching_effectiveness on chunk_facet_bindings at session end. getByFacetRanked() now orders by teaching_effectiveness DESC NULLS LAST as secondary sort key. Higher-effectiveness chunks surface first for facets with accumulated session data." Move plan to Done: `mv study/knowledge/decisions/executable-tutor-phase3-chunk-effectiveness-2026-03-24.md study/knowledge/decisions/Done/`. Commit: `"chore: status update + move tutor-phase3 plan to Done"`. Deposit: `study/knowledge/qa/tutor-phase3-qa-2026-03-24.md`. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`.
+
+---
