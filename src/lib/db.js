@@ -2129,6 +2129,33 @@ export const Sessions = {
 };
 
 // ============================================================
+// Session Exchanges — per-facet exchange records
+// ============================================================
+
+export const SessionExchanges = {
+  async log({ sessionId, facetId, practiceTier, chunkIdsUsed, masteryBefore, masteryAfter, rating }) {
+    const db = await getDb();
+    const id = uuid();
+    await db.execute(
+      `INSERT INTO session_exchanges (id, session_id, facet_id, practice_tier, chunk_ids_used,
+         mastery_before, mastery_after, rating, exchange_timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, sessionId, facetId, practiceTier || null, chunkIdsUsed || null,
+       masteryBefore, masteryAfter, rating, now()]
+    );
+    return id;
+  },
+
+  async getBySession(sessionId) {
+    const db = await getDb();
+    return db.select(
+      'SELECT * FROM session_exchanges WHERE session_id = ? ORDER BY exchange_timestamp ASC',
+      [sessionId]
+    );
+  },
+};
+
+// ============================================================
 // Session Skills
 // ============================================================
 

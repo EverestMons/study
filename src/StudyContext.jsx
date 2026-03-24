@@ -1156,9 +1156,10 @@ export function StudyProvider({ children, setErrorCtx }) {
       const skills = await loadSkillsV2(active.id);
       const journalRows = await JournalEntries.getByCourse(active.id);
       const journal = journalRows.reverse().map(r => { try { return typeof r.entry_data === 'string' ? JSON.parse(r.entry_data) : r.entry_data; } catch { return null; } }).filter(Boolean);
-      const ctx = await buildFocusedContext(active.id, active.materials, focus, skills);
+      const ctxResult = await buildFocusedContext(active.id, active.materials, focus, skills);
+      const ctx = ctxResult.ctx;
 
-      cachedSessionCtx.current = { ctx, skills, journal, focus };
+      cachedSessionCtx.current = { ctx, skills, journal, focus, chunkIds: ctxResult.chunkIds };
 
       var studentContext = "";
       if (Array.isArray(skills) && skills.length > 0) {
@@ -1242,10 +1243,12 @@ export function StudyProvider({ children, setErrorCtx }) {
 
     try {
       let ctx, skills, journal;
+      var contextChunkIds = [];
       if (cachedSessionCtx.current && focusContext) {
         ctx = cachedSessionCtx.current.ctx;
         skills = cachedSessionCtx.current.skills;
         journal = cachedSessionCtx.current.journal;
+        contextChunkIds = cachedSessionCtx.current.chunkIds || [];
       } else {
         skills = await loadSkillsV2(active.id);
         var jRows = await JournalEntries.getByCourse(active.id);
@@ -1257,10 +1260,14 @@ export function StudyProvider({ children, setErrorCtx }) {
             for (var aq of asgnWork.questions) { if (aq.unlocked) unlocked[aq.id] = true; }
             rebuildFocus = { ...focusContext, unlocked: unlocked };
           }
-          ctx = await buildFocusedContext(active.id, active.materials, rebuildFocus, skills);
+          var focusResult = await buildFocusedContext(active.id, active.materials, rebuildFocus, skills);
+          ctx = focusResult.ctx;
+          contextChunkIds = focusResult.chunkIds;
         } else {
           const asgn = await loadAssignmentsCompat(active.id) || [];
-          ctx = await buildContext(active.id, active.materials, skills, asgn, newMsgs, discussedChunks.current);
+          var generalResult = await buildContext(active.id, active.materials, skills, asgn, newMsgs, discussedChunks.current);
+          ctx = generalResult.ctx;
+          contextChunkIds = generalResult.chunkIds;
         }
       }
 
@@ -1276,7 +1283,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       if (updates.length) {
         var intentWeights = { assignment: 1.0, exam: 0.8, skills: 1.0 };
         var intentWeight = intentWeights[sessionMode] || 1.0;
-        var newMasteryEvents = await applySkillUpdates(active.id, updates, intentWeight, sessionMasteredSkills.current) || [];
+        var newMasteryEvents = await applySkillUpdates(active.id, updates, intentWeight, sessionMasteredSkills.current, chatSessionId.current, contextChunkIds) || [];
         sessionSkillLog.current.push(...updates);
 
         // Accumulate facet-level updates for session summary
@@ -1337,7 +1344,8 @@ export function StudyProvider({ children, setErrorCtx }) {
             for (var aq2 of asgnWork.questions) { if (aq2.unlocked) unlocked2[aq2.id] = true; }
             updateFocus = { ...focusContext, unlocked: unlocked2 };
           }
-          var updatedCtx = await buildFocusedContext(active.id, active.materials, updateFocus, updatedSkills);
+          var updatedCtxResult = await buildFocusedContext(active.id, active.materials, updateFocus, updatedSkills);
+          var updatedCtx = updatedCtxResult.ctx;
           var recentKw = extractKeywords(newMsgs.slice(-12), 10);
           var skillsSoFar = sessionSkillLog.current.map(s => s.skillId + ":" + s.rating).join(", ");
           if (recentKw.length || skillsSoFar) {
@@ -1345,7 +1353,7 @@ export function StudyProvider({ children, setErrorCtx }) {
             if (recentKw.length) updatedCtx += "\nTopics discussed: " + recentKw.join(", ");
             if (skillsSoFar) updatedCtx += "\nSkills assessed: " + skillsSoFar;
           }
-          cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, ctx: updatedCtx };
+          cachedSessionCtx.current = { ...cachedSessionCtx.current, skills: updatedSkills, ctx: updatedCtx, chunkIds: updatedCtxResult.chunkIds };
         }
       }
 

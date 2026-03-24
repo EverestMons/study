@@ -1,4 +1,4 @@
-import { Mastery, SubSkills, Sessions, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills, Facets, FacetMastery, FacetConceptLinks, Chunks, ChunkFacetBindings, AssignmentQuestionFacets, MaterialImages, ChunkPrerequisites } from './db.js';
+import { Mastery, SubSkills, Sessions, SessionExchanges, Assignments, CourseSchedule, ConceptLinks, Courses, ParentSkills, Facets, FacetMastery, FacetConceptLinks, Chunks, ChunkFacetBindings, AssignmentQuestionFacets, MaterialImages, ChunkPrerequisites } from './db.js';
 import { callClaude, extractJSON, isApiError } from './api.js';
 import { getMatContent } from './skills.js';
 import { currentRetrievability, reviewCard, mapRating, initCard } from './fsrs.js';
@@ -241,7 +241,7 @@ export const masteryConfidence = (fitness) => {
 // Phase 4: FSRS operates at facet level. Each facet gets its own independent FSRS card.
 // Skill-level `sub_skill_mastery` is computed as an aggregate of facet states.
 // Falls back to skill-level FSRS when a skill has no facets.
-export const applySkillUpdates = async (courseId, updates, intentWeight, sessionMasteredSkills) => {
+export const applySkillUpdates = async (courseId, updates, intentWeight, sessionMasteredSkills, sessionId = null, chunkIds = []) => {
   if (intentWeight === undefined || intentWeight === null) intentWeight = 1.0;
   if (!updates.length) return [];
   var now = new Date();
@@ -402,6 +402,24 @@ export const applySkillUpdates = async (courseId, updates, intentWeight, session
             totalMasteryPoints: fuTotalPts,
             lastRating: fu.rating,
           });
+
+          // Log exchange for session analysis
+          if (sessionId) {
+            var masteryBefore = fuExisting
+              ? currentRetrievability({ stability: fuExisting.stability, lastReviewAt: fuExisting.last_review_at })
+              : 0;
+            try {
+              await SessionExchanges.log({
+                sessionId,
+                facetId: targetFacet.id,
+                practiceTier: null,
+                chunkIdsUsed: chunkIds.length > 0 ? JSON.stringify(chunkIds) : null,
+                masteryBefore,
+                masteryAfter: fuResult.retrievability,
+                rating: fu.rating,
+              });
+            } catch (e) { /* session_exchanges table may not exist yet */ }
+          }
 
           facetResults.push({
             facetId: targetFacet.id,
@@ -1043,13 +1061,13 @@ const buildOutline = (tree, maxTokens = 200) => {
 
 /** Main orchestrator: load facet-based content with optional cross-domain chunks. */
 const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 24000, includeCrossDomain = true } = {}) => {
-  if (!facetIds.length) return '';
+  if (!facetIds.length) return { ctx: '', chunkIds: [] };
   // 1. Collect filtered bindings
   var bindings = await collectFacetBindings(facetIds, { mode });
-  if (!bindings.length) return '';
+  if (!bindings.length) return { ctx: '', chunkIds: [] };
   // 2. Load primary chunks
   var primary = await loadChunksForBindings(bindings, { charLimit });
-  if (!primary.length) return '';
+  if (!primary.length) return { ctx: '', chunkIds: [] };
   // 2b. Count total chunks per material for position metadata
   var materialTotals = {};
   var uniqueMatIds = [...new Set(primary.map(c => c.materialId).filter(Boolean))];
@@ -1092,18 +1110,20 @@ const loadFacetBasedContent = async (facetIds, { mode = 'standard', charLimit = 
     ctx += '\n--- ' + ch.label + (meta || prereqInfo ? ' [' + meta + prereqInfo + ']' : '') + ' ---\n' + ch.content + '\n';
   }
   // 4. Cross-domain content
+  var allChunkIds = primary.map(c => c.chunkId);
   if (includeCrossDomain) {
-    var loadedChunkIds = new Set(primary.map(c => c.chunkId));
+    var loadedChunkIds = new Set(allChunkIds);
     var cross = await loadCrossDomainChunks(facetIds);
     var crossFiltered = cross.filter(c => !loadedChunkIds.has(c.chunkId));
     if (crossFiltered.length) {
       ctx += '\nCROSS-DOMAIN REFERENCES:\n';
       for (var xc of crossFiltered) {
         ctx += '\n--- ' + xc.linkedFacetName + ' (' + xc.linkType + ') ---\n' + xc.content + '\n';
+        allChunkIds.push(xc.chunkId);
       }
     }
   }
-  return ctx;
+  return { ctx, chunkIds: allChunkIds };
 };
 
 /** Extracted keyword fallback: source-name fuzzy-matching (existing logic). */
@@ -1277,9 +1297,11 @@ export const buildContext = async (courseId, materials, skills, assignments, rec
   facetedSkillFacetIds = [...new Set(facetedSkillFacetIds)];
 
   // Load facet-based content first
+  var collectedChunkIds = [];
   if (facetedSkillFacetIds.length > 0) {
-    var facetCtx = await loadFacetBasedContent(facetedSkillFacetIds, { mode: 'standard', charLimit: 16000 });
-    if (facetCtx) ctx += facetCtx;
+    var facetResult = await loadFacetBasedContent(facetedSkillFacetIds, { mode: 'standard', charLimit: 16000 });
+    if (facetResult.ctx) ctx += facetResult.ctx;
+    collectedChunkIds.push(...facetResult.chunkIds);
   }
 
   // Keyword-matching path for non-faceted skills (fills gaps)
@@ -1321,14 +1343,16 @@ export const buildContext = async (courseId, materials, skills, assignments, rec
       });
       for (const ch of relChs.slice(0, 3)) {
         ctx += "\n--- " + ch.label + " (full) ---\n" + ch.content + "\n";
+        collectedChunkIds.push(ch.id);
       }
     } else if (isNeeded && activeChunks[0]?.content) {
       ctx += "\n--- " + mat.classification.toUpperCase() + ": " + mat.name + " ---\n" + activeChunks[0].content + "\n";
+      collectedChunkIds.push(activeChunks[0].id);
       loadedCount++;
     }
   }
 
-  return ctx;
+  return { ctx, chunkIds: collectedChunkIds };
 };
 
 // --- Facet Assessment Block for Context ---
@@ -1426,6 +1450,7 @@ async function buildImageCatalog(courseId, materials) {
 // --- Focused Context Builder ---
 export const buildFocusedContext = async (courseId, materials, focus, skills) => {
   let ctx = "";
+  var collectedChunkIds = [];
   const allSkills = Array.isArray(skills) ? skills : [];
 
   if (focus.type === "assignment") {
@@ -1501,7 +1526,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     asgnFacetIds = [...new Set(asgnFacetIds)];
     var asgnFacetContent = '';
     if (asgnFacetIds.length > 0) {
-      asgnFacetContent = await loadFacetBasedContent(asgnFacetIds, { mode: 'standard' });
+      var asgnFacetResult = await loadFacetBasedContent(asgnFacetIds, { mode: 'standard' });
+      asgnFacetContent = asgnFacetResult.ctx;
+      collectedChunkIds.push(...asgnFacetResult.chunkIds);
     }
     if (asgnFacetContent) {
       ctx += asgnFacetContent;
@@ -1558,7 +1585,9 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     var skillFacetContent = '';
     if (skillFacets.length > 0) {
       var skillFacetIds = skillFacets.map(function(f) { return f.id; });
-      skillFacetContent = await loadFacetBasedContent(skillFacetIds, { mode: 'standard' });
+      var skillFacetResult = await loadFacetBasedContent(skillFacetIds, { mode: 'standard' });
+      skillFacetContent = skillFacetResult.ctx;
+      collectedChunkIds.push(...skillFacetResult.chunkIds);
     }
     if (skillFacetContent) {
       ctx += "\nSOURCE MATERIAL:\n";
@@ -1656,6 +1685,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
           if (ePrereqs.length > 0 && ePrereqs[0].prereq_label) examPrereq = ' | builds on: ' + ePrereqs[0].prereq_label;
         } catch { /* non-critical */ }
         ctx += "\n--- " + ch.label + (examMeta || examPrereq ? ' [' + examMeta + examPrereq + ']' : '') + " ---\n" + ch.content + "\n";
+        collectedChunkIds.push(ch.id);
       }
     }
 
@@ -1694,7 +1724,7 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
   var imageCatalog = await buildImageCatalog(courseId, materials);
   if (imageCatalog) ctx += imageCatalog;
 
-  return ctx;
+  return { ctx, chunkIds: collectedChunkIds };
 };
 
 // --- Session Journal ---
@@ -2075,8 +2105,8 @@ export const loadPracticeMaterialCtx = async (courseId, materials, skill) => {
   var pracFacets = await facetsForSkill(skill);
   if (pracFacets.length > 0) {
     var pracFacetIds = pracFacets.map(function(f) { return f.id; });
-    var facetCtx = await loadFacetBasedContent(pracFacetIds, { mode: 'standard', charLimit: 12000, includeCrossDomain: false });
-    if (facetCtx) return facetCtx;
+    var facetResult = await loadFacetBasedContent(pracFacetIds, { mode: 'standard', charLimit: 12000, includeCrossDomain: false });
+    if (facetResult.ctx) return facetResult.ctx;
   }
 
   // Keyword fallback
