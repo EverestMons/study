@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
-**Last Updated:** 2026-03-22
-**Updated By:** Documentation Analyst (doc sync — PROJECT_BRIEF v2.0 + PROJECT_STATUS refresh)
+**Last Updated:** 2026-03-24
+**Updated By:** Documentation Analyst (session wrap — tutor feedback loop phases 1-4)
 **Overall Status:** Active
 
 ---
 
 ## Current Sprint / Focus
 
-Closing IES Practice Guide alignment gaps and polishing the study experience. Core app is feature-complete — 5 study modes, facet-level FSRS mastery, 3-tier skill hierarchy, curriculum dashboard, character sheet profile, cross-course skill unification, concept links, deadline intelligence, OCR, folder import, self-updater. Current work focuses on evidence-based teaching enhancements (gap targeting, calibration feedback, metacognitive tools) and materials staging UX redesign.
+Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study modes now expose facets for per-facet FSRS routing. Session exchanges persisted with mastery before/after and chunk IDs used. Chunk teaching effectiveness written back to chunk_facet_bindings at session end and used in content ranking. Tutor session summaries written to $APPDATA/tutor-sessions/ for Forge ingestion. Next focus: remaining self-updater steps and any follow-on tutor quality improvements surfaced by Forge.
 
 ---
 
@@ -16,13 +16,13 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
-| Research | Active | 2026-03-22 | IES Practice Guide full implementation audit. Previous: facet-level assessment best practices. |
-| Systems Architecture | Active | 2026-03-22 | IES gaps + open flags blueprint (gap targeting, mastery wiring, level guard, calibration tracking). Previous: facet assessment pipeline, cross-course skill unification. |
-| Development | Active | 2026-03-22 | IES batch: gap identification prompt, PracticeMode mastery event wiring, level decrease display guard, confidence calibration tracking. Materials staging UX redesign. Chunk metadata enrichment. Cross-course skill unification (3 phases). |
-| Security & Testing | Active | 2026-03-22 | IES gaps + open flags QA: 7/7 PASS. Previous: cross-course unification QA, facet mastery QA. |
-| Design & Experience | Active | 2026-03-22 | IES gaps + open flags UXV: 5/5 PASS (tone, celebration, honesty, phrasing, metacognitive overhead). Previous: cross-course unification UXV, materials staging UXV. |
+| Research | Active | 2026-03-24 | Tutor phase 3 + 4 diagnostics |
+| Systems Architecture | Active | 2026-03-24 | Tutor phases 1-4 blueprints (facet assessment coverage, session logging, chunk effectiveness, Forge ingestion) |
+| Development | Active | 2026-03-24 | Tutor phases 1-4 implementations + loadFacetBasedContent API change, SessionExchanges module, migration 010, updateChunkEffectiveness, _updateTutorSessionSummary |
+| Security & Testing | Active | 2026-03-24 | Tutor phases 1-4 QA |
+| Design & Experience | Active | 2026-03-24 | Tutor phase 1 UXV (facet assessment cognitive overhead + format verification) |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
-| Documentation | Active | 2026-03-22 | PROJECT_BRIEF v2.0 rewrite + PROJECT_STATUS refresh |
+| Documentation | Active | 2026-03-24 | Session wrap — tutor feedback loop phases 1-4 |
 | Engineering & Physical Design | N/A | — | No physical components |
 
 ---
@@ -40,6 +40,10 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 | 3-tier skill hierarchy | parent_skill → sub_skill → facet; CIP taxonomy seeding (416 entries, 42 domains) |
 | FSRS facet-level tracking | Per-facet FSRS schedule, aggregate skill readiness, mastery transfer via concept links |
 | Facet-level stealth assessment | AI assesses facets during teaching; per-facet FSRS routing; mastery threshold detection |
+| Per-facet FSRS routing in all modes | buildFacetAssessmentBlock injected into general context builder — all 5 modes now expose facets for targeted assessment |
+| Session exchange logging | migration 010 session_exchanges table; every per-facet FSRS update persisted with mastery_before, mastery_after, practice_tier, chunk_ids_used |
+| Chunk teaching effectiveness feedback | teaching_effectiveness on chunk_facet_bindings updated at session end; getByFacetRanked() sorts by effectiveness NULLS LAST as secondary key |
+| Tutor session Forge pipeline | _updateTutorSessionSummary() writes to $APPDATA/tutor-sessions/tutor-session-summary.md; Forge tutor_response chunk type wired |
 | Session mastery summary | Inline mastery cards, facet progress pills, session summary with mastered/practiced/facets sections |
 | Assignment decomposition | Auto-decomposes to required skills; maps questions to facets |
 | Practice mode | 6-tier system with worked examples, confidence ratings, calibration feedback |
@@ -114,6 +118,7 @@ Closing IES Practice Guide alignment gaps and polishing the study experience. Co
 
 | Date | Work |
 |---|---|
+| 2026-03-24 | **Tutor Feedback Loop (Phases 1-4):** Phase 1 — buildFacetAssessmentBlock added to general context builder (all 5 modes). Phase 2 — migration 010, SessionExchanges module, loadFacetBasedContent returns {ctx, chunkIds}, applySkillUpdates logs per-facet exchanges. Phase 3 — ChunkFacetBindings.updateEffectiveness(), updateChunkEffectiveness() at session end, getByFacetRanked() ordering updated. Phase 4 — capabilities expanded for $APPDATA/tutor-sessions/, _updateTutorSessionSummary(), Forge tutor_response chunk type + scanner. Full loop: facet assessment → exchange logging → chunk effectiveness → Forge ingestion. |
 | 2026-03-24 | **Tutor Phase 4 — Forge Ingestion:** `_updateTutorSessionSummary()` writes to `$APPDATA/tutor-sessions/tutor-session-summary.md` at session end. Forge `tutor_response` chunk type added. Classification rule and chunker wired in Forge scanner. `EXTRA_SCAN_PATHS` config enables Forge to discover files outside Git repos. Full tutor feedback loop complete: facet assessment → session logging → chunk effectiveness → Forge ingestion. SA blueprint → STUDY DEV (3 files) → FORGE DEV (2 files) → QA 8/8 PASS. |
 | 2026-03-24 | **Tutor Phase 3 — Chunk Teaching Effectiveness:** `updateChunkEffectiveness()` writes `teaching_effectiveness` on `chunk_facet_bindings` at session end. `getByFacetRanked()` now orders by `teaching_effectiveness DESC NULLS LAST` as secondary sort key. Higher-effectiveness chunks surface first for facets with accumulated session data. SA blueprint → DEV (3 files, +53 lines) → QA 7/7 PASS. |
 | 2026-03-24 | **Tutor Phase 2 — Session Exchange Logging:** `session_exchanges` table (migration 010), `SessionExchanges` db module (`log()`, `getBySession()`), `loadFacetBasedContent()` returns `{ctx, chunkIds}`, per-facet exchange logging with mastery_before/after, practice_tier, and chunk_ids_used. SA blueprint → DEV (4 files modified, 1 created, +108 lines) → QA 7/7 PASS. |
