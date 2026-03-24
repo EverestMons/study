@@ -19,7 +19,7 @@ import {
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
   parseSkillUpdates, parseInputMode, extractKeywords, detectLanguage, detectMathSubject, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
-  completeTierAttempt, loadPracticeMaterialCtx
+  completeTierAttempt, loadPracticeMaterialCtx, updateChunkEffectiveness
 } from "./lib/study.js";
 
 /** Format due date epoch — relative when close, absolute when far. */
@@ -386,6 +386,7 @@ export function StudyProvider({ children, setErrorCtx }) {
       const entry = generateSessionEntry(msgs, sessionStartIdx.current, sessionSkillLog.current);
       if (!entry) return;
       await JournalEntries.create({ sessionId: chatSessionId.current, courseId: active.id, intent: 'v1_compat', entryData: entry });
+      try { await updateChunkEffectiveness(chatSessionId.current); } catch { /* non-critical */ }
       sessionStartIdx.current = msgs.length;
       sessionSkillLog.current = [];
     } catch (e) { console.error("Journal save failed:", e); }

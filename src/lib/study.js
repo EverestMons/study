@@ -2128,3 +2128,32 @@ export const loadPracticeMaterialCtx = async (courseId, materials, skill) => {
   }
   return ctx;
 };
+
+/** Update chunk teaching effectiveness based on session exchange outcomes. Called at session end. */
+export const updateChunkEffectiveness = async (sessionId) => {
+  if (!sessionId) return;
+  var exchanges;
+  try { exchanges = await SessionExchanges.getBySession(sessionId); } catch { return; }
+  if (!exchanges || !exchanges.length) return;
+
+  var DELTA_MAP = { easy: 0.1, good: 0.05, hard: -0.05, struggled: -0.1 };
+
+  for (var ex of exchanges) {
+    var delta = DELTA_MAP[ex.rating];
+    if (delta == null) continue;
+
+    // Positive delta requires mastery improvement > 0.05
+    if (delta > 0 && (ex.mastery_after - ex.mastery_before) <= 0.05) continue;
+
+    // Parse chunk_ids_used (JSON array string or null)
+    var chunkIds;
+    try { chunkIds = ex.chunk_ids_used ? JSON.parse(ex.chunk_ids_used) : []; } catch { continue; }
+    if (!Array.isArray(chunkIds) || !chunkIds.length) continue;
+
+    for (var cid of chunkIds) {
+      try {
+        await ChunkFacetBindings.updateEffectiveness(cid, ex.facet_id, delta);
+      } catch { /* binding may not exist for this chunk+facet pair */ }
+    }
+  }
+};

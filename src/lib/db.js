@@ -2574,6 +2574,8 @@ export const ChunkFacetBindings = {
        ORDER BY
          CASE cfb.binding_type WHEN 'teaches' THEN 0 WHEN 'prerequisite_for' THEN 1 ELSE 2 END,
          cfb.quality_rank,
+         CASE WHEN cfb.teaching_effectiveness IS NULL THEN 1 ELSE 0 END,
+         cfb.teaching_effectiveness DESC,
          cfb.confidence DESC`,
       [facetId]
     );
@@ -2629,6 +2631,26 @@ export const ChunkFacetBindings = {
     };
     if (externalTransaction) { await work(await getDb()); }
     else { await withTransaction(work); }
+  },
+
+  async updateEffectiveness(chunkId, facetId, delta) {
+    const db = await getDb();
+    await db.execute(
+      `UPDATE chunk_facet_bindings SET teaching_effectiveness = COALESCE(teaching_effectiveness, 0) + ?, updated_at = ? WHERE chunk_id = ? AND facet_id = ?`,
+      [delta, now(), chunkId, facetId]
+    );
+    await db.execute(
+      `UPDATE chunk_facet_bindings SET teaching_effectiveness = MAX(-1.0, MIN(1.0, teaching_effectiveness)) WHERE chunk_id = ? AND facet_id = ?`,
+      [chunkId, facetId]
+    );
+  },
+
+  async getEffectivenessByFacet(facetId) {
+    const db = await getDb();
+    return db.select(
+      `SELECT chunk_id, teaching_effectiveness FROM chunk_facet_bindings WHERE facet_id = ? AND teaching_effectiveness IS NOT NULL ORDER BY teaching_effectiveness DESC`,
+      [facetId]
+    );
   },
 
   async updateQualityRanks(facetId, rankings) {
