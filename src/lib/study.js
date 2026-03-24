@@ -2157,3 +2157,58 @@ export const updateChunkEffectiveness = async (sessionId) => {
     }
   }
 };
+
+/** Write tutor session summary to $APPDATA/tutor-sessions/ for Forge ingestion. Called at session end. */
+export const _updateTutorSessionSummary = async (sessionEntry, courseId, sessionId) => {
+  if (!sessionEntry || !sessionId) return;
+  var writeTextFile, readTextFile, mkdir;
+  try { ({ writeTextFile, readTextFile, mkdir } = await import('@tauri-apps/plugin-fs')); } catch { return; }
+  var appDataDir;
+  try { ({ appDataDir } = await import('@tauri-apps/api/path')); } catch { return; }
+
+  var dataDir = await appDataDir();
+  var dir = dataDir + 'tutor-sessions/';
+  var filePath = dir + 'tutor-session-summary.md';
+  console.log('[TutorSummary] AppData path:', dataDir);
+
+  // Ensure directory exists
+  await mkdir(dir, { recursive: true });
+
+  // Read existing content (empty string if file doesn't exist)
+  var existing = '';
+  try { existing = await readTextFile(filePath); } catch { /* file not found — start fresh */ }
+
+  // Build new H2 section
+  var date = new Date().toISOString().split('T')[0];
+  var section = '\n## Session ' + sessionId + ' — ' + date + '\n\n';
+  section += '**Course:** ' + courseId + '\n\n';
+
+  if (sessionEntry.facetsAssessed) {
+    section += '**Facets Practiced:** ' + sessionEntry.facetsAssessed + '\n\n';
+  }
+  if (sessionEntry.skillsUpdated && sessionEntry.skillsUpdated.length > 0) {
+    section += '**Skills Updated:**\n';
+    for (var su of sessionEntry.skillsUpdated) { section += '- ' + su + '\n'; }
+    section += '\n';
+  }
+  if (sessionEntry.topicsDiscussed && sessionEntry.topicsDiscussed.length > 0) {
+    section += '**Topics:** ' + sessionEntry.topicsDiscussed.slice(0, 8).join(', ') + '\n\n';
+  }
+  if (sessionEntry.masteryEvents && sessionEntry.masteryEvents.length > 0) {
+    section += '**Mastery Events:**\n';
+    for (var me of sessionEntry.masteryEvents) {
+      section += '- ' + me.skillName + ' (Lv ' + me.levelBefore + '\u2192' + me.levelAfter + ', ' + me.facetCount + ' facets)\n';
+    }
+    section += '\n';
+  }
+  if (sessionEntry.struggles && sessionEntry.struggles.length > 0) {
+    section += '**Struggles:**\n';
+    for (var st of sessionEntry.struggles) { section += '- "' + st.substring(0, 100) + '"\n'; }
+    section += '\n';
+  }
+  section += '**Messages:** ' + sessionEntry.messageCount + '\n';
+
+  // Append and write
+  var updated = existing + section;
+  await writeTextFile(filePath, updated);
+};

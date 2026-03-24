@@ -40,21 +40,24 @@
       "identifier": "fs:allow-write-file",
       "allow": [
         { "path": "$APPDATA/images/**" },
-        { "path": "$APPDATA/tmp/**" }
+        { "path": "$APPDATA/tmp/**" },
+        { "path": "$APPDATA/tutor-sessions/**" }
       ]
     },
     {
       "identifier": "fs:allow-mkdir",
       "allow": [
         { "path": "$APPDATA/images/**" },
-        { "path": "$APPDATA/tmp/**" }
+        { "path": "$APPDATA/tmp/**" },
+        { "path": "$APPDATA/tutor-sessions/**" }
       ]
     },
     {
       "identifier": "fs:allow-exists",
       "allow": [
         { "path": "$APPDATA/images/**" },
-        { "path": "$APPDATA/tmp/**" }
+        { "path": "$APPDATA/tmp/**" },
+        { "path": "$APPDATA/tutor-sessions/**" }
       ]
     },
     {
