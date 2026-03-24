@@ -477,3 +477,65 @@ Agents write their own feedback directly to this file as part of their execution
 - For Tauri permission audits: "Read `src-tauri/capabilities/default.json` — this is the single source of truth for all plugin permissions." The tauri.conf.json doesn't contain permission config in Tauri v2.
 - For cross-repo reads: explicitly note "this file is in a sibling repository at `../forge/src/config.py`" to avoid path confusion.
 - **Critical finding for Phase 4 planning**: `fs:allow-write-file` is sandboxed to `$APPDATA`. Writing to `knowledge/research/` requires either expanding permissions or using `$APPDATA/tutor-sessions/` as the write target.
+
+### 2026-03-24 — Study Systems Analyst — Tutor Phase 4 blueprint (Forge ingestion)
+
+**Were any reads unnecessary?**
+- No. All reads were essential. The imageStore.js pattern (lazy import, `appDataDir()`, `mkdir`/`writeFile`) was the critical reference for the plugin-fs implementation. The Forge scanner.py reads revealed the architectural gap: `discover_files()` only scans Git repo directories, not `$APPDATA`.
+
+**Was the prompt over-scoped or under-scoped?**
+- Under-scoped on one critical point: the prompt specified Forge changes to config.py and scanner.py but didn't identify that `discover_files()` has NO mechanism to scan outside Git repos. The blueprint had to design `EXTRA_SCAN_PATHS` — a new config list — to bridge this gap. The prompt assumed Forge had a `SCAN_ROOTS` or equivalent that just needed a path added.
+- The prompt correctly noted "SA should note this needs verification at runtime" for the AppData path — this was a good hedge.
+
+**What would have made this prompt more efficient?**
+- Specifying "read `discover_files()` in scanner.py and confirm whether it can scan paths outside `PROJECT_DIRS`" would have immediately surfaced the scan gap in the diagnostic phase instead of requiring discovery during blueprinting.
+- Including the Tauri identifier (`com.everestmons.study`) directly would have saved a cross-reference to tauri.conf.json.
+
+**What can be added to future prompts to increase performance?**
+- For Forge scan additions: "Forge's `discover_files()` only scans `project_dir / knowledge / KNOWLEDGE_SUBDIRS`. Files outside Git repos require a new scan mechanism."
+- For Tauri AppData paths on macOS: "`~/Library/Application Support/{identifier}/` where identifier is from tauri.conf.json."
+- For plugin-fs write patterns: "Follow imageStore.js: lazy `import('@tauri-apps/plugin-fs')` + `appDataDir()` from `@tauri-apps/api/path` + `mkdir(recursive: true)` + `writeTextFile`."
+- The `_chunk_knowledge_file(text, chunk_type)` helper in scanner.py is reusable for any H2-split file — new chunk types only need a one-line wrapper.
+
+### 2026-03-24 — Study Developer — Tutor Phase 4 study-side implementation (session summary writer)
+
+**Were any reads unnecessary?**
+- No. The blueprint was comprehensive. Only needed to verify exact insertion points: capabilities JSON structure, `updateChunkEffectiveness` end in study.js, and `saveSessionToJournal` in StudyContext.jsx.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. Two study-side changes (capabilities + summary writer) were clearly separated from the Forge-side Step 3. The imageStore.js pattern reference was accurate and saved investigation time.
+
+**What can be added to future prompts to increase performance?**
+- The `writeTextFile` vs `writeFile` distinction matters: `writeTextFile` takes a string, `writeFile` takes bytes (Uint8Array). The prompt correctly specified `writeTextFile` for markdown content.
+- The `readTextFile` try/catch pattern for file-not-found is the standard approach — Tauri doesn't have a separate `exists` check that's needed before reading text files.
+
+### 2026-03-24 — Forge Developer — Tutor Phase 4 Forge-side (tutor_response chunk type)
+
+**Were any reads unnecessary?**
+- No. The config.py and scanner.py reads were all essential. The `discover_files()` function structure was critical for understanding where to add the extra scan path loop. The `_chunk_knowledge_file` helper was the right reuse target.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. Three Forge changes (enum, classification rule, chunker) were cleanly separated. The blueprint's `EXTRA_SCAN_PATHS` design was implementable as-is.
+- The prompt specified `forge/knowledge/research/agent-prompt-feedback.md` for feedback, but no such file exists in the Forge repo. Feedback appended to the study-side file instead.
+- The prompt specified `tests/` directory but Forge tests are in `src/test_*.py`. Minor path discrepancy.
+
+**What can be added to future prompts to increase performance?**
+- For Forge test paths: "Run `python3 -m pytest src/ -q`" (not `tests/`).
+- The `_chunk_knowledge_file` reuse pattern is the standard for any new H2-split chunk type — one-line wrapper function + dispatch case.
+- For cross-repo commits: note both repos need separate `git add` + `git commit` operations.
+
+### 2026-03-24 — Study Security & Testing Analyst — Tutor Phase 4 QA (Forge ingestion)
+
+**Were any reads unnecessary?**
+- No. All 8 checks were efficiently verified via targeted greps. No full file reads needed — the dev logs from Study DEV and Forge DEV provided exact line references. Build and Forge test passes were the final gates.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 8-point checklist covered all critical paths across both repos: Tauri capabilities, study.js function, StudyContext wiring, Forge config, classification rules, scanner chunker+dispatch, build, and Forge tests. The cross-repo nature required slightly more checks than a single-repo QA.
+
+**What would have made this prompt more efficient?**
+- The cross-repo path alignment check (Tauri `$APPDATA` → Forge `EXTRA_SCAN_PATHS`) could have been specified as a single compound check: "Verify that the write path in study.js and the scan path in Forge config.py resolve to the same directory on macOS."
+- Including the Forge test command (`python3 -m pytest src/ -q`) directly in the QA prompt avoids re-discovery.
+
+**What can be added to future prompts to increase performance?**
+- For cross-repo QA: "Verify path alignment between writer and reader" as a dedicated check — this is the most critical verification for any cross-repo data flow.
+- For Forge QA: the test command is `python3 -m pytest src/ -q` (not `tests/`). Include this in all Forge QA prompts.
