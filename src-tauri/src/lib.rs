@@ -51,6 +51,24 @@ pub fn run() {
             description: "material_images",
             sql: include_str!("../migrations/007_material_images.sql"),
             kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 8,
+            description: "skill_courses",
+            sql: include_str!("../migrations/008_skill_courses.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 9,
+            description: "chunk_relationships",
+            sql: include_str!("../migrations/009_chunk_relationships.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "session_exchanges",
+            sql: include_str!("../migrations/010_session_exchanges.sql"),
+            kind: MigrationKind::Up,
         }
     ];
 
