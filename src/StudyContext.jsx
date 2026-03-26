@@ -1222,6 +1222,9 @@ export function StudyProvider({ children, setErrorCtx }) {
     } catch (err) {
       console.error("Boot failed:", err);
       addNotif("error", "Failed to start session: " + err.message);
+      setFocusContext(null);
+      setMsgs([]);
+      setPickerData({ error: true, message: "Failed to start session: " + err.message });
     }
     setBooting(false); setStatus("");
   };

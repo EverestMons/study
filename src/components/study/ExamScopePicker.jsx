@@ -11,6 +11,16 @@ export default function ExamScopePicker() {
 
   if (!pickerData) return null;
 
+  if (pickerData.error) return (
+    <div style={{ padding: 32, maxWidth: 640, margin: "0 auto", animation: "fadeIn 0.3s" }}>
+      <div style={{ textAlign: "center", padding: 40 }}>
+        <div style={{ color: T.rd, fontSize: 14, marginBottom: 16 }}>{pickerData.message}</div>
+        <button onClick={() => { setPickerData(null); setSessionMode(null); }}
+          style={{ marginTop: 12, padding: "8px 16px", background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: T.txD, fontSize: 12, cursor: "pointer" }}>Back</button>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ padding: 32, maxWidth: 640, margin: "0 auto", animation: "fadeIn 0.3s" }}>
       {pickerData.empty ? (

@@ -237,6 +237,11 @@ Agents write their own feedback directly to this file as part of their execution
 
 ## Patterns Identified (continued)
 
+### bootWithFocus failure recovery (FIXED 2026-03-25)
+- **`bootWithFocus` catch block now clears `focusContext`** and sets `pickerData` with error flag. Previously, failure left a dead screen (focusContext truthy hiding pickers, msgs empty showing nothing).
+- **All three pickers (ExamScopePicker, SkillPicker, AssignmentPicker) now handle `pickerData.error`** with an inline error message and Back button. Without this, the error pickerData object would crash the normal picker render path (accessing `.materials.map()` or `.items.map()` on undefined).
+- **Key insight for this codebase:** Any async function that sets `focusContext(focus)` before a try block MUST clear it in the catch block, otherwise the `!focusContext` guard in StudyScreen permanently hides all pickers.
+
 ### Assignment decomposition and material addition (FIXED 2026-03-21)
 - **`decomposeAssignments` is now called proactively** from `runBackgroundExtraction` (after skill extraction) and from `addMats` else branch (assignment-only uploads).
 - **The `selectMode("assignment")` guard is now incremental**: triggers when zero assignments exist OR when assignment materials exist and some assignments have zero questions.
@@ -576,6 +581,23 @@ Agents write their own feedback directly to this file as part of their execution
 - For GitHub Releases updater endpoints: "`/releases/latest/download/` only resolves to **published** (non-draft, non-prerelease) releases. Draft releases are invisible to this URL pattern."
 - Both `release.sh` and the CI workflow create **draft** releases (`--draft` / `releaseDraft: true`). Every release requires manual publish on GitHub. This is by design but is the #1 cause of "up to date" false positives.
 - `release.sh` only builds aarch64. CI builds both aarch64 + x86_64. For full-platform coverage, always use CI.
+
+### 2026-03-25 — Study Developer — bootWithFocus black screen fix (4 files)
+
+**Were any reads unnecessary?**
+- No. StudyContext.jsx (bootWithFocus catch block), ExamScopePicker.jsx (error state needed), SkillPicker.jsx and AssignmentPicker.jsx (also crash on error pickerData) were all essential.
+
+**Was the prompt over-scoped or under-scoped?**
+- Slightly under-scoped. The prompt specified ExamScopePicker error handling only, but `bootWithFocus` sets `pickerData({ error: true })` regardless of mode. SkillPicker and AssignmentPicker would crash on `pickerData.items` / `pickerData.materials` being undefined. All three needed the error guard.
+- The prompt correctly identified the two fix vectors (clear focusContext + visible error state) from the diagnostic.
+
+**What would have made this prompt more efficient?**
+- Specifying "also add error handling to SkillPicker and AssignmentPicker since bootWithFocus serves all three modes" would have made the scope explicit.
+- The `setMsgs([])` cleanup wasn't in the prompt but is necessary — `callClaudeStream` at line 1214 sets partial messages before potentially throwing. Without clearing, stale partial messages could persist.
+
+**What can be added to future prompts to increase performance?**
+- For catch-block fixes: "Check all consumers of the state being set in the catch block" — here, `pickerData` is consumed by 3 pickers, not just 1.
+- For `bootWithFocus` changes: "bootWithFocus is called from ExamScopePicker, SkillPicker, AssignmentPicker, CourseHomepage (Continue Studying), and CurriculumScreen. Any state change in the catch block affects all callers."
 
 ### 2026-03-25 — Study Developer — Exam prep black screen diagnostic
 
