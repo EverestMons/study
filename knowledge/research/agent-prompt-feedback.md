@@ -556,3 +556,116 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For session wrap prompts: pre-check which sections already have current-date entries to avoid redundant additions.
 - The "add rows after X" placement instruction is precise and efficient — continue this pattern for table insertions.
+
+### 2026-03-24 — Study Developer — Updater diagnostic ("up to date" when newer release exists)
+
+**Were any reads unnecessary?**
+- No. Every read was essential: `updater.js` (26 lines, thin wrapper), `tauri.conf.json` (endpoint config + pubkey), `package.json` (version), `release.sh` (artifact pipeline), `release.yml` (CI pipeline), `StudyContext.jsx` (caller context). The WebFetch of the actual `latest.json` endpoint was the most diagnostic read — it confirmed the redirect resolves to v0.2.17, not v0.2.19.
+- The `gh release list` and `gh release view` commands were essential for confirming draft vs published status.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 6-point investigation structure (updater.js, tauri.conf.json, package.json, endpoint URL, release.sh, static manifest) covered all relevant components. Point (6) — static manifest check — was a quick negative that ruled out an alternative update mechanism.
+- The vexp pipeline was intentionally skipped per prompt instruction ("skip specialist file reads") which was correct — this is a pure infrastructure/devops diagnostic, not a code feature investigation.
+
+**What would have made this prompt more efficient?**
+- The prompt could have included a hypothesis: "The release may be in draft state — check `gh release list`" — this would have shortened the investigation since the root cause is entirely operational (draft not published), not a code bug.
+- Specifying "check the GitHub redirect target of the endpoint URL" as a distinct step would have made the diagnostic more directed.
+
+**What can be added to future prompts to increase performance?**
+- For updater diagnostics: "The Tauri v2 updater delegates entirely to `@tauri-apps/plugin-updater:check()`. The app code is just a thin wrapper. The diagnostic is almost always about the endpoint, not the code."
+- For GitHub Releases updater endpoints: "`/releases/latest/download/` only resolves to **published** (non-draft, non-prerelease) releases. Draft releases are invisible to this URL pattern."
+- Both `release.sh` and the CI workflow create **draft** releases (`--draft` / `releaseDraft: true`). Every release requires manual publish on GitHub. This is by design but is the #1 cause of "up to date" false positives.
+- `release.sh` only builds aarch64. CI builds both aarch64 + x86_64. For full-platform coverage, always use CI.
+
+### 2026-03-25 — Study Developer — Exam prep black screen diagnostic
+
+**Were any reads unnecessary?**
+- No. All 4 files were essential: CourseHomepage.jsx (button + onClick), StudyContext.jsx (enterStudy + selectMode + bootWithFocus), StudyScreen.jsx (picker guards + conditional rendering), ExamScopePicker.jsx (button handler + bootWithFocus call). The study.js read for `buildFocusedContext` exam branch was supplementary but confirmed the exam context builder handles empty materials gracefully.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4-part investigation (button handler, enterStudy, StudyScreen guards, ExamScopePicker→enterStudy flow) covered the full chain. The prompt correctly identified ExamScopePicker as the bridge between scope selection and session boot.
+- The prompt asked to "show how `enterStudy` handles exam intent" — this was the right question since `enterStudy` delegates to `selectMode`, which is where exam-specific logic lives.
+
+**What would have made this prompt more efficient?**
+- The prompt could have specified "also read `bootWithFocus`" — this is the critical function called by the "Start exam prep" button, and it's where the black screen originates. The prompt focused on `enterStudy` but the actual failure point is one step later.
+- Specifying "check what happens when `bootWithFocus` fails (catch block behavior)" would have immediately focused the diagnosis on the dead state.
+
+**What can be added to future prompts to increase performance?**
+- For black screen bugs after button clicks: "Trace state changes in BOTH the success path AND the failure path of the triggered async function. The black screen is almost always a failure-path state inconsistency."
+- `bootWithFocus` failure leaves `focusContext` set (hiding pickers) but `msgs` empty (showing nothing). This is the canonical dead state pattern in this codebase. Future prompts should reference it.
+- The notification system (`addNotif`) is NOT a toast — errors go to the notification queue. For user-facing error visibility, inline rendering or a dedicated error state is needed.
+
+### 2026-03-24 — Study Developer — Git log audit (recent changes diagnostic)
+
+**Were any reads unnecessary?**
+- No. Both git log commands were essential and produced the complete picture. The `--oneline` view gave a quick inventory (29 commits). The `--stat --no-merges` view showed which files each commit touched, enabling the summary table.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped for a raw data dump. The prompt asked for verbatim output of two specific commands — no ambiguity, no investigation needed beyond running the commands.
+- The "skip specialist file reads" instruction was correct — this is a pure git audit with no code investigation.
+
+**What would have made this prompt more efficient?**
+- The prompt was already minimal and efficient. Two commands, verbatim output, deposit.
+- One operational issue: `git log --stat` on a repo with large commits (34 files in commit 4315573) can trigger a pager even with `--no-pager` in some environments. Specifying `GIT_PAGER=cat` or piping to `head` would have avoided the stuck-pager issue that required retrying.
+
+**What can be added to future prompts to increase performance?**
+- For git log audits: always use `GIT_PAGER=cat git log ...` to prevent pager hangs in non-interactive environments.
+- The `--stat` format truncates long filenames with `...`. For exact filenames, use `--stat=200` (wider column) or `--name-only` for a clean file list.
+- v0.2.18 has no GitHub Release despite having a version bump commit — this is a release process gap worth noting in any release audit.
+
+### 2026-03-24 — Study Developer — Extraction pipeline integrity audit (4 areas)
+
+**Were any reads unnecessary?**
+- No. Every read directly answered one of the 4 audit questions. The extraction.js header read (lines 1-50) confirmed file integrity. The grep for `loadFacetBasedContent` in extraction.js was a zero-result negative confirmation (essential). The grep in study.js found all 5 call sites. The db.js read for `updateEffectiveness` and `getByFacetRanked` confirmed correct SQL. Git log commands confirmed no modifications.
+- The StudyContext.jsx grep for `buildContext`/`buildFocusedContext` call sites was not explicitly requested but was necessary to verify the full propagation chain — study.js returns `{ ctx, chunkIds }` from context builders, so the consumer layer must also destructure correctly.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 4-area structure mapped cleanly to 4 independent checks. Each had a clear pass/fail criterion. No wasted investigation.
+- The prompt correctly specified exact line ranges where possible (`lines 1-50`), exact methods to check (`updateEffectiveness`, `getByFacetRanked`), and exact expected behavior (`COALESCE`, `NULLS LAST` idiom).
+
+**What would have made this prompt more efficient?**
+- The prompt could have included the expected call site count ("5 call sites in study.js, 4 in StudyContext.jsx") so the agent can immediately verify completeness rather than having to determine the expected count independently.
+- Specifying "also check StudyContext.jsx consumer sites" would have made the scope fully explicit. The prompt focused on study.js but the consumer layer is equally important.
+
+**What can be added to future prompts to increase performance?**
+- For API return type audits: "Check both the function's internal call sites AND the consumer layer (StudyContext.jsx)" — always verify the full chain.
+- For "was file X modified recently" checks: `GIT_PAGER=cat git log --oneline -- path/to/file` is the fastest single command. The prompt correctly specified this.
+- For db.js method isolation checks: "Confirm the new method uses UPDATE only and does not share columns with INSERT methods" — this is the key isolation criterion for additive db methods.
+- For ORDER BY audits: specifying the expected clause sequence in the prompt ("binding_type → quality_rank → effectiveness NULLS LAST → confidence") enables fast pass/fail comparison.
+
+### 2026-03-24 — Study Developer — Schema drift diagnostic (unified_into column missing)
+
+**Were any reads unnecessary?**
+- No. Every read was essential. The migration file confirmed the SQL exists. The PRAGMA on the live DB confirmed the column is missing. lib.rs revealed the root cause (migrations 008-010 not registered). The db.js grep found all 10 query references. The unification.js grep found 8 more. The `_sqlx_migrations` table confirmed only 7 migrations applied.
+- The additional check for `skill_courses`, `chunk_relationships`, and `session_exchanges` tables (all missing) was not in the prompt but was essential — it revealed the scope is 3 missing migrations, not just 1.
+
+**Was the prompt over-scoped or under-scoped?**
+- Slightly under-scoped. The prompt focused on `unified_into` but the root cause (missing Rust migration registration) means migrations 009 and 010 are ALSO missing. The prompt should have asked "check if migrations 008-010 are all registered in lib.rs" rather than focusing only on the `unified_into` column.
+- The prompt's 5-point structure was good but missed the critical file: `src-tauri/src/lib.rs` — the Rust migration runner where migrations must be registered. Points (1)-(5) investigated the JS/SQL side but not the Rust registration side.
+- The prompt asked to "search db.js for any _safe_add_column" — correct instinct but the actual gap is in Rust, not JS.
+
+**What would have made this prompt more efficient?**
+- Adding a 6th point: "Read `src-tauri/src/lib.rs` — confirm migration 008 is registered in the `migrations` vec" would have immediately identified the root cause.
+- Specifying "check `_sqlx_migrations` table in the live DB to see which migrations have actually run" would have been the fastest single diagnostic step.
+
+**What can be added to future prompts to increase performance?**
+- **Critical pattern for this codebase**: SQL migration files in `src-tauri/migrations/` are NOT auto-discovered. Each must be manually registered in `src-tauri/src/lib.rs` as a `Migration { version, description, sql, kind }` entry. This is the #1 cause of schema drift.
+- For schema drift bugs: "Check both the migration file AND its registration in lib.rs" — the file existing is necessary but not sufficient.
+- For live DB checks: the database lives at `~/Library/Application Support/com.everestmons.study/study.db` (identifier from `tauri.conf.json`). Use `sqlite3` directly for PRAGMA and table checks.
+- For "no such column" errors: always check `_sqlx_migrations` table to see the last applied migration number. If the migration that adds the column has a higher version than the last applied, it's an unregistered migration.
+
+### 2026-03-24 — Study Developer — Migration registration fix (008-010 in lib.rs)
+
+**Were any reads unnecessary?**
+- No. Only `src-tauri/src/lib.rs` was read (required to find the insertion point). The diagnostic from the prior step provided all context — no re-investigation needed.
+
+**Was the prompt over-scoped or under-scoped?**
+- Perfectly scoped. The prompt specified the exact file, exact insertion point (after version 7), exact 3 entries to add (version, description, sql path), exact formatting requirement (match existing entries), and exact commit message. Zero ambiguity.
+- The "do NOT run cargo build directly" instruction was helpful — prevented an unnecessary 2-minute Rust compile cycle.
+
+**What would have made this prompt more efficient?**
+- Nothing — this is an ideal fix prompt. Exact instructions, single file, clear verification step (show updated vec), explicit commit message.
+
+**What can be added to future prompts to increase performance?**
+- This prompt is a template for "apply a known fix from a diagnostic." Pattern: (1) cite the diagnostic, (2) specify exact file + location, (3) specify exact change, (4) specify formatting constraint, (5) specify commit message. All 5 present here.
+- For Rust file edits: "do NOT run cargo build — the app rebuilds on next tauri:dev" saves time and avoids unnecessary permission prompts.
