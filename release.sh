@@ -108,7 +108,7 @@ info "Installing npm dependencies..."
 npm ci --silent
 
 info "Building app (this will take a while)..."
-npx tauri build --target aarch64-apple-darwin
+cargo tauri build --target aarch64-apple-darwin
 
 # ── Locate artifacts ─────────────────────────────────────────────────
 BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
