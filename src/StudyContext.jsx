@@ -15,7 +15,7 @@ import { generateSubmission, downloadBlob } from "./lib/export.js";
 import { checkForUpdate, installUpdate as installAppUpdate } from "./lib/updater.js";
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
-  buildContext, buildFocusedContext, generateSessionEntry,
+  buildContext, buildFocusedContext, generateSessionEntry, computeFacetReadiness,
   formatJournal, buildSystemPrompt, parseQuestionUnlock,
   parseSkillUpdates, parseInputMode, extractKeywords, detectLanguage, detectMathSubject, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
@@ -57,6 +57,8 @@ async function loadAssignmentsCompat(courseId) {
 
 const StudyContext = createContext(null);
 export const useStudy = () => useContext(StudyContext);
+
+const UNLOCK_MASTERY_THRESHOLD = 0.6; // 60% average facet retrievability required for question unlock
 
 export function StudyProvider({ children, setErrorCtx }) {
   const [asyncError, setAsyncError] = useState(null);
@@ -154,6 +156,7 @@ export function StudyProvider({ children, setErrorCtx }) {
   const sessionStartTime = useRef(null);
   const discussedChunks = useRef(new Set());
   const chatSessionId = useRef(null);
+  const unlockRejectionRef = useRef(null);
   const [sessionElapsed, setSessionElapsed] = useState(0);
   const [breakDismissed, setBreakDismissed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1198,7 +1201,7 @@ export function StudyProvider({ children, setErrorCtx }) {
         }));
         setAsgnWork({ questions: qs, currentIdx: 0 });
         userMsg = "I want to work on: " + focus.assignment.title;
-        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nQUESTION VISIBILITY RULES:\n- The INSTRUCTOR PLANNING section shows full question text. This is for YOUR planning only.\n- The student CANNOT see questions until you unlock them with [UNLOCK_QUESTION].\n- NEVER ask the student the assignment question, restate it, or closely paraphrase it.\n- Your job is to teach the prerequisite SKILLS so the student can handle the question when they see it.\n\nBAD vs GOOD example:\n  Assignment question: \"Implement a binary search algorithm\"\n  BAD (asking the assignment question): \"How would you implement binary search?\"\n  GOOD (teaching the prerequisite skill): \"What property of a sorted array lets us skip checking every element?\"\n\nFLOW:\n1. Look at the FIRST locked question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first. Ask diagnostic questions about the CONCEPT, not about the assignment task. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'\n3. When the student demonstrates competence on ALL skills needed for the question, unlock it:\n   [UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After unlocking, the student sees the question in their answer panel. Guide their thinking without writing their answer.\n5. When the student completes a question, move to the next locked question's required skills.\n\nStart by checking the first question's prerequisite skills. Your opening question should test a CONCEPT — not describe or hint at the assignment task.\n\nQuestion order: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.";
+        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nQUESTION VISIBILITY RULES:\n- The INSTRUCTOR PLANNING section shows full question text. This is for YOUR planning only.\n- The student CANNOT see questions until you unlock them with [UNLOCK_QUESTION].\n- NEVER ask the student the assignment question, restate it, or closely paraphrase it.\n- Your job is to teach the prerequisite SKILLS so the student can handle the question when they see it.\n\nBAD vs GOOD example:\n  Assignment question: \"Implement a binary search algorithm\"\n  BAD (asking the assignment question): \"How would you implement binary search?\"\n  GOOD (teaching the prerequisite skill): \"What property of a sorted array lets us skip checking every element?\"\n\nFLOW:\n1. Look at the FIRST locked question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first. Ask diagnostic questions about the CONCEPT, not about the assignment task. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'\n3. When the student demonstrates competence on ALL skills needed for the question, unlock it:\n   [UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After unlocking, the student sees the question and a text box for their answer. They will submit their answer for your review.\n   - NEVER state the answer to the assignment question, even as a \"check\" or \"for reference.\"\n   - NEVER say \"the correct answer is...\" or \"you should write...\" or similar.\n   - If they ask what to write: \"What do you think, based on what we just covered?\"\n   - Guide their THINKING, not their writing. Help them reason toward the answer, not transcribe yours.\n5. When the student completes a question, move to the next locked question's required skills.\n\nStart by checking the first question's prerequisite skills. Your opening question should test a CONCEPT — not describe or hint at the assignment task.\n\nQuestion order: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.";
       } else if (focus.type === "skill") {
         userMsg = "I want to work on: " + focus.skill.name;
         modeHint = "\n\nMODE: SKILL MASTERY. The student chose this specific skill to strengthen. You have the skill details and source material loaded. Start by asking a diagnostic question to find where their understanding breaks down. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'";
@@ -1278,6 +1281,12 @@ export function StudyProvider({ children, setErrorCtx }) {
 
       const sysPrompt = buildSystemPrompt(active.name, ctx, journal);
       const chatMsgs = newMsgs.slice(-40).map(m => ({ role: m.role, content: m.content }));
+
+      // Inject unlock rejection as a system-context message if pending
+      if (unlockRejectionRef.current) {
+        chatMsgs.push({ role: "user", content: "[SYSTEM NOTE — not from student] " + unlockRejectionRef.current });
+        unlockRejectionRef.current = null;
+      }
 
       const response = await callClaudeStream(sysPrompt, chatMsgs, function(partial) {
         setMsgs([...newMsgs, { role: "assistant", content: partial, ts: userTs }]);
@@ -1371,15 +1380,53 @@ export function StudyProvider({ children, setErrorCtx }) {
 
       const unlockId = parseQuestionUnlock(response);
       if (unlockId && asgnWork) {
-        setAsgnWork(prev => {
-          if (!prev) return prev;
-          var updated = { ...prev, questions: prev.questions.map(q =>
-            q.id === unlockId ? { ...q, unlocked: true } : q
-          )};
-          var idx = updated.questions.findIndex(q => q.id === unlockId);
-          if (idx >= 0) updated.currentIdx = idx;
-          return updated;
-        });
+        // Data-driven unlock gate: check FSRS mastery before honoring
+        var targetQ = asgnWork.questions.find(q => q.id === unlockId);
+        var unlockAllowed = true;
+        var rejectionReason = null;
+
+        if (targetQ && targetQ.requiredSkills.length > 0) {
+          var resolvedSkillIds = targetQ.requiredSkills.map(function(sid) {
+            var sk = cachedSessionCtx.current?.skills?.find(
+              s => s.id === sid || s.conceptKey === sid
+            );
+            return sk ? sk.id : null;
+          }).filter(Boolean);
+
+          if (resolvedSkillIds.length > 0) {
+            var readinessMap = await computeFacetReadiness(resolvedSkillIds);
+
+            for (var rsid of resolvedSkillIds) {
+              var readiness = readinessMap.get(rsid);
+              if (readiness === undefined) {
+                var skName = cachedSessionCtx.current?.skills?.find(s => s.id === rsid)?.name || rsid;
+                unlockAllowed = false;
+                rejectionReason = skName + " has no mastery data yet";
+                break;
+              }
+              if (readiness < UNLOCK_MASTERY_THRESHOLD) {
+                var skName2 = cachedSessionCtx.current?.skills?.find(s => s.id === rsid)?.name || rsid;
+                unlockAllowed = false;
+                rejectionReason = skName2 + " is at " + Math.round(readiness * 100) + "% mastery, below the " + Math.round(UNLOCK_MASTERY_THRESHOLD * 100) + "% threshold";
+                break;
+              }
+            }
+          }
+        }
+
+        if (unlockAllowed) {
+          setAsgnWork(prev => {
+            if (!prev) return prev;
+            var updated = { ...prev, questions: prev.questions.map(q =>
+              q.id === unlockId ? { ...q, unlocked: true } : q
+            )};
+            var idx = updated.questions.findIndex(q => q.id === unlockId);
+            if (idx >= 0) updated.currentIdx = idx;
+            return updated;
+          });
+        } else {
+          unlockRejectionRef.current = "Unlock rejected for " + unlockId + " — " + rejectionReason + ". Continue teaching the required skills. Do not attempt to unlock again until the student demonstrates stronger mastery.";
+        }
       }
 
       const finalMsgs = [...newMsgs, { role: "assistant", content: response, ts: asstTs }];
