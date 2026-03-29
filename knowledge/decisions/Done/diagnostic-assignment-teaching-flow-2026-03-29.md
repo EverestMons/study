@@ -1,0 +1,10 @@
+# study — Assignment Mode Teaching Flow Diagnostic
+**Date:** 2026-03-29 | **Type:** Diagnostic
+
+---
+
+## STEP 1 — DEV
+
+---
+
+> You are the Study Developer. Skip specialist file and glossary reads — this is a code-tracing task. **Investigate the assignment mode teaching flow and question unlocking mechanism.** (1) Read `study.js:buildFocusedContext()` — find the assignment branch. What instructions does the system prompt give the AI about answer-giving vs. teaching? Does it tell the AI to withhold answers until the student demonstrates understanding? Paste the exact relevant prompt text. (2) Read `study.js:buildSystemPrompt()` — find any global instructions about answer-giving behavior, "boundary" rules, or question unlocking. Paste the exact relevant prompt text. (3) Read `StudyContext.jsx:bootWithFocus()` — what data does the assignment mode pass to the AI? Does it include the assignment questions and their current completion status? (4) Read `AssignmentPanel.jsx` — is there a "locked/unlocked" state per question? What determines whether a student can fill in an answer? Is there any mechanism that the AI triggers to unlock a question? (5) Read `CurriculumScreen.jsx` — how are assignment questions displayed? Is there a visual locked/unlocked state? Can the student fill in answers at any time, or only after some condition? (6) Check `db.js:AssignmentQuestions` — what columns exist? Is there a `locked`, `unlocked`, `ready_to_answer`, or similar status field? (7) Summarize: what is the current flow vs. the expected flow? The expected flow is: AI teaches toward understanding → student demonstrates mastery via stealth assessment → question unlocks → student fills in their own answer. **Deposit findings** to `knowledge/research/assignment-teaching-flow-diagnostic-2026-03-29.md` using `with open("/Users/marklehn/Desktop/GitHub/study/knowledge/research/assignment-teaching-flow-diagnostic-2026-03-29.md", "w") as f: f.write(content)`. Standard prompt feedback protocol → `knowledge/research/agent-prompt-feedback.md`.
