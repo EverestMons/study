@@ -18,6 +18,7 @@ import { CIP_TAXONOMY } from './cipData.js';
 // ============================================================
 
 const CHAPTER_SIZE_LIMIT = 80000; // chars — split if exceeded
+const SUB_BATCH_CHAR_LIMIT = 30000; // chars of formatted content per API call
 const MAX_RETRIES = 2;
 const RETRY_DELAYS = [3000, 10000]; // ms — exponential backoff
 
@@ -896,27 +897,36 @@ async function wireCrossChapterPrereqs(skillsByChapter, conceptKeyToId) {
  * @param {function} [options.onProgress] - Progress callback
  * @returns {Promise<{ skills, cipCode?, parentDisplayName?, issues }>}
  */
-async function extractChapter(chapterGroup, isFirstChapter, materialLabel, options = {}) {
-  const profile = buildChapterProfile(chapterGroup);
-  const systemPrompt = buildInitialExtractionPrompt(profile, isFirstChapter, chapterGroup);
+/**
+ * Extract a single sub-batch of chunks from a chapter.
+ * Contains the API call + retry + parse logic.
+ */
+async function extractChapterBatch(batchChunks, chapterGroup, profile, isFirstChapter, materialLabel, options, batchInfo) {
+  // Build system prompt from full chapter profile (structure context preserved)
+  let systemPrompt = buildInitialExtractionPrompt(profile, isFirstChapter, chapterGroup);
 
-  // Build chapter content with [CHUNK id="..."] markers and [P#] paragraph numbering
-  const chapterContent = formatChapterContentWithIds(chapterGroup.chunks);
+  // If sub-batched, add a note so the LLM knows it's seeing a partial chapter
+  if (batchInfo) {
+    const sectionNames = batchChunks.map(c => c.label || `Section ${c.section_path || c.sectionPath || '?'}`).join(', ');
+    systemPrompt += `\n\nNOTE: This is part ${batchInfo.batchNum} of ${batchInfo.totalBatches} for this chapter. Focus on skills present in these specific sections: ${sectionNames}. Other sections are handled separately.`;
+  }
+
+  const chapterContent = formatChapterContentWithIds(batchChunks);
+  const maxTokens = Math.min(16384, Math.max(8192, Math.ceil(batchChunks.length * 400)));
 
   let rawSkills, cipCode, parentDisplayName;
 
-  // Retry loop — covers API errors, JSON parse failures, and unexpected format
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       if (attempt > 0) {
         await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt - 1]));
-        options.onProgress?.(`Chapter ${chapterGroup.chapter}: retry ${attempt}/${MAX_RETRIES}...`);
+        options.onProgress?.(`Chapter ${chapterGroup.chapter}${batchInfo ? ` (batch ${batchInfo.batchNum}/${batchInfo.totalBatches})` : ''}: retry ${attempt}/${MAX_RETRIES}...`);
       }
 
       const response = await callClaude(
         systemPrompt,
         [{ role: 'user', content: `CHAPTER CONTENT:\n\n${chapterContent}` }],
-        12288, // Increased for faceted output
+        maxTokens,
         true // useHaiku
       );
 
@@ -924,13 +934,11 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         throw new Error(response);
       }
 
-      // Parse JSON from response
       const parsed = extractJSON(response);
       if (!parsed) {
         throw new Error('json_parse_failed: ' + (response?.substring(0, 200) || 'empty'));
       }
 
-      // Handle first-chapter wrapper { cipCode, parentDisplayName, subSkills }
       if (isFirstChapter && parsed.cipCode) {
         cipCode = parsed.cipCode;
         parentDisplayName = parsed.parentDisplayName;
@@ -938,7 +946,6 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
       } else if (Array.isArray(parsed)) {
         rawSkills = parsed;
       } else if (parsed.subSkills) {
-        // LLM might wrap even non-first chapters
         cipCode = parsed.cipCode;
         parentDisplayName = parsed.parentDisplayName;
         rawSkills = parsed.subSkills;
@@ -946,21 +953,107 @@ async function extractChapter(chapterGroup, isFirstChapter, materialLabel, optio
         throw new Error('unexpected_format');
       }
 
-      break; // success — parsed and validated
+      break;
     } catch (e) {
       if (attempt === MAX_RETRIES) {
         return {
-          skills: [],
+          rawSkills: [],
+          cipCode: undefined,
+          parentDisplayName: undefined,
           issues: [{ type: 'extraction_failed', chapter: chapterGroup.chapter, error: e.message }],
         };
       }
     }
   }
 
-  // Post-process
-  const { skills, issues } = postProcessChapterSkills(rawSkills, profile, materialLabel);
+  return { rawSkills: rawSkills || [], cipCode, parentDisplayName, issues: [] };
+}
 
-  return { skills, cipCode, parentDisplayName, issues };
+/**
+ * Split chunks into sub-batches where each batch's formatted content
+ * stays under SUB_BATCH_CHAR_LIMIT. Greedy accumulation.
+ */
+function splitIntoBatches(chunks) {
+  const batches = [];
+  let current = [];
+  let currentSize = 0;
+
+  for (const chunk of chunks) {
+    const formatted = formatChapterContentWithIds([chunk]);
+    const size = formatted.length;
+
+    if (current.length > 0 && currentSize + size > SUB_BATCH_CHAR_LIMIT) {
+      batches.push(current);
+      current = [chunk];
+      currentSize = size;
+    } else {
+      current.push(chunk);
+      currentSize += size;
+    }
+  }
+
+  if (current.length > 0) {
+    batches.push(current);
+  }
+
+  return batches;
+}
+
+async function extractChapter(chapterGroup, isFirstChapter, materialLabel, options = {}) {
+  const profile = buildChapterProfile(chapterGroup);
+  const fullContent = formatChapterContentWithIds(chapterGroup.chunks);
+
+  // Check if sub-batching is needed
+  if (fullContent.length <= SUB_BATCH_CHAR_LIMIT) {
+    // Single batch — no splitting needed
+    const result = await extractChapterBatch(
+      chapterGroup.chunks, chapterGroup, profile, isFirstChapter, materialLabel, options, null
+    );
+    const { skills, issues: postIssues } = postProcessChapterSkills(result.rawSkills, profile, materialLabel);
+    return { skills, cipCode: result.cipCode, parentDisplayName: result.parentDisplayName, issues: [...result.issues, ...postIssues] };
+  }
+
+  // Sub-batch: split chunks into batches under the char limit
+  const batches = splitIntoBatches(chapterGroup.chunks);
+  options.onProgress?.(`Chapter ${chapterGroup.chapter}: splitting into ${batches.length} sub-batches (${fullContent.length} chars)`);
+
+  let allRawSkills = [];
+  let cipCode, parentDisplayName;
+  const allIssues = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    const batchInfo = { batchNum: i + 1, totalBatches: batches.length };
+    // Only first batch of first chapter requests CIP classification
+    const batchIsFirst = isFirstChapter && i === 0;
+
+    const result = await extractChapterBatch(
+      batches[i], chapterGroup, profile, batchIsFirst, materialLabel, options, batchInfo
+    );
+
+    allIssues.push(...result.issues);
+
+    if (result.cipCode && !cipCode) {
+      cipCode = result.cipCode;
+      parentDisplayName = result.parentDisplayName;
+    }
+
+    allRawSkills.push(...result.rawSkills);
+  }
+
+  // Dedup merged skills by conceptKey — keep the one with more facets
+  const skillMap = new Map();
+  for (const skill of allRawSkills) {
+    const key = skill.conceptKey;
+    if (!key) { skillMap.set(Math.random().toString(), skill); continue; }
+    const existing = skillMap.get(key);
+    if (!existing || (skill.facets?.length || 0) > (existing.facets?.length || 0)) {
+      skillMap.set(key, skill);
+    }
+  }
+  const dedupedSkills = [...skillMap.values()];
+
+  const { skills, issues: postIssues } = postProcessChapterSkills(dedupedSkills, profile, materialLabel);
+  return { skills, cipCode, parentDisplayName, issues: [...allIssues, ...postIssues] };
 }
 
 // ============================================================
