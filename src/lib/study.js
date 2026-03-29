@@ -1457,11 +1457,19 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     // Load only this assignment and its required skills
     const asgn = focus.assignment;
     ctx += "CURRENT ASSIGNMENT: " + asgn.title + (asgn.dueDate ? " (Due: " + asgn.dueDate + ")" : "") + "\n\n";
-    ctx += "ASSIGNMENT QUESTIONS — INSTRUCTOR PLANNING ONLY (never reveal to student):\n";
+    ctx += "ASSIGNMENT QUESTIONS — INSTRUCTOR PLANNING ONLY:\n";
     const requiredSkillIds = new Set();
     if (asgn.questions) {
+      var qStatus = focus.questionStatus || {};
       for (const q of asgn.questions) {
-        ctx += "  " + q.id + ": " + q.description + " [" + q.difficulty + "]\n";
+        var qSt = qStatus[q.id] || "locked";
+        if (qSt === "unlocked" || qSt === "submitted" || qSt === "accepted") {
+          // Question text visible to AI only after unlock
+          ctx += "  " + q.id + ": " + q.description + " [" + q.difficulty + "]\n";
+        } else {
+          // LOCKED: AI sees only skills needed, NOT the question text
+          ctx += "  " + q.id + ": [LOCKED — question text hidden until student demonstrates mastery] [" + q.difficulty + "]\n";
+        }
         ctx += "    Required skills: " + (q.requiredSkills?.join(", ") || "unknown") + "\n";
         if (q.requiredSkills) q.requiredSkills.forEach(s => requiredSkillIds.add(s));
       }
