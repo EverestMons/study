@@ -156,7 +156,7 @@ v0.2.21 released. Extraction sub-batching shipped (large chapters split into ≤
 | Design docs | 39 MD files in docs/ |
 | Knowledge base | 222 MD files in knowledge/ |
 | Git commits | 174 |
-| Version | 0.2.21 |
+| Version | 0.2.22 |
 
 ### Source File Breakdown
 
