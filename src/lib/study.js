@@ -1468,9 +1468,12 @@ export const buildFocusedContext = async (courseId, materials, focus, skills) =>
     }
     ctx += "\nSTUDENT VIEW:\n";
     if (asgn.questions) {
-      var unlockStatus = focus.unlocked || {};
+      var qStatus = focus.questionStatus || {};
       for (const q of asgn.questions) {
-        if (unlockStatus[q.id]) {
+        var st = qStatus[q.id] || "locked";
+        if (st === "accepted") {
+          ctx += "  " + q.id + ": [DONE] — student completed this question\n";
+        } else if (st === "unlocked" || st === "submitted") {
           ctx += "  " + q.id + ": [UNLOCKED] — student is working on this\n";
         } else {
           ctx += "  " + q.id + ": [LOCKED] — requires: " + (q.requiredSkills?.join(", ") || "unknown") + "\n";
@@ -1797,6 +1800,12 @@ export const buildSystemPrompt = (courseName, context, journal) => {
 // --- Question Unlock Parser ---
 export const parseQuestionUnlock = (response) => {
   var match = response.match(/\[UNLOCK_QUESTION\]\s*([\w-]+)\s*\[\/UNLOCK_QUESTION\]/);
+  return match ? match[1].trim() : null;
+};
+
+// --- Answer Acceptance Parser ---
+export const parseAnswerResult = (response) => {
+  var match = response.match(/\[ANSWER_ACCEPTED\]\s*([\w-]+)\s*\[\/ANSWER_ACCEPTED\]/);
   return match ? match[1].trim() : null;
 };
 

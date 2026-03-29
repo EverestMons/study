@@ -47,7 +47,7 @@ export const generateSubmission = async (assignmentTitle, questions, courseName)
   }));
 
   // Questions and answers
-  const answered = questions.filter(q => q.done && q.answer?.trim());
+  const answered = questions.filter(q => (q.done || q.status === "accepted") && q.answer?.trim());
   for (let i = 0; i < answered.length; i++) {
     const q = answered[i];
     const qNum = q.id || "Question " + (i + 1);

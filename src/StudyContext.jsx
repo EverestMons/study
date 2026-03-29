@@ -16,7 +16,7 @@ import { checkForUpdate, installUpdate as installAppUpdate } from "./lib/updater
 import {
   effectiveStrength, nextReviewDate, applySkillUpdates, masteryConfidence,
   buildContext, buildFocusedContext, generateSessionEntry, computeFacetReadiness,
-  formatJournal, buildSystemPrompt, parseQuestionUnlock,
+  formatJournal, buildSystemPrompt, parseQuestionUnlock, parseAnswerResult,
   parseSkillUpdates, parseInputMode, extractKeywords, detectLanguage, detectMathSubject, TIERS, strengthToTier,
   createPracticeSet, generateProblems, evaluateAnswer,
   completeTierAttempt, loadPracticeMaterialCtx, updateChunkEffectiveness, _updateTutorSessionSummary
@@ -1197,11 +1197,11 @@ export function StudyProvider({ children, setErrorCtx }) {
         var qs = (focus.assignment.questions || []).map(q => ({
           id: q.id, description: q.description, difficulty: q.difficulty,
           requiredSkills: q.requiredSkills || [],
-          unlocked: false, answer: "", done: false
+          answer: "", status: "locked"
         }));
         setAsgnWork({ questions: qs, currentIdx: 0 });
         userMsg = "I want to work on: " + focus.assignment.title;
-        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nQUESTION VISIBILITY RULES:\n- The INSTRUCTOR PLANNING section shows full question text. This is for YOUR planning only.\n- The student CANNOT see questions until you unlock them with [UNLOCK_QUESTION].\n- NEVER ask the student the assignment question, restate it, or closely paraphrase it.\n- Your job is to teach the prerequisite SKILLS so the student can handle the question when they see it.\n\nBAD vs GOOD example:\n  Assignment question: \"Implement a binary search algorithm\"\n  BAD (asking the assignment question): \"How would you implement binary search?\"\n  GOOD (teaching the prerequisite skill): \"What property of a sorted array lets us skip checking every element?\"\n\nFLOW:\n1. Look at the FIRST locked question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first. Ask diagnostic questions about the CONCEPT, not about the assignment task. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'\n3. When the student demonstrates competence on ALL skills needed for the question, unlock it:\n   [UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After unlocking, the student sees the question and a text box for their answer. They will submit their answer for your review.\n   - NEVER state the answer to the assignment question, even as a \"check\" or \"for reference.\"\n   - NEVER say \"the correct answer is...\" or \"you should write...\" or similar.\n   - If they ask what to write: \"What do you think, based on what we just covered?\"\n   - Guide their THINKING, not their writing. Help them reason toward the answer, not transcribe yours.\n5. When the student completes a question, move to the next locked question's required skills.\n\nStart by checking the first question's prerequisite skills. Your opening question should test a CONCEPT — not describe or hint at the assignment task.\n\nQuestion order: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.";
+        modeHint = "\n\nMODE: ASSIGNMENT WORK.\n\nQUESTION VISIBILITY RULES:\n- The INSTRUCTOR PLANNING section shows full question text. This is for YOUR planning only.\n- The student CANNOT see questions until you unlock them with [UNLOCK_QUESTION].\n- NEVER ask the student the assignment question, restate it, or closely paraphrase it.\n- Your job is to teach the prerequisite SKILLS so the student can handle the question when they see it.\n\nBAD vs GOOD example:\n  Assignment question: \"Implement a binary search algorithm\"\n  BAD (asking the assignment question): \"How would you implement binary search?\"\n  GOOD (teaching the prerequisite skill): \"What property of a sorted array lets us skip checking every element?\"\n\nFLOW:\n1. Look at the FIRST locked question's required skills. Check the student's strength on those skills.\n2. If ANY required skill is below 50% strength, teach that skill first. Ask diagnostic questions about the CONCEPT, not about the assignment task. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'\n3. When the student demonstrates competence on ALL skills needed for the question, unlock it:\n   [UNLOCK_QUESTION]" + (qs[0]?.id || "q1") + "[/UNLOCK_QUESTION]\n4. After unlocking, the student sees the question and a text box for their answer. They will submit their answer for your review.\n   - NEVER state the answer to the assignment question, even as a \"check\" or \"for reference.\"\n   - NEVER say \"the correct answer is...\" or \"you should write...\" or similar.\n   - If they ask what to write: \"What do you think, based on what we just covered?\"\n   - Guide their THINKING, not their writing. Help them reason toward the answer, not transcribe yours.\n5. When the student completes a question, move to the next locked question's required skills.\n\nStart by checking the first question's prerequisite skills. Your opening question should test a CONCEPT — not describe or hint at the assignment task.\n\nQuestion order: " + qs.map(q => q.id).join(", ") + "\nUse the exact question ID in the unlock tag.\n\nANSWER ASSESSMENT:\nWhen you receive [ANSWER_SUBMISSION q=\"qN\"]...[/ANSWER_SUBMISSION], assess the student's answer:\n1. Compare against the question's required skills and your knowledge of correct answers.\n2. Emit SKILL_UPDATE ratings for the relevant facets based on answer quality.\n3. If the answer demonstrates sufficient understanding:\n   - Respond with [ANSWER_ACCEPTED]qN[/ANSWER_ACCEPTED]\n   - Give brief positive feedback (1-2 sentences, specific to what they got right).\n4. If the answer is incomplete or incorrect:\n   - Do NOT include [ANSWER_ACCEPTED]. Do NOT reveal the correct answer.\n   - Identify the specific gap or misconception.\n   - Ask a targeted question to guide the student toward the fix.\n   - The student can revise and resubmit.\n5. Never write the answer for the student. Even if they're close, guide them to the last step themselves.\n\nANSWER REVISION PROTOCOL:\nWhen a submitted answer is incorrect or incomplete:\n- Your feedback should identify WHAT is wrong or missing, not WHAT the answer should be.\n- BAD: \"You need to add X to your answer.\"\n- GOOD: \"Look at your second step -- what assumption are you making about [concept]?\"\n- After 2+ revision cycles on the same question, DO NOT escalate detail. Instead:\n  - Step back to the prerequisite concept.\n  - Ask a diagnostic question about the underlying principle.\n  - Once they demonstrate the principle, redirect them back to their answer.\n- Maximum 4 revision cycles. After 4, tell the student: \"Let's move on and come back to this one later with fresh eyes.\" Leave the question unlocked but move teaching to the next question's skills.";
       } else if (focus.type === "skill") {
         userMsg = "I want to work on: " + focus.skill.name;
         modeHint = "\n\nMODE: SKILL MASTERY. The student chose this specific skill to strengthen. You have the skill details and source material loaded. Start by asking a diagnostic question to find where their understanding breaks down. Mix retrieval practice with elaborative interrogation — ask 'why does this work?' and 'what would happen if we changed X?'";
@@ -1233,18 +1233,24 @@ export function StudyProvider({ children, setErrorCtx }) {
   };
 
   // --- Send Message ---
-  const sendMessage = async () => {
-    if (!input.trim() || busy || !active) return;
+  const sendMessage = async (overrideContent) => {
+    if (overrideContent) {
+      // Direct message injection (e.g., from AssignmentPanel answer submission)
+      if (busy || !active) return;
+    } else {
+      if (!input.trim() || busy || !active) return;
+    }
     skillNotifQueue.current = [];
     clearTimeout(skillNotifTimers.current.hold);
     clearTimeout(skillNotifTimers.current.clear);
     setCurrentSkillNotif(null);
-    const raw = inputMode === "code" ? input.trimEnd() : input.trim();
-    const userMsg = inputMode === "code" ? "```\n" + raw + "\n```" : raw;
-    const isCode = inputMode === "code";
-    setInput("");
-    // Reset textarea height after clearing input
-    if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.style.overflowY = 'hidden'; }
+    const raw = overrideContent || (inputMode === "code" ? input.trimEnd() : input.trim());
+    const userMsg = overrideContent || (inputMode === "code" ? "```\n" + raw + "\n```" : raw);
+    const isCode = !overrideContent && inputMode === "code";
+    if (!overrideContent) {
+      setInput("");
+      if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.style.overflowY = 'hidden'; }
+    }
     const userTs = Date.now();
     const newMsgs = [...msgs, { role: "user", content: userMsg, ts: userTs, codeMode: isCode, detectedLanguage: isCode ? detectedLanguage : null }];
     setMsgs([...newMsgs, { role: "assistant", content: "", ts: userTs }]); setBusy(true);
@@ -1264,9 +1270,9 @@ export function StudyProvider({ children, setErrorCtx }) {
         if (focusContext && (focusContext.type === "assignment" || focusContext.type === "skill" || focusContext.type === "exam")) {
           var rebuildFocus = focusContext;
           if (focusContext.type === "assignment" && asgnWork) {
-            var unlocked = {};
-            for (var aq of asgnWork.questions) { if (aq.unlocked) unlocked[aq.id] = true; }
-            rebuildFocus = { ...focusContext, unlocked: unlocked };
+            var statusMap = {};
+            for (var aq of asgnWork.questions) { statusMap[aq.id] = aq.status; }
+            rebuildFocus = { ...focusContext, questionStatus: statusMap };
           }
           var focusResult = await buildFocusedContext(active.id, active.materials, rebuildFocus, skills);
           ctx = focusResult.ctx;
@@ -1354,9 +1360,9 @@ export function StudyProvider({ children, setErrorCtx }) {
           var updatedSkills = await loadSkillsV2(active.id);
           var updateFocus = focusContext;
           if (focusContext.type === "assignment" && asgnWork) {
-            var unlocked2 = {};
-            for (var aq2 of asgnWork.questions) { if (aq2.unlocked) unlocked2[aq2.id] = true; }
-            updateFocus = { ...focusContext, unlocked: unlocked2 };
+            var statusMap2 = {};
+            for (var aq2 of asgnWork.questions) { statusMap2[aq2.id] = aq2.status; }
+            updateFocus = { ...focusContext, questionStatus: statusMap2 };
           }
           var updatedCtxResult = await buildFocusedContext(active.id, active.materials, updateFocus, updatedSkills);
           var updatedCtx = updatedCtxResult.ctx;
@@ -1418,7 +1424,7 @@ export function StudyProvider({ children, setErrorCtx }) {
           setAsgnWork(prev => {
             if (!prev) return prev;
             var updated = { ...prev, questions: prev.questions.map(q =>
-              q.id === unlockId ? { ...q, unlocked: true } : q
+              q.id === unlockId ? { ...q, status: "unlocked" } : q
             )};
             var idx = updated.questions.findIndex(q => q.id === unlockId);
             if (idx >= 0) updated.currentIdx = idx;
@@ -1427,6 +1433,26 @@ export function StudyProvider({ children, setErrorCtx }) {
         } else {
           unlockRejectionRef.current = "Unlock rejected for " + unlockId + " — " + rejectionReason + ". Continue teaching the required skills. Do not attempt to unlock again until the student demonstrates stronger mastery.";
         }
+      }
+
+      // Answer assessment: check for [ANSWER_ACCEPTED] or revision needed
+      const acceptedId = parseAnswerResult(response);
+      if (acceptedId && asgnWork) {
+        setAsgnWork(prev => {
+          if (!prev) return prev;
+          return { ...prev, questions: prev.questions.map(q =>
+            q.id === acceptedId ? { ...q, status: "accepted" } : q
+          )};
+        });
+      } else if (asgnWork) {
+        setAsgnWork(prev => {
+          if (!prev) return prev;
+          var hasSubmitted = prev.questions.some(q => q.status === "submitted");
+          if (!hasSubmitted) return prev;
+          return { ...prev, questions: prev.questions.map(q =>
+            q.status === "submitted" ? { ...q, status: "unlocked" } : q
+          )};
+        });
       }
 
       const finalMsgs = [...newMsgs, { role: "assistant", content: response, ts: asstTs }];

@@ -10,6 +10,7 @@ export default function AssignmentPanel() {
     focusContext,
     asgnWork, setAsgnWork,
     sidebarCollapsed, setSidebarCollapsed,
+    sendMessage, busy,
   } = useStudy();
 
   if (!asgnWork || msgs.length === 0) return null;
@@ -29,7 +30,7 @@ export default function AssignmentPanel() {
         /* Collapsed: show only progress */
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: T.ac, writingMode: "vertical-rl", textOrientation: "mixed" }}>
-            {asgnWork.questions.filter(q => q.done).length}/{asgnWork.questions.length}
+            {asgnWork.questions.filter(q => q.status === "accepted").length}/{asgnWork.questions.length}
           </div>
         </div>
       ) : (
@@ -40,23 +41,35 @@ export default function AssignmentPanel() {
           {focusContext?.assignment?.title || "Assignment"}
         </div>
         <div style={{ fontSize: 11, color: T.txD }}>
-          {asgnWork.questions.filter(q => q.done).length} / {asgnWork.questions.length} complete
+          {asgnWork.questions.filter(q => q.status === "accepted").length} / {asgnWork.questions.length} complete
         </div>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {asgnWork.questions.map((q) => (
           <div key={q.id} style={{ marginBottom: 12 }}>
-            {q.done ? (
-              /* Completed question - collapsed */
+            {q.status === "accepted" ? (
+              /* Accepted — collapsed green card */
               <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", opacity: 0.7 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontSize: 12, fontWeight: 500, color: T.gn }}>{q.id}</div>
-                  <div style={{ fontSize: 10, color: T.gn }}>Done</div>
+                  <div style={{ fontSize: 10, color: T.gn }}>Accepted</div>
                 </div>
                 <div style={{ fontSize: 11, color: T.txD, marginTop: 4 }}>{q.answer.substring(0, 80)}{q.answer.length > 80 ? "..." : ""}</div>
               </div>
-            ) : q.unlocked ? (
-              /* Active question - expanded with answer box */
+            ) : q.status === "submitted" ? (
+              /* Submitted — read-only with reviewing indicator */
+              <div style={{ background: T.sf, border: "1px solid " + T.acB, borderRadius: 12, padding: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: T.ac, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" }}>{q.id}</div>
+                  <div style={{ fontSize: 10, color: T.am, fontWeight: 600 }}>Reviewing...</div>
+                </div>
+                <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.6, marginBottom: 12 }}>{q.description}</div>
+                <div style={{ width: "100%", minHeight: 60, background: T.bg, border: "1px solid " + T.bd, borderRadius: 8, padding: "10px 12px", color: T.txD, fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", opacity: 0.7 }}>
+                  {q.answer}
+                </div>
+              </div>
+            ) : q.status === "unlocked" ? (
+              /* Unlocked — active with answer textarea and submit button */
               <div style={{ background: T.sf, border: "1px solid " + T.acB, borderRadius: 12, padding: 14, animation: "fadeIn 0.3s" }}>
                 <div style={{ fontSize: 11, color: T.ac, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 8 }}>{q.id}</div>
                 <div style={{ fontSize: 14, color: T.tx, lineHeight: 1.6, marginBottom: 12 }}>{q.description}</div>
@@ -73,19 +86,20 @@ export default function AssignmentPanel() {
                   style={{ width: "100%", minHeight: 100, background: T.bg, border: "1px solid " + T.bd, borderRadius: 8, padding: "10px 12px", color: T.tx, fontSize: 13, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit", boxSizing: "border-box" }}
                 />
                 {q.answer.trim().length > 0 && (
-                  <button onClick={() => {
+                  <button disabled={busy} onClick={() => {
                     setAsgnWork(prev => ({
                       ...prev,
-                      questions: prev.questions.map(pq => pq.id === q.id ? { ...pq, done: true } : pq)
+                      questions: prev.questions.map(pq => pq.id === q.id ? { ...pq, status: "submitted" } : pq)
                     }));
+                    sendMessage("[ANSWER_SUBMISSION q=\"" + q.id + "\"]\n" + q.answer.trim() + "\n[/ANSWER_SUBMISSION]");
                   }}
-                    style={{ marginTop: 8, background: T.gn, color: "#0F1115", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", width: "100%" }}>
-                    Mark done
+                    style={{ marginTop: 8, background: busy ? T.sf : T.ac, color: busy ? T.txM : "#0F1115", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: busy ? "not-allowed" : "pointer", width: "100%", opacity: busy ? 0.5 : 1 }}>
+                    Submit for Review
                   </button>
                 )}
               </div>
             ) : (
-              /* Locked question */
+              /* Locked */
               <div style={{ background: T.sf, border: "1px solid " + T.bd, borderRadius: 10, padding: "10px 14px", opacity: 0.4 }}>
                 <div style={{ fontSize: 12, fontWeight: 500, color: T.txM }}>{q.id}</div>
                 <div style={{ fontSize: 11, color: T.txM, marginTop: 2 }}>Locked -- building skills</div>
@@ -96,7 +110,7 @@ export default function AssignmentPanel() {
       </div>
 
       {/* Export DOCX button */}
-      {asgnWork.questions.some(q => q.done) && (
+      {asgnWork.questions.some(q => q.status === "accepted") && (
         <div style={{ padding: 12, borderTop: "1px solid " + T.bd }}>
           <button disabled={exporting} onClick={async () => {
             setExporting(true);
