@@ -1,14 +1,14 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
-**Last Updated:** 2026-03-24
-**Updated By:** Documentation Analyst (session wrap — tutor feedback loop phases 1-4)
+**Last Updated:** 2026-03-29
+**Updated By:** Planner (session wrap — release, extraction sub-batching, assignment teaching flow)
 **Overall Status:** Active
 
 ---
 
 ## Current Sprint / Focus
 
-Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study modes now expose facets for per-facet FSRS routing. Session exchanges persisted with mastery before/after and chunk IDs used. Chunk teaching effectiveness written back to chunk_facet_bindings at session end and used in content ranking. Tutor session summaries written to $APPDATA/tutor-sessions/ for Forge ingestion. Next focus: remaining self-updater steps and any follow-on tutor quality improvements surfaced by Forge.
+v0.2.21 released. Extraction sub-batching shipped (large chapters split into ≤30K-char batches). Assignment teaching flow overhauled: prompt hardening with ESCALATION RESISTANCE doctrine, data-driven unlock gate (60% mastery threshold), and 4-state answer submission assessment lifecycle (locked → unlocked → submitted → accepted). Next focus: test assignment teaching flow in real usage, monitor prompt compliance.
 
 ---
 
@@ -16,13 +16,13 @@ Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study m
 
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
-| Research | Active | 2026-03-24 | Tutor phase 3 + 4 diagnostics |
-| Systems Architecture | Active | 2026-03-24 | Tutor phases 1-4 blueprints (facet assessment coverage, session logging, chunk effectiveness, Forge ingestion) |
-| Development | Active | 2026-03-24 | Tutor phases 1-4 implementations + loadFacetBasedContent API change, SessionExchanges module, migration 010, updateChunkEffectiveness, _updateTutorSessionSummary |
-| Security & Testing | Active | 2026-03-24 | Tutor phases 1-4 QA |
+| Research | Active | 2026-03-29 | Extraction retry scope + chapter batching diagnostics, assignment teaching flow diagnostic |
+| Systems Architecture | Active | 2026-03-29 | Assignment teaching flow blueprint (unlock gate, answer submission, prompt hardening) |
+| Development | Active | 2026-03-29 | Extraction sub-batching, assignment prompt hardening + unlock gate, answer submission assessment flow |
+| Security & Testing | Active | 2026-03-29 | Extraction sub-batching QA, assignment teaching plan A + B QA |
 | Design & Experience | Active | 2026-03-24 | Tutor phase 1 UXV (facet assessment cognitive overhead + format verification) |
 | Data & Analytics | Idle | — | No usage data to analyze yet |
-| Documentation | Active | 2026-03-24 | Session wrap — tutor feedback loop phases 1-4 |
+| Documentation | Active | 2026-03-29 | Session wrap |
 | Engineering & Physical Design | N/A | — | No physical components |
 
 ---
@@ -121,6 +121,10 @@ Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study m
 
 | Date | Work |
 |---|---|
+| 2026-03-29 | **v0.2.21 Release:** Built with `cargo tauri build`, tagged, pushed, draft GitHub Release created with DMG + updater artifacts. Fixed `release.sh` to use `cargo tauri build` instead of `npx tauri build` (was silently failing). Re-cloned repo after iCloud-induced git corruption (bus errors in pack-objects). |
+| 2026-03-29 | **Extraction Sub-Batching:** Large chapters now split into ≤30K-char sub-batches before API calls. Dynamic output token budget (`min(16384, max(8192, ceil(chunkCount * 400)))`). Fixes 200K token overflow on large textbook chapters. Diagnostic confirmed retry filtering was already correct (only pending/error chunks re-extracted). |
+| 2026-03-29 | **Assignment Teaching Flow (Plan A — Prompt Hardening + Unlock Gate):** ESCALATION RESISTANCE block added to Answer Doctrine (study.js). Strengthened FLOW step 4 in modeHint. Data-driven unlock gate: `computeFacetReadiness()` checks required skills against 60% threshold before honoring `[UNLOCK_QUESTION]` tags. Rejection injected as `[SYSTEM NOTE]` for AI to continue teaching. Conservative default: no mastery data = locked. |
+| 2026-03-29 | **Assignment Teaching Flow (Plan B — Answer Submission Assessment):** 4-state question lifecycle replacing boolean flags: locked → unlocked → submitted → accepted. `parseAnswerResult()` parser for `[ANSWER_ACCEPTED]` tags. `sendMessage(overrideContent)` parameter for AssignmentPanel submission. ANSWER ASSESSMENT + ANSWER REVISION PROTOCOL added to modeHint. `q.done`/`q.unlocked` migrated to `q.status` across StudyContext, study.js, AssignmentPanel. Max 4 revision cycles before AI suggests moving on. |
 | 2026-03-24 | **Tutor Feedback Loop (Phases 1-4):** Phase 1 — buildFacetAssessmentBlock added to general context builder (all 5 modes). Phase 2 — migration 010, SessionExchanges module, loadFacetBasedContent returns {ctx, chunkIds}, applySkillUpdates logs per-facet exchanges. Phase 3 — ChunkFacetBindings.updateEffectiveness(), updateChunkEffectiveness() at session end, getByFacetRanked() ordering updated. Phase 4 — capabilities expanded for $APPDATA/tutor-sessions/, _updateTutorSessionSummary(), Forge tutor_response chunk type + scanner. Full loop: facet assessment → exchange logging → chunk effectiveness → Forge ingestion. |
 | 2026-03-24 | **Tutor Phase 4 — Forge Ingestion:** `_updateTutorSessionSummary()` writes to `$APPDATA/tutor-sessions/tutor-session-summary.md` at session end. Forge `tutor_response` chunk type added. Classification rule and chunker wired in Forge scanner. `EXTRA_SCAN_PATHS` config enables Forge to discover files outside Git repos. Full tutor feedback loop complete: facet assessment → session logging → chunk effectiveness → Forge ingestion. SA blueprint → STUDY DEV (3 files) → FORGE DEV (2 files) → QA 8/8 PASS. |
 | 2026-03-24 | **Tutor Phase 3 — Chunk Teaching Effectiveness:** `updateChunkEffectiveness()` writes `teaching_effectiveness` on `chunk_facet_bindings` at session end. `getByFacetRanked()` now orders by `teaching_effectiveness DESC NULLS LAST` as secondary sort key. Higher-effectiveness chunks surface first for facets with accumulated session data. SA blueprint → DEV (3 files, +53 lines) → QA 7/7 PASS. |
@@ -152,7 +156,7 @@ Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study m
 | Design docs | 39 MD files in docs/ |
 | Knowledge base | 222 MD files in knowledge/ |
 | Git commits | 174 |
-| Version | 0.2.17 |
+| Version | 0.2.21 |
 
 ### Source File Breakdown
 
