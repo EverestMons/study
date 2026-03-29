@@ -37,6 +37,7 @@ Tutor facet-grounded teaching feedback loop complete (Phases 1-4). All 5 study m
 | Content-hash dedup + MinHash LSH | Prevents re-extraction of identical and near-duplicate chunks |
 | v2 skill extraction pipeline | Weighted mastery, context tags, source tracking, concept keys, Bloom's taxonomy |
 | Faceted extraction pipeline | Nested skill→facet output, direct chunk ID bindings, binding type classification, quality scoring |
+| Extraction sub-batching | Large chapters split into ≤30K-char sub-batches for API calls; dynamic output token budget scales with input complexity |
 | 3-tier skill hierarchy | parent_skill → sub_skill → facet; CIP taxonomy seeding (416 entries, 42 domains) |
 | FSRS facet-level tracking | Per-facet FSRS schedule, aggregate skill readiness, mastery transfer via concept links |
 | Facet-level stealth assessment | AI assesses facets during teaching; per-facet FSRS routing; mastery threshold detection |
