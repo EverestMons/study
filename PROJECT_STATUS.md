@@ -8,7 +8,7 @@
 
 ## Current Sprint / Focus
 
-v0.2.21 released. Extraction sub-batching shipped (large chapters split into ≤30K-char batches). Assignment teaching flow overhauled: prompt hardening with ESCALATION RESISTANCE doctrine, data-driven unlock gate (60% mastery threshold), and 4-state answer submission assessment lifecycle (locked → unlocked → submitted → accepted). Next focus: test assignment teaching flow in real usage, monitor prompt compliance.
+v0.2.23 active. Unified prompt architecture: boot and subsequent messages now share the same system prompt (SKILL_UPDATE + FACET ASSESSMENT + mode-specific FLOW). Assignment FLOW rewritten with explicit SKILL_UPDATE requirement during teaching phase, 60% mastery gate explanation, and rejection handling. Next focus: test assignment teaching flow end-to-end — verify AI emits SKILL_UPDATE during pre-unlock teaching.
 
 ---
 
@@ -40,6 +40,7 @@ v0.2.21 released. Extraction sub-batching shipped (large chapters split into ≤
 | Extraction sub-batching | Large chapters split into ≤30K-char sub-batches for API calls; dynamic output token budget scales with input complexity |
 | Assignment prompt hardening | ESCALATION RESISTANCE doctrine added; data-driven unlock gate requires 60% facet retrievability on all required skills before honoring AI unlock |
 | Answer submission assessment | 4-state question lifecycle (locked → unlocked → submitted → accepted); AI assesses student answers before marking complete; revision loop for incorrect answers; FSRS updates via SKILL_UPDATE during answer review |
+| Unified prompt architecture | Boot and subsequent messages now use the same system prompt including both SKILL_UPDATE instructions and mode-specific FLOW. Assignment FLOW rewritten to explicitly require SKILL_UPDATE during teaching and explain the 60% mastery gate. |
 | 3-tier skill hierarchy | parent_skill → sub_skill → facet; CIP taxonomy seeding (416 entries, 42 domains) |
 | FSRS facet-level tracking | Per-facet FSRS schedule, aggregate skill readiness, mastery transfer via concept links |
 | Facet-level stealth assessment | AI assesses facets during teaching; per-facet FSRS routing; mastery threshold detection |
