@@ -10,7 +10,7 @@ Scan `knowledge/decisions/` for `executable-` files. Skip `in-progress-` and `Do
 import shutil
 shutil.move("knowledge/decisions/executable-foo.md", "knowledge/decisions/in-progress-executable-foo.md")
 ```
-Execute steps with CEO confirmation. After completion, move to Done (strip prefix). If no more executables: **"NO EXE"**.
+Execute Step 1, wait for CEO confirmation ("ok") before proceeding to Step 2. Continue step by step. After the final step completes, move to Done (strip prefix), then scan for next executable. If no more executables: **"NO EXE"**.
 
 ### RUN DIAG
 Scan `knowledge/decisions/` for `diagnostic-` files. Skip `in-progress-` and `Done/`. **BEFORE executing, RENAME the file:**
@@ -25,3 +25,5 @@ Execute investigation, deposit findings to `knowledge/research/`. Move to Done (
 - `**Depends on:**` header field = check `Done/` for prerequisites before executing
 - `**Priority:**` header field = lower number runs first
 - Stale `in-progress-` files (>30 min unmodified) may be reclaimed
+
+---
