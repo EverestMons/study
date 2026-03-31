@@ -1,11 +1,27 @@
 # CLAUDE.md
 
-## RUN EXE (Eluvian Standard)
+## Execution Protocol (Eluvian Standard)
 
-When the CEO types **"RUN EXE"**, scan `knowledge/decisions/` for executable files — any `.md` file prefixed with `executable-` or `diagnostic-` that is NOT inside the `Done/` subfolder.
+This project follows the Eluvian execution protocol defined in `PLANNER_TEMPLATE.md § Execution Model`. The full specification for RUN EXE, RUN DIAG, execution claiming (`in-progress-` prefix), cross-plan dependencies, and priority ordering lives there. Key points repeated here for agent convenience:
 
-**Execution order:** Read the first line of each file to find the `**Priority:**` field (integer, lower = first). Execute in priority order. Files without a priority field run after all prioritized files, sorted by date (oldest first).
+### RUN EXE
+Scan `knowledge/decisions/` for `executable-` files. Skip `in-progress-` and `Done/`. **BEFORE executing, RENAME the file:**
+```python
+import shutil
+shutil.move("knowledge/decisions/executable-foo.md", "knowledge/decisions/in-progress-executable-foo.md")
+```
+Execute steps with CEO confirmation. After completion, move to Done (strip prefix). If no more executables: **"NO EXE"**.
 
-- **If one executable found:** Read it, execute Step 1, wait for CEO confirmation between steps as normal. After the final step (plan moved to Done), scan again. If another executable is now pending, load and begin it. If none remain, report "NO EXE."
-- **If multiple executables found:** Sort by priority, then check for `parallel-N-` prefixed files sharing the same group number — these run back-to-back within a single confirmation window. Report what was found (list filenames and priorities) and begin executing.
-- **If no executables found:** Report "NO EXE."
+### RUN DIAG
+Scan `knowledge/decisions/` for `diagnostic-` files. Skip `in-progress-` and `Done/`. **BEFORE executing, RENAME the file:**
+```python
+import shutil
+shutil.move("knowledge/decisions/diagnostic-foo.md", "knowledge/decisions/in-progress-diagnostic-foo.md")
+```
+Execute investigation, deposit findings to `knowledge/research/`. Move to Done (strip prefix). If no more diagnostics: **"NO DIAG"** and stop. Do NOT scan for executables. RUN DIAG only cares about diagnostics.
+
+### Claiming + Dependencies
+- `in-progress-` prefix = claimed by another session, SKIP IT
+- `**Depends on:**` header field = check `Done/` for prerequisites before executing
+- `**Priority:**` header field = lower number runs first
+- Stale `in-progress-` files (>30 min unmodified) may be reclaimed
