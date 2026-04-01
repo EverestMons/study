@@ -1,7 +1,7 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-04-01
-**Updated By:** Developer (diagnostic: assignment date year-off-by-one)
+**Updated By:** QA (date-year-offset fix verified)
 **Overall Status:** Active
 
 ---
@@ -49,6 +49,7 @@ v0.2.23 active. Unified prompt architecture: boot and subsequent messages now sh
 | Chunk teaching effectiveness feedback | teaching_effectiveness on chunk_facet_bindings updated at session end; getByFacetRanked() sorts by effectiveness NULLS LAST as secondary key |
 | Tutor session Forge pipeline | _updateTutorSessionSummary() writes to $APPDATA/tutor-sessions/tutor-session-summary.md; Forge tutor_response chunk type wired |
 | Session mastery summary | Inline mastery cards, facet progress pills, session summary with mastered/practiced/facets sections |
+| Assignment date year-offset fix | Added current-date context to all LLM prompts, post-LLM date validation, one-time migration for existing wrong-year dates |
 | Assignment decomposition | Auto-decomposes to required skills; maps questions to facets |
 | Practice mode | 6-tier system with worked examples, confidence ratings, calibration feedback |
 | 5 study modes | Assignment, skills, exam prep, recap, explore — each with picker UI + focused context |

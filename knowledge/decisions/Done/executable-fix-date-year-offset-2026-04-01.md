@@ -1,0 +1,28 @@
+# Study — Fix Assignment Date Year-Off-By-One
+**Date:** 2026-04-01 | **Tier:** Small | **Execution:** Step 1 (DEV) → Step 2 (QA)
+
+## How to Run This Plan
+
+```
+Read the plan at study/knowledge/decisions/executable-fix-date-year-offset-2026-04-01.md. Execute Step 1. After completing Step 1, stop and wait for my confirmation before proceeding to Step 2.
+```
+
+---
+---
+
+## STEP 1 — DEV
+
+---
+
+> **FIRST — claim this plan:** `import shutil; shutil.move("knowledge/decisions/executable-fix-date-year-offset-2026-04-01.md", "knowledge/decisions/in-progress-executable-fix-date-year-offset-2026-04-01.md")`. Read your specialist file at `study/agents/STUDY_DEVELOPER.md` first. The diagnostic at `knowledge/research/date-year-offset-diagnostic-2026-04-01.md` found that `decomposeAssignments()` in `src/lib/skills.js:282` sends assignment text to Haiku with zero year context — the Anthropic API does not inject current date when a custom system prompt is provided, so the model guesses 2025 for yearless dates like "Due: January 27." The syllabus parser in `src/lib/syllabusParser.js` works by accident (example dates anchor to 2026) but has the same vulnerability. **Three fixes required:**
+
+> **(A) Add current-date context to ALL LLM prompts.** Create a utility function (e.g., `getCurrentDateContext()` in `src/lib/api.js` or a new `src/lib/dateContext.js`) that returns a string like `"Today's date is 2026-04-01. The current academic semester is Spring 2026."` using `new Date()`. Wire this into: (1) `decomposeAssignments()` system prompt in `src/lib/skills.js` — prepend the date context string before the existing prompt content, (2) `SYLLABUS_SYSTEM_PROMPT` in `src/lib/syllabusParser.js` — prepend the same date context. The utility should be importable by any module that calls the LLM so future prompts get date context automatically. For semester detection: if the current month is January–May → "Spring {year}", June–July → "Summer {year}", August–December → "Fall {year}". This is a reasonable heuristic — don't over-engineer it. **(B) Add post-LLM date validation in `decomposeAssignments()`.** After the LLM returns dates (around line 349 where `new Date(a.dueDate)` runs), add a validation step: query `course_schedule` for the assignment's course to get the semester date range (`MIN(start_date)` to `MAX(end_date)`). If a returned due date's year falls outside that range but would be valid with +1 or -1 year adjustment, auto-correct it. If no `course_schedule` data exists for the course, fall back to: if the date is >6 months in the past relative to `new Date()`, shift it forward by 1 year. Log corrections to console so they're visible during development. **(C) One-time migration to fix existing wrong dates.** Write a migration function (can be added to the existing migration runner or as a standalone fixup in `src/lib/db.js`) that runs once on app startup: query all assignments where `source='decomposition'` and `due_date IS NOT NULL`. For each, check if the `due_date` epoch falls outside the course's `course_schedule` semester range by exactly ~365 days (within a 7-day tolerance). If yes, add 31536000 seconds (1 year) to the epoch. Mark the migration as applied (e.g., a settings key `date_year_fix_applied=1`) so it doesn't re-run. Before applying, log the corrections: "Fixing assignment '{name}' due_date from {old} to {new}". **Commit** with message: `"fix: add current-date context to LLM prompts, validate assignment dates, migrate wrong-year dates"`. Standard prompt feedback protocol → `knowledge/research/agent-prompt-feedback.md`.
+
+---
+---
+
+## STEP 2 — QA
+
+---
+
+> Before starting, verify Step 1 committed successfully by checking git log for the fix commit. Read your specialist file at `study/agents/STUDY_SECURITY_TESTING_ANALYST.md`. **Verify all three fixes:** **(1) Date context utility:** Confirm `getCurrentDateContext()` (or equivalent) exists and returns a string containing today's date and current semester. Confirm it's called in both `decomposeAssignments()` and `SYLLABUS_SYSTEM_PROMPT`. **(2) Post-LLM validation:** Read the validation logic added to `decomposeAssignments()`. Verify it handles: date outside semester range → corrected, no course_schedule data → fallback to 6-month check, date already correct → no change, null dueDate → skipped. **(3) Migration:** Query the live DB at `~/Library/Application Support/com.everestmons.study/study.db` — `SELECT name, due_date, source FROM assignments WHERE source='decomposition' AND due_date IS NOT NULL`. Verify all dates are now in 2026 (not 2025). Check that the migration guard key exists in settings. **(4) No regression:** Verify `course_schedule` dates are unchanged (still 2026). Verify the syllabus parser prompt still functions (date context prepended, not replacing existing prompt). **(5) Edge cases to flag if present:** What happens if a student uploads a syllabus for a past semester? Does the semester heuristic handle December (Fall) vs January (Spring) correctly at year boundaries? Flag any concerns but don't block on them. **Deposit:** Write QA report to `knowledge/qa/date-year-fix-qa-2026-04-01.md`. **Final:** Update `PROJECT_STATUS.md` — add completed milestone: "Fixed assignment date year-off-by-one: added current-date context to all LLM prompts, post-LLM date validation, one-time migration for existing wrong dates." Then move this plan to Done: `import shutil; shutil.move("knowledge/decisions/in-progress-executable-fix-date-year-offset-2026-04-01.md", "knowledge/decisions/Done/executable-fix-date-year-offset-2026-04-01.md")`. Commit: `"chore: QA report + status update + move date-year-fix plan to Done"`. Standard prompt feedback protocol → `knowledge/research/agent-prompt-feedback.md`.

@@ -722,3 +722,33 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - For LLM-output-quality bugs: always check whether the prompt includes current date/context. This is a common class of bug where the model's system prompt is overridden and loses default context.
 - "Check the API call function to see if it injects any default context" — this was the key insight (callClaude overrides the model's default system prompt, losing the date).
+
+### 2026-04-01 — Study Developer — Fix assignment date year-off-by-one (executable)
+
+**Were any reads unnecessary?**
+- The specialist file read was informative but not essential for this code-only task. The diagnostic findings already contained all needed context.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. Three distinct fixes (A, B, C) with clear boundaries. Each was independently testable. The prompt's guidance on semester heuristic ("don't over-engineer it") was helpful — prevented scope creep.
+
+**What would have made this prompt more efficient?**
+- Fix (A) could have specified "prepend at callsite, don't modify the const" — the SYLLABUS_SYSTEM_PROMPT is a module-level const, so prepending at the callsite was the only clean approach. Took a moment to decide this.
+- Fix (C) could have specified "model it after migrateFacets pattern" — that's exactly what was done but the connection wasn't explicit.
+
+**What can be added to future prompts to increase performance?**
+- For "add utility + wire into N callsites" patterns: specify whether the utility should modify the const/template or be prepended at each callsite. This avoids a design decision during implementation.
+- For one-time migration fixups: "follow the migrateFacets() pattern in db.js" is a single-sentence shortcut that sets the implementation pattern, guard key approach, and startup wiring all at once.
+
+### 2026-04-01 — Study Security & Testing Analyst — Date year-offset fix QA (executable Step 2)
+
+**Were any reads unnecessary?**
+- No. All verification reads were targeted: api.js (utility), syllabusParser.js (callsite), skills.js (callsite + validation), db.js (migration), StudyContext.jsx (startup wiring). DB queries confirmed both pre-fix state and migration correctness.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 5-point verification structure maps cleanly to the 3 fixes + regression + edge cases. Each point was independently verifiable.
+
+**What would have made this prompt more efficient?**
+- Point (3) says "verify all dates are now in 2026" but the migration only runs at app startup — the DB won't have changed unless the app was restarted between steps. The prompt should say "simulate the migration via SQL and verify it would correct the right rows" or "restart the app, then verify." The current phrasing created a moment of confusion.
+
+**What can be added to future prompts to increase performance?**
+- For JS-runtime migrations tested via QA: always specify whether to "verify post-restart" or "simulate via SQL." JS migrations can't be triggered from the CLI.
