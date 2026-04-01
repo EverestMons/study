@@ -706,3 +706,19 @@ Agents write their own feedback directly to this file as part of their execution
 **What can be added to future prompts to increase performance?**
 - This prompt is a template for "apply a known fix from a diagnostic." Pattern: (1) cite the diagnostic, (2) specify exact file + location, (3) specify exact change, (4) specify formatting constraint, (5) specify commit message. All 5 present here.
 - For Rust file edits: "do NOT run cargo build — the app rebuilds on next tauri:dev" saves time and avoids unnecessary permission prompts.
+
+### 2026-04-01 — Study Developer — Assignment date year-off-by-one diagnostic
+
+**Were any reads unnecessary?**
+- No. All reads were essential: `syllabusParser.js` (LLM prompt + validateSchedule), `api.js` (callClaude system prompt handling), `skills.js` (decomposeAssignments + scanForDueDate), `db.js` (schema/helpers). The live DB queries were critical for confirming the bug with real data.
+
+**Was the prompt over-scoped or under-scoped?**
+- Well-scoped. The 7-point investigation structure was thorough and each point contributed unique evidence. Point (5) searching for `new Date()` / `Date.now()` across the codebase was the broadest search but confirmed the key finding: the app never passes current date context to LLM prompts.
+
+**What would have made this prompt more efficient?**
+- Point (3) asking to query the live DB was the most valuable instruction — it provided definitive proof (2025 vs 2026 dates) within seconds. Future diagnostics involving stored data should always include a DB query step.
+- Point (6) checking `decomposeAssignments()` overlapped significantly with point (2) tracing the date pipeline. Could be combined: "Trace date handling in both syllabusParser.js and skills.js decomposeAssignments."
+
+**What can be added to future prompts to increase performance?**
+- For LLM-output-quality bugs: always check whether the prompt includes current date/context. This is a common class of bug where the model's system prompt is overridden and loses default context.
+- "Check the API call function to see if it injects any default context" — this was the key insight (callClaude overrides the model's default system prompt, losing the date).

@@ -1,7 +1,7 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
-**Last Updated:** 2026-03-29
-**Updated By:** Planner (session wrap — release, extraction sub-batching, assignment teaching flow)
+**Last Updated:** 2026-04-01
+**Updated By:** Developer (diagnostic: assignment date year-off-by-one)
 **Overall Status:** Active
 
 ---
@@ -16,7 +16,7 @@ v0.2.23 active. Unified prompt architecture: boot and subsequent messages now sh
 
 | Department | Status | Last Activity | Notes |
 |---|---|---|---|
-| Research | Active | 2026-03-29 | Extraction retry scope + chapter batching diagnostics, assignment teaching flow diagnostic |
+| Research | Active | 2026-04-01 | Diagnostic: assignment date year-off-by-one investigation complete, findings in knowledge/research/ |
 | Systems Architecture | Active | 2026-03-29 | Assignment teaching flow blueprint (unlock gate, answer submission, prompt hardening) |
 | Development | Active | 2026-03-29 | Extraction sub-batching, assignment prompt hardening + unlock gate, answer submission assessment flow |
 | Security & Testing | Active | 2026-03-29 | Extraction sub-batching QA, assignment teaching plan A + B QA |
