@@ -1,6 +1,6 @@
-import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets, ChunkSimilarities, ChunkPrerequisites, ChunkFacetBindings, FacetConceptLinks } from './db.js';
+import { Materials, Chunks, SubSkills, SkillPrerequisites, Mastery, Assignments, ChunkFingerprints, Facets, ChunkSimilarities, ChunkPrerequisites, ChunkFacetBindings, FacetConceptLinks, CourseSchedule } from './db.js';
 import { computeMinHash, findNearDuplicates } from './minhash.js';
-import { callClaude, extractJSON, isApiError } from './api.js';
+import { callClaude, extractJSON, isApiError, getCurrentDateContext } from './api.js';
 import { chunkDocument } from './chunker.js';
 
 // --- Character budget per chunk (~25k tokens ~ 100k chars) ---
@@ -325,13 +325,13 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
       return (f.concept_key || String(f.id)) + ": " + f.name + (parentName ? " [under: " + parentName + "]" : "");
     }).join("\n");
 
-    asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the specific knowledge facets required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE FACETS (atomic learning units):\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredFacets\": [\"<exact ID from AVAILABLE FACETS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to facets from AVAILABLE FACETS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs. Use only the IDs from the AVAILABLE FACETS list.\n- If a question requires knowledge not covered by any available facet, omit it from requiredFacets rather than inventing a new ID.\n- Prefer fine-grained facet mapping: if a question involves 3 distinct concepts, list all 3 facet IDs.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required facet.";
+    asgnPrompt = getCurrentDateContext() + "\n\nYou are a curriculum analyst. Read the assignments below and break each question/task into the specific knowledge facets required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE FACETS (atomic learning units):\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredFacets\": [\"<exact ID from AVAILABLE FACETS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to facets from AVAILABLE FACETS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs. Use only the IDs from the AVAILABLE FACETS list.\n- If a question requires knowledge not covered by any available facet, omit it from requiredFacets rather than inventing a new ID.\n- Prefer fine-grained facet mapping: if a question involves 3 distinct concepts, list all 3 facet IDs.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required facet.";
   } else {
     referenceList = Array.isArray(skills)
       ? skills.map(s => (s.conceptKey || s.id) + ": " + s.name).join("\n")
       : "Skills not yet structured";
 
-    asgnPrompt = "You are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
+    asgnPrompt = getCurrentDateContext() + "\n\nYou are a curriculum analyst. Read the assignments below and break each question/task into the skills required to complete it.\n\nASSIGNMENTS:\n" + asgnContent + "\n\nAVAILABLE SKILLS:\n" + referenceList + "\n\nRespond with ONLY a JSON array. Each assignment object:\n{\n  \"id\": \"asgn-1\",\n  \"title\": \"Assignment name\",\n  \"dueDate\": \"date if found, null otherwise\",\n  \"questions\": [\n    {\n      \"id\": \"q1\",\n      \"description\": \"Brief description of what the question asks\",\n      \"requiredSkills\": [\"<exact ID from AVAILABLE SKILLS list>\"],\n      \"difficulty\": \"foundational|intermediate|advanced\"\n    }\n  ]\n}\n\nRules:\n- Map each question to skills from AVAILABLE SKILLS using their EXACT IDs as shown above (the part before the colon).\n- Do NOT invent new IDs like skill-1 or skill-2. Use only the IDs from the AVAILABLE SKILLS list.\n- If a question requires knowledge not covered by any available skill, omit it from requiredSkills rather than inventing a new ID.\n- Difficulty reflects how deep the understanding needs to be.\n- Be thorough -- every question should have at least one required skill.";
   }
 
   const result = await callClaude(asgnPrompt, [{ role: "user", content: useFacets ? "Decompose all assignments into facet requirements." : "Decompose all assignments into skill requirements." }], 16384, true);
@@ -340,6 +340,18 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
     return;
   }
   const asgn = extractJSON(result);
+
+  // Load semester date range for post-LLM date validation
+  let semesterMin = null, semesterMax = null;
+  try {
+    const schedule = await CourseSchedule.getByCourse(courseId);
+    if (schedule.length > 0) {
+      const starts = schedule.map(w => w.start_date).filter(Boolean);
+      const ends = schedule.map(w => w.end_date).filter(Boolean);
+      if (starts.length) semesterMin = Math.min(...starts);
+      if (ends.length) semesterMax = Math.max(...ends);
+    }
+  } catch { /* no schedule data — fallback below */ }
 
   if (asgn && Array.isArray(asgn)) {
     for (const a of asgn) {
@@ -355,6 +367,25 @@ export const decomposeAssignments = async (courseId, materialsMeta, skills, onSt
           if (matName.includes(titleLower) || titleLower.includes(matName.substring(0, 15))) {
             dueDate = dd;
             break;
+          }
+        }
+      }
+
+      // Validate due date year against semester range
+      if (dueDate) {
+        const ONE_YEAR = 31536000; // seconds
+        if (semesterMin && semesterMax) {
+          // If date is ~1 year before semester and shifting +1yr puts it in range, correct it
+          if (dueDate < semesterMin - 30 * 86400 && dueDate + ONE_YEAR >= semesterMin - 30 * 86400 && dueDate + ONE_YEAR <= semesterMax + 90 * 86400) {
+            console.log(`[decomposeAssignments] Correcting date for "${a.title}": ${new Date(dueDate * 1000).toISOString().split('T')[0]} → ${new Date((dueDate + ONE_YEAR) * 1000).toISOString().split('T')[0]}`);
+            dueDate += ONE_YEAR;
+          }
+        } else {
+          // Fallback: if date is >6 months in the past, shift forward 1 year
+          const nowEpoch = Math.floor(Date.now() / 1000);
+          if (nowEpoch - dueDate > 6 * 30 * 86400 && nowEpoch - (dueDate + ONE_YEAR) < 6 * 30 * 86400) {
+            console.log(`[decomposeAssignments] Correcting date for "${a.title}" (no schedule): ${new Date(dueDate * 1000).toISOString().split('T')[0]} → ${new Date((dueDate + ONE_YEAR) * 1000).toISOString().split('T')[0]}`);
+            dueDate += ONE_YEAR;
           }
         }
       }

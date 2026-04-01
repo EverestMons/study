@@ -3314,4 +3314,68 @@ export const resetAll = async ({ confirmed = false } = {}) => {
   return { deleted: counts };
 };
 
+// ============================================================
+// One-time fixup: correct assignment dates off by -1 year
+// ============================================================
 
+/**
+ * Fixes decomposition-sourced assignments where the LLM returned dates
+ * one year too early (e.g., 2025 instead of 2026) because no year context
+ * was provided in the prompt. Safe to re-run: checks settings guard key.
+ */
+export const fixAssignmentDateYearOffset = async () => {
+  const db = await getDb();
+
+  const flag = await db.select("SELECT value FROM settings WHERE key = 'date_year_fix_applied'");
+  if (flag.length > 0 && flag[0].value === '1') return { skipped: true };
+
+  const ONE_YEAR = 31536000; // seconds
+  let fixed = 0;
+
+  // Get all courses with schedule data
+  const courses = await db.select('SELECT DISTINCT course_id FROM course_schedule');
+  for (const { course_id } of courses) {
+    const schedule = await db.select(
+      'SELECT MIN(start_date) as min_start, MAX(end_date) as max_end FROM course_schedule WHERE course_id = ? AND start_date IS NOT NULL',
+      [course_id]
+    );
+    if (!schedule.length || !schedule[0].min_start) continue;
+    const semMin = schedule[0].min_start;
+    const semMax = schedule[0].max_end || semMin + 120 * 86400;
+
+    // Find decomposition assignments with dates outside semester range by ~1 year
+    const assignments = await db.select(
+      "SELECT id, title, due_date FROM assignments WHERE course_id = ? AND source = 'decomposition' AND due_date IS NOT NULL",
+      [course_id]
+    );
+    for (const a of assignments) {
+      const shifted = a.due_date + ONE_YEAR;
+      // If current date is before semester start but shifted date falls within range (with tolerance)
+      if (a.due_date < semMin - 30 * 86400 && shifted >= semMin - 30 * 86400 && shifted <= semMax + 90 * 86400) {
+        console.log(`[fixDateYearOffset] Fixing "${a.title}": ${new Date(a.due_date * 1000).toISOString().split('T')[0]} → ${new Date(shifted * 1000).toISOString().split('T')[0]}`);
+        await db.execute('UPDATE assignments SET due_date = ?, updated_at = ? WHERE id = ?', [shifted, now(), a.id]);
+        fixed++;
+      }
+    }
+  }
+
+  // Also fix assignments without schedule data: if >6 months in the past, shift +1 year
+  const orphans = await db.select(
+    "SELECT a.id, a.title, a.due_date FROM assignments a LEFT JOIN course_schedule cs ON cs.course_id = a.course_id WHERE a.source = 'decomposition' AND a.due_date IS NOT NULL AND cs.id IS NULL"
+  );
+  const nowEpoch = now();
+  for (const a of orphans) {
+    if (nowEpoch - a.due_date > 6 * 30 * 86400) {
+      const shifted = a.due_date + ONE_YEAR;
+      if (nowEpoch - shifted < 6 * 30 * 86400) {
+        console.log(`[fixDateYearOffset] Fixing orphan "${a.title}": ${new Date(a.due_date * 1000).toISOString().split('T')[0]} → ${new Date(shifted * 1000).toISOString().split('T')[0]}`);
+        await db.execute('UPDATE assignments SET due_date = ?, updated_at = ? WHERE id = ?', [shifted, nowEpoch, a.id]);
+        fixed++;
+      }
+    }
+  }
+
+  await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('date_year_fix_applied', '1')");
+  console.log(`[fixDateYearOffset] Fixed ${fixed} assignment date(s)`);
+  return { fixed };
+};

@@ -1,4 +1,4 @@
-import { callClaude, extractJSON, isApiError } from './api.js';
+import { callClaude, extractJSON, isApiError, getCurrentDateContext } from './api.js';
 import { CourseSchedule, CourseAssessments, Courses, Assignments } from './db.js';
 
 // --- Internal Helpers ---
@@ -189,7 +189,7 @@ export async function parseSyllabus(courseId, materialText, options = {}) {
   // --- 1. Call Claude ---
   if (onStatus) onStatus('Analyzing syllabus structure...');
   const result = await callClaude(
-    SYLLABUS_SYSTEM_PROMPT,
+    getCurrentDateContext() + '\n\n' + SYLLABUS_SYSTEM_PROMPT,
     [{ role: 'user', content: materialText }],
     16384,
     true  // useHaiku

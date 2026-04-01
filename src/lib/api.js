@@ -22,6 +22,19 @@ export const isApiError = (response) =>
 export const MODEL_SONNET = "claude-sonnet-4-20250514";
 export const MODEL_HAIKU = "claude-haiku-4-5-20251001";
 
+// --- Date Context for LLM Prompts ---
+export const getCurrentDateContext = () => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  const iso = now.toISOString().split('T')[0];
+  let semester;
+  if (month <= 4) semester = `Spring ${yyyy}`;
+  else if (month <= 6) semester = `Summer ${yyyy}`;
+  else semester = `Fall ${yyyy}`;
+  return `Today's date is ${iso}. The current academic semester is ${semester}.`;
+};
+
 // --- Claude API ---
 export const callClaude = async (system, messages, maxTokens, useHaiku = false) => {
   const apiKey = await getApiKey();

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 
 import { CLS, autoClassify, parseFailed } from "./lib/classify.js";
-import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, MaterialImages, loadCoursesNested, saveCoursesNested, migrateFacets, backfillSkillCourses, SkillCourses, Facets, FacetMastery } from "./lib/db.js";
+import { getApiKey, setApiKey, getSetting, setSetting, getDb, Courses, Chunks, Sessions, Messages, JournalEntries, ParentSkills, SubSkills, Mastery, ChunkSkillBindings, SkillPrerequisites, Assignments, CourseSchedule, Materials, MaterialImages, loadCoursesNested, saveCoursesNested, migrateFacets, backfillSkillCourses, SkillCourses, Facets, FacetMastery, fixAssignmentDateYearOffset } from "./lib/db.js";
 import { currentRetrievability } from "./lib/fsrs.js";
 import { readFile } from "./lib/parsers.js";
 import { callClaude, callClaudeStream, extractJSON, testApiKey } from "./lib/api.js";
@@ -319,6 +319,12 @@ export function StudyProvider({ children, setErrorCtx }) {
           const facetResult = await migrateFacets();
           if (!facetResult.skipped) console.log(`[Init] Facet migration: ${facetResult.facetsCreated} facets created`);
         } catch (e) { console.error("Facet migration failed:", e); }
+        if (cancelled) return;
+        // One-time fix for assignment dates off by -1 year (idempotent)
+        try {
+          const dateFixResult = await fixAssignmentDateYearOffset();
+          if (!dateFixResult.skipped) console.log(`[Init] Date year fix: ${dateFixResult.fixed} assignment(s) corrected`);
+        } catch (e) { console.error("Date year fix failed:", e); }
         if (cancelled) return;
         // One-time cleanup of duplicate materials (idempotent, no-op if none)
         try {
