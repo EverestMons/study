@@ -1,7 +1,7 @@
 # study — Project Status
 **Maintained By:** Study Product Analyst
 **Last Updated:** 2026-04-01
-**Updated By:** QA (date-year-offset fix verified)
+**Updated By:** QA (React Error #31 fix verified)
 **Overall Status:** Active
 
 ---
@@ -123,6 +123,7 @@ v0.2.23 active. Unified prompt architecture: boot and subsequent messages now sh
 
 | Date | Work |
 |---|---|
+| 2026-04-01 | **Fixed React Error #31:** Send button `onClick={sendMessage}` was passing SyntheticEvent into `sendMessage` as `overrideContent`, causing crash when rendering message content. Added `onClick` wrapper in InputBar.jsx and defensive type guard in StudyContext.jsx. Diagnostic traced bug to minified bundle position, confirmed only button-click path affected (Enter key was fine). |
 | 2026-03-29 | **v0.2.21 Release:** Built with `cargo tauri build`, tagged, pushed, draft GitHub Release created with DMG + updater artifacts. Fixed `release.sh` to use `cargo tauri build` instead of `npx tauri build` (was silently failing). Re-cloned repo after iCloud-induced git corruption (bus errors in pack-objects). |
 | 2026-03-29 | **Extraction Sub-Batching:** Large chapters now split into ≤30K-char sub-batches before API calls. Dynamic output token budget (`min(16384, max(8192, ceil(chunkCount * 400)))`). Fixes 200K token overflow on large textbook chapters. Diagnostic confirmed retry filtering was already correct (only pending/error chunks re-extracted). |
 | 2026-03-29 | **Assignment Teaching Flow (Plan A — Prompt Hardening + Unlock Gate):** ESCALATION RESISTANCE block added to Answer Doctrine (study.js). Strengthened FLOW step 4 in modeHint. Data-driven unlock gate: `computeFacetReadiness()` checks required skills against 60% threshold before honoring `[UNLOCK_QUESTION]` tags. Rejection injected as `[SYSTEM NOTE]` for AI to continue teaching. Conservative default: no mastery data = locked. |
