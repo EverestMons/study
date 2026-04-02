@@ -1250,6 +1250,7 @@ export function StudyProvider({ children, setErrorCtx }) {
 
   // --- Send Message ---
   const sendMessage = async (overrideContent) => {
+    if (overrideContent && typeof overrideContent !== 'string') overrideContent = undefined;
     if (overrideContent) {
       // Direct message injection (e.g., from AssignmentPanel answer submission)
       if (busy || !active) return;

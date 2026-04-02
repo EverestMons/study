@@ -1,0 +1,11 @@
+# Study — React Error #31 Diagnostic
+**Date:** 2026-04-01 | **Type:** Diagnostic
+
+---
+---
+
+## STEP 1 — DEV
+
+---
+
+> Skip specialist file and glossary reads — this is a code-tracing task. **Error:** React error #31 — "Objects are not valid as a React child." The minified error shows a React SyntheticEvent object (with keys `_reactName, _targetInst, type, nativeEvent, target, currentTarget, eventPhase, bubbles, cancelable, ...`) being rendered as a JSX child. This means somewhere a click/mouse event handler is returning the event object into the render tree instead of calling a function with it. Common causes: `onClick={handler(e)}` (immediate invocation returning event) instead of `onClick={() => handler(e)}`, or a state setter receiving the event object (`setState(e)` instead of `setState(e.target.value)`), or a callback that returns the event object and that return value gets rendered. **Crash context:** Screen: unknown, Course ID: none, Session Mode: none — so this is happening on a top-level or navigation screen, not inside a course/session. The component stack from the minified bundle shows nested divs inside `dN` at `index-5b7ymYZO.js:1500:34781`. **Investigation:** (1) Search the `src/` directory for patterns where an event handler's return value could leak into JSX. Grep for patterns like `onClick={someFunction(` (immediate invocation with parens), `onChange={e =>` combined with `setState(e)` (setting state to event instead of value), and any place where a function receiving an event returns a value that gets rendered. (2) Check all components that render at the top level (no course/session context) — Dashboard, navigation, app shell, onboarding. The crash has Screen: unknown and Course ID: none, so it's outside course views. (3) Look for recent changes that might have introduced this — check `git log --oneline -20` for recent commits touching component files. (4) If the source map exists (`index-5b7ymYZO.js.map`), use it to identify which component `dN` maps to. Check `src-tauri/` or `dist/` for the map file. **Deposit:** `study/knowledge/research/react-error-31-diagnostic-2026-04-01.md` with: the offending component and line, the exact code pattern causing the event-as-child render, and a recommended fix. Standard prompt feedback protocol → `study/knowledge/research/agent-prompt-feedback.md`.

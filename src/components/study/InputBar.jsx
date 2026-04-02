@@ -132,7 +132,7 @@ export default function InputBar() {
             <button onClick={function() { setInputMode("math"); }} title="Math mode (Ctrl+Shift+M)"
               style={modeBtn("math", inputMode === "math")}>&pi;</button>
           </div>
-          <button onClick={sendMessage} disabled={!input.trim() || busy}
+          <button onClick={function() { sendMessage(); }} disabled={!input.trim() || busy}
             onMouseEnter={function(e) { if (input.trim() && !busy) e.currentTarget.style.background = "#7DAAFD"; }}
             onMouseLeave={function(e) { e.currentTarget.style.background = input.trim() && !busy ? T.ac : T.sf; }}
             style={{
