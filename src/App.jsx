@@ -112,18 +112,17 @@ class StudyErrorBoundary extends Component {
   }
 }
 
-// Wrapper that provides error context
-function StudyInnerWithContext() {
+// Top-level wrapper: ErrorContext.Provider must wrap StudyErrorBoundary
+// so crash reports capture the real screen/course/session state.
+export default function Study() {
   const [errorCtx, setErrorCtx] = useState({ screen: "loading", courseId: null, sessionMode: null });
   return React.createElement(
     ErrorContext.Provider,
     { value: errorCtx },
-    React.createElement(StudyProvider, { setErrorCtx },
-      React.createElement(ScreenRouter)
+    React.createElement(StudyErrorBoundary, null,
+      React.createElement(StudyProvider, { setErrorCtx },
+        React.createElement(ScreenRouter)
+      )
     )
   );
-}
-
-export default function Study() {
-  return React.createElement(StudyErrorBoundary, null, React.createElement(StudyInnerWithContext));
 }
