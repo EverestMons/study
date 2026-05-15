@@ -9,7 +9,7 @@
 If Tauri's build system is slow, stalled, or recompiling unnecessarily, bypass it entirely:
 
 ```bash
-cd ~/Desktop/GitHub/study
+cd ~/Developer/GitHub/study
 npx vite &
 sleep 2
 ./src-tauri/target/debug/study
@@ -56,8 +56,8 @@ When `mds_stores` CPU is <1%, the disk has settled.
 ## Prevent Spotlight From Indexing Build Artifacts
 
 ```bash
-touch ~/Desktop/GitHub/study/src-tauri/target/.metadata_never_index
-sudo mdutil -i off ~/Desktop/GitHub/study
+touch ~/Developer/GitHub/study/src-tauri/target/.metadata_never_index
+sudo mdutil -i off ~/Developer/GitHub/study
 ```
 
 ---

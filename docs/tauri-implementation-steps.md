@@ -30,7 +30,7 @@ cargo install tauri-cli
 ### Step 1.1: Initialize Vite + React project
 
 ```bash
-cd /Users/marklehn/Desktop/GitHub/study
+cd /Users/marklehn/Developer/GitHub/study
 npm create vite@latest study-app -- --template react
 cd study-app
 npm install
