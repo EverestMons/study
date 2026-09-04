@@ -39,44 +39,43 @@ export const pickFolder = async (defaultPath) => {
   return selected || null;
 };
 
-// Reads folder contents up to maxDepth, filters to supported extensions.
+// Recursively reads folder contents up to maxDepth levels deep, filters to supported extensions.
+// Nested files carry their relative path from the root as `subfolder` (e.g. "Week1/Lecture");
+// root-level files have subfolder === null.
 // Returns { folderName, files: [{ name, path, ext, subfolder }], unsupported: [{ name, ext }] }
-export const scanFolder = async (folderPath, { maxDepth = 1 } = {}) => {
+export const scanFolder = async (folderPath, { maxDepth = 8 } = {}) => {
   var parts = folderPath.replace(/\\/g, '/').split('/');
   var folderName = parts[parts.length - 1] || parts[parts.length - 2] || 'folder';
   var files = [];
   var unsupported = [];
 
-  var collectEntries = (entries, basePath, subfolder) => {
+  // Walk one directory: collect its files, then recurse into child directories.
+  // depth is the directory's level below the root (root = 0).
+  var walk = async (dirPath, subfolder, depth) => {
+    var entries;
+    try {
+      entries = await readDir(dirPath);
+    } catch (e) {
+      console.warn('[folderImport] Could not read folder:', dirPath, e);
+      return;
+    }
     for (var entry of entries) {
-      if (!entry.isFile) continue;
-      var ext = getExt(entry.name);
-      var path = basePath + '/' + entry.name;
-      if (ext && SUPPORTED_EXTENSIONS.has(ext)) {
-        files.push({ name: entry.name, path, ext, subfolder });
-      } else if (ext) {
-        unsupported.push({ name: entry.name, ext });
+      if (entry.isFile) {
+        var ext = getExt(entry.name);
+        var path = dirPath + '/' + entry.name;
+        if (ext && SUPPORTED_EXTENSIONS.has(ext)) {
+          files.push({ name: entry.name, path, ext, subfolder });
+        } else if (ext) {
+          unsupported.push({ name: entry.name, ext });
+        }
+      } else if (entry.isDirectory && !entry.isSymlink && !entry.name.startsWith('.') && depth < maxDepth) {
+        var childSub = subfolder === null ? entry.name : subfolder + '/' + entry.name;
+        await walk(dirPath + '/' + entry.name, childSub, depth + 1);
       }
     }
   };
 
-  // Read root level
-  var rootEntries = await readDir(folderPath);
-  collectEntries(rootEntries, folderPath, null);
-
-  // Read one level of subdirectories
-  if (maxDepth >= 1) {
-    var subdirs = rootEntries.filter(e => e.isDirectory && !e.name.startsWith('.'));
-    for (var dir of subdirs) {
-      var subPath = folderPath + '/' + dir.name;
-      try {
-        var subEntries = await readDir(subPath);
-        collectEntries(subEntries, subPath, dir.name);
-      } catch (e) {
-        console.warn('[folderImport] Could not read subfolder:', dir.name, e);
-      }
-    }
-  }
+  await walk(folderPath, null, 0);
 
   // Sort: subfolders grouped alphabetically, then files by name within each group
   files.sort((a, b) => {
