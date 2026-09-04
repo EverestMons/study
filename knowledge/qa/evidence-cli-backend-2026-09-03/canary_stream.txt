@@ -1,0 +1,23 @@
+Canary 2 — Streaming invoke (exact claude_cli_stream args from lib.rs)
+Command: echo "Write a paragraph of exactly 300 words about the history of computing..." | claude -p --system-prompt "You are a concise history writer." --tools "" --no-session-persistence --model haiku --output-format stream-json --include-partial-messages --verbose
+
+Raw NDJSON: see canary_stream_raw.txt (129 lines)
+
+Assertions:
+- text_delta count: 6 (>1 required) ✅
+- Accumulated text length: 2191 characters ✅
+- Result field length: 2191 characters ✅
+- Accumulated text matches result field exactly: YES ✅
+- Stream is incremental (>1 delta): ✅
+
+Verification script:
+  node -e 'const lines = require("fs").readFileSync("canary_stream_raw.txt","utf8").split("\n");
+  let accumulated = "", resultText = null, count = 0;
+  for (const line of lines) {
+    try { const p = JSON.parse(line);
+      if (p.type==="stream_event" && p.event?.delta?.type==="text_delta") { accumulated += p.event.delta.text; count++; }
+      if (p.type==="result" && p.result) resultText = p.result;
+    } catch {}
+  }
+  console.log("deltas:", count, "match:", accumulated === resultText);'
+  Output: deltas: 6 match: true

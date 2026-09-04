@@ -1,0 +1,185 @@
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/App.jsx
+  9:14  error  Fast refresh only works when a file only exports components. Move your React context(s) to a separate file  react-refresh/only-export-components
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/ScreenRouter.jsx
+  24:65  error  '__APP_VERSION__' is not defined  no-undef
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/StudyContext.jsx
+    7:10   error    'callClaude' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                                no-unused-vars
+    7:40   error    'extractJSON' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                               no-unused-vars
+   19:3    error    'formatJournal' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                                                             no-unused-vars
+   59:14   error    Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                                                                                                                   react-refresh/only-export-components
+  287:37   warning  The ref value 'skillNotifTimers.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'skillNotifTimers.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
+  293:6    warning  React Hook useEffect has a missing dependency: 'refreshMaterialSkillCounts'. Either include it or remove the dependency array                                                                                                                                                    react-hooks/exhaustive-deps
+  455:106  error    Empty block statement                                                                                                                                                                                                                                                            no-empty
+  466:6    warning  React Hook useCallback has a missing dependency: 'filterDuplicates'. Either include it or remove the dependency array                                                                                                                                                            react-hooks/exhaustive-deps
+  471:106  error    Empty block statement                                                                                                                                                                                                                                                            no-empty
+  482:6    warning  React Hook useCallback has a missing dependency: 'filterDuplicates'. Either include it or remove the dependency array                                                                                                                                                            react-hooks/exhaustive-deps
+  514:108  error    Empty block statement                                                                                                                                                                                                                                                            no-empty
+  529:6    warning  React Hook useCallback has a missing dependency: 'filterDuplicates'. Either include it or remove the dependency array                                                                                                                                                            react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/DatePicker.jsx
+  69:6  warning  React Hook useLayoutEffect has missing dependencies: 'anchorRef', 'sel', and 'today'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  81:6  warning  React Hook useEffect has a missing dependency: 'anchorRef'. Either include it or remove the dependency array                              react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/FolderPickerModal.jsx
+  41:9  error  'folderName' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/SettingsModal.jsx
+   25:5    error  'showSettings' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u     no-unused-vars
+   25:36   error  'setApiKeyLoaded' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+   41:56   error  Empty block statement                                                                            no-empty
+  243:128  error  '__APP_VERSION__' is not defined                                                                 no-undef
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/AssignmentPicker.jsx
+   3:37  error  'loadCoursesNested' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                no-unused-vars
+   4:10  error  'runExtractionV2' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                  no-unused-vars
+   4:27  error  'loadSkillsV2' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                     no-unused-vars
+   4:41  error  'decomposeAssignments' is defined but never used. Allowed unused vars must match /^[A-Z_]/u             no-unused-vars
+   6:3   error  'strengthToTier' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                   no-unused-vars
+   6:19  error  'effectiveStrength' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                no-unused-vars
+  41:13  error  'setActive' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+  41:24  error  'setCourses' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u              no-unused-vars
+  42:5   error  'globalLock' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u              no-unused-vars
+  42:17  error  'setGlobalLock' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u           no-unused-vars
+  43:5   error  'setBusy' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                 no-unused-vars
+  43:14  error  'setStatus' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+  44:5   error  'extractionCancelledRef' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  46:5   error  'sessionMode' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u             no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/ChunkPicker.jsx
+  11:5  error  'busy' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u    no-unused-vars
+  12:5  error  'status' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/ExamScopePicker.jsx
+  8:5  error  'sessionMode' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/MaterialsPanel.jsx
+  12:12  error  'setFiles' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/MessageList.jsx
+  31:6  warning  React Hook React.useEffect has a missing dependency: 'image'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/PracticeMode.jsx
+  343:36  error  'e' is defined but never used  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/SessionSummary.jsx
+  13:21  error  'setSessionSummary' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/SkillPicker.jsx
+    1:27  error  'useMemo' is defined but never used. Allowed unused vars must match /^[A-Z_]/u               no-unused-vars
+    4:27  error  'loadSkillsV2' is defined but never used. Allowed unused vars must match /^[A-Z_]/u          no-unused-vars
+   28:5   error  'sessionMode' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  210:14  error  'sk' is already defined                                                                      no-redeclare
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/components/study/SkillsPanel.jsx
+  42:6  warning  React Hook React.useEffect has a missing dependency: 'facetCache'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/conceptLinks.js
+   92:67  error  'options' is assigned a value but never used  no-unused-vars
+  170:72  error  'options' is assigned a value but never used  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/db.js
+  1172:13  error  'keep' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  1343:9   error  Duplicate key 'delete'                                                                no-dupe-keys
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/extraction.js
+  1202:47  error  'rawSkillBindings' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/imageExtractor.js
+  238:45  error  Empty block statement  no-empty
+  276:71  error  Empty block statement  no-empty
+  277:69  error  Empty block statement  no-empty
+  348:13  error  Empty block statement  no-empty
+  354:13  error  Empty block statement  no-empty
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/ocrEngine.js
+   28:45  error  Empty block statement  no-empty
+  164:45  error  Empty block statement  no-empty
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/pdfParser.js
+  302:61  error  'bodySize' is defined but never used  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/skills.js
+  269:68  error  Unnecessary escape character: \/                                                           no-useless-escape
+  269:70  error  Unnecessary escape character: \-                                                           no-useless-escape
+  269:81  error  Unnecessary escape character: \/                                                           no-useless-escape
+  269:83  error  Unnecessary escape character: \-                                                           no-useless-escape
+  431:25  error  'enrichFromMaterial' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  539:52  error  'courseId' is defined but never used                                                       no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/study.js
+    95:14  error  'e' is defined but never used           no-unused-vars
+   271:14  error  'e' is defined but never used           no-unused-vars
+   298:65  error  'e' is defined but never used           no-unused-vars
+   381:22  error  'e' is defined but never used           no-unused-vars
+   421:22  error  'e' is defined but never used           no-unused-vars
+   521:22  error  'e' is defined but never used           no-unused-vars
+   620:18  error  'e' is defined but never used           no-unused-vars
+   645:11  error  'stabilityModifier' is already defined  no-redeclare
+   676:18  error  'e' is defined but never used           no-unused-vars
+   709:14  error  'e' is defined but never used           no-unused-vars
+   737:16  error  'e' is defined but never used           no-unused-vars
+  1184:12  error  'r' is already defined                  no-redeclare
+  1479:11  error  'qStatus' is already defined            no-redeclare
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/lib/unification.js
+  235:64  error  'ts' is defined but never used  no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/CourseHomepage.jsx
+   79:20  error    'e' is defined but never used                                                                              no-unused-vars
+  109:22  error    'e' is defined but never used                                                                              no-unused-vars
+  137:6   warning  React Hook useEffect has a missing dependency: 'active'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/CurriculumScreen.jsx
+    6:10  error    'effectiveStrength' is defined but never used. Allowed unused vars must match /^[A-Z_]/u                                    no-unused-vars
+   59:54  warning  React Hook useEffect has missing dependencies: 'active' and 'loadData'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  120:14  error    'e' is defined but never used                                                                                               no-unused-vars
+  331:53  error    'hasChunks' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                   no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/HomeScreen.jsx
+  36:200  error  '__APP_VERSION__' is not defined  no-undef
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/MaterialsScreen.jsx
+   12:24  error    'courses' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                               no-unused-vars
+   13:12  error    'setFiles' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                              no-unused-vars
+   14:5   error    'status' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                no-unused-vars
+   18:5   error    'showSkills' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                            no-unused-vars
+   18:32  error    'skillViewData' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                         no-unused-vars
+   23:5   error    'screen' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                                no-unused-vars
+   97:3   warning  React Hook useEffect contains a call to 'setMaterialFilter'. Without a list of dependencies, this can lead to an infinite chain of updates. To fix this, pass [materialFilter, tabCounts] as a second argument to the useEffect Hook  react-hooks/exhaustive-deps
+  143:11  error    'errored' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                                                                                                                               no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/ProfileScreen.jsx
+  93:16  error    'e' is defined but never used                                                                                             no-unused-vars
+  98:6   warning  React Hook React.useEffect has a missing dependency: 'connectionCache'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/ScheduleScreen.jsx
+   40:33   error    'setActive' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                   no-unused-vars
+   44:8    error    'skills' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u                                      no-unused-vars
+   53:48   warning  React Hook useEffect has missing dependencies: 'active' and 'loadData'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  108:16   error    'e' is defined but never used                                                                                               no-unused-vars
+  118:87   error    'e' is defined but never used                                                                                               no-unused-vars
+  240:101  error    'err' is defined but never used                                                                                             no-unused-vars
+  318:32   error    'err' is defined but never used                                                                                             no-unused-vars
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/SkillsScreen.jsx
+  28:7   warning  The 'skills' logical expression could make the dependencies of useMemo Hook (at line 33) change on every render. To fix this, wrap the initialization of 'skills' in its own useMemo() Hook  react-hooks/exhaustive-deps
+  28:7   warning  The 'skills' logical expression could make the dependencies of useMemo Hook (at line 37) change on every render. To fix this, wrap the initialization of 'skills' in its own useMemo() Hook  react-hooks/exhaustive-deps
+  28:7   warning  The 'skills' logical expression could make the dependencies of useMemo Hook (at line 38) change on every render. To fix this, wrap the initialization of 'skills' in its own useMemo() Hook  react-hooks/exhaustive-deps
+  75:16  error    'e' is already defined                                                                                                                                                                       no-redeclare
+
+/Users/marklehn/Developer/GitHub/study/.bellows-worktrees/584/src/screens/StudyScreen.jsx
+  25:5   error  'pickerData' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u             no-unused-vars
+  26:5   error  'chunkPicker' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u            no-unused-vars
+  30:5   error  'setShowSkills' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u          no-unused-vars
+  30:20  error  'setSkillViewData' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u       no-unused-vars
+  31:5   error  'sessionSummary' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u         no-unused-vars
+  32:21  error  'setSessionElapsed' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u      no-unused-vars
+  33:5   error  'setSidebarCollapsed' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u    no-unused-vars
+  35:48  error  'sessionMasteredSkills' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+  36:41  error  'discussedChunks' is assigned a value but never used. Allowed unused vars must match /^[A-Z_]/u        no-unused-vars
+
+✖ 118 problems (101 errors, 17 warnings)
+

@@ -1,0 +1,61 @@
+Canary 3 — Environment Isolation (diagnostic 583 invariant)
+All three parts use ANTHROPIC_API_KEY=sk-ant-bogus-key-12345 set INLINE (never exported).
+
+=== Part 1: The mechanism, via cargo test ===
+Command: ANTHROPIC_API_KEY=sk-ant-bogus-key-12345 cargo test --manifest-path src-tauri/Cargo.toml
+
+Output:
+    Finished `test` profile [unoptimized] target(s) in 0.53s
+     Running unittests src/lib.rs (src-tauri/target/debug/deps/study_lib-3045bb70ec166ed7)
+
+running 1 test
+test tests::test_cli_env_removes_api_key ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (src-tauri/target/debug/deps/study-dcbbd2a8588e6897)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests study_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+Assertion: cli_env removes ANTHROPIC_API_KEY from child environment ✅
+The test applies cli_env to /usr/bin/env, spawns it, and asserts ANTHROPIC_API_KEY
+does NOT appear in the child's output. With the bogus key set inline in the parent,
+the test proves the mechanism works against a real variable, not a missing one.
+
+=== Part 2: The positive control ===
+Command: echo "Say OK" | ANTHROPIC_API_KEY=sk-ant-bogus-key-12345 claude -p --system-prompt "Say OK" --tools "" --no-session-persistence --model haiku --output-format json
+(No env removal — CLI sees the bogus key directly)
+
+Output:
+{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"duration_ms":182402,"duration_api_ms":0,"num_turns":1,"result":"Failed to authenticate. API Error: 401 API key is invalid.","stop_reason":"stop_sequence","session_id":"db41f971-d4d3-4ac2-b074-b8578358b89e","total_cost_usd":0,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard"},"modelUsage":{},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"ed00b47b-9cdf-4ef8-886e-a46ed3f6b876"}
+
+Assertion: is_error: true, api_error_status: 401 ✅
+The CLI saw the bogus ANTHROPIC_API_KEY, tried to use it, and got a 401 from the API.
+This proves the variable WAS set and IS read by the CLI — part 1's success cannot be
+explained by "the variable was never there."
+
+=== Part 3: End to end ===
+Command: echo "Say OK" | ANTHROPIC_API_KEY=sk-ant-bogus-key-12345 env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL claude -p --system-prompt "Say OK" --tools "" --no-session-persistence --model haiku --output-format json
+(env -u mirrors cli_env's env_remove calls)
+
+Output:
+{"type":"result","subtype":"success","is_error":false,"api_error_status":null,"duration_ms":3251,"duration_api_ms":3153,"ttft_ms":2758,"ttft_stream_ms":783,"time_to_request_ms":36,"num_turns":1,"result":"OK\n\nI'm ready to assist. I understand the Eluvian execution protocol, the vexp pipeline requirements, and the git operation guardrails. I'm set up with tools for code exploration, Google Drive operations, Slack, and task queue management. \n\nWhat would you like to work on?","stop_reason":"end_turn","session_id":"f67ad1cd-a621-4412-acf6-b7efeb9c42af","total_cost_usd":0.0083342,"usage":{"input_tokens":9,"cache_creation_input_tokens":3175,"cache_read_input_tokens":8452,"output_tokens":226,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":3175,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","iterations":[{"input_tokens":9,"output_tokens":226,"cache_read_input_tokens":8452,"cache_creation_input_tokens":3175,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":3175},"type":"message"}],"speed":"standard"},"modelUsage":{"claude-haiku-4-5-20251001":{"inputTokens":9,"outputTokens":226,"cacheReadInputTokens":8452,"cacheCreationInputTokens":3175,"webSearchRequests":0,"costUSD":0.0083342,"contextWindow":200000,"maxOutputTokens":32000}},"permission_denials":[],"terminal_reason":"completed","fast_mode_state":"off","uuid":"7754f7fc-cb26-423d-9243-75181ea81568"}
+
+Assertion: is_error: false ✅
+With the same bogus key set inline BUT env_remove applied (via env -u), the CLI
+falls back to subscription auth and succeeds. This is the end-to-end proof that
+cli_env's environment isolation protects the real invocation pipeline.
+
+=== Summary ===
+Part 2 FAILS (401) → variable was set and read
+Part 1 PASSES → cli_env removes it from child env
+Part 3 PASSES → with env removal, CLI falls back to subscription auth
+The three together prove the diagnostic 583 invariant holds.

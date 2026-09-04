@@ -1,0 +1,47 @@
+
+> study-app@0.2.26 build
+> vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 188 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                             1.22 kB │ gzip:   0.73 kB
+dist/assets/pdf.worker-CliDBb4N.mjs     2,174.48 kB
+dist/assets/pdf.worker-UaVanmWO.js          0.06 kB │ gzip:   0.08 kB
+dist/assets/index-OvkryQaq.js               1.78 kB │ gzip:   0.84 kB
+dist/assets/ocrEngine-BvyaRd2J.js           1.80 kB │ gzip:   0.95 kB
+dist/assets/imageStore-DKbx9RBR.js          1.81 kB │ gzip:   0.71 kB
+dist/assets/folderImport-9Z5tmn6i.js        2.19 kB │ gzip:   1.12 kB
+dist/assets/index-Ronpj6j2.js               2.21 kB │ gzip:   0.82 kB
+dist/assets/octave-Ck1zUtKM.js              2.30 kB │ gzip:   1.09 kB
+dist/assets/r-DUYO_cvP.js                   2.94 kB │ gzip:   1.36 kB
+dist/assets/path-DQSAnjt3.js                3.76 kB │ gzip:   0.91 kB
+dist/assets/swift-BzpIVaGY.js               3.96 kB │ gzip:   1.78 kB
+dist/assets/pdfParser-CmxatRO-.js           5.13 kB │ gzip:   2.28 kB
+dist/assets/ruby-B2Rjki9n.js                5.16 kB │ gzip:   2.13 kB
+dist/assets/conceptLinks-CXFBwc97.js        5.54 kB │ gzip:   1.93 kB
+dist/assets/imageExtractor-BnHs2_Pv.js      5.64 kB │ gzip:   2.38 kB
+dist/assets/index-DhlH8vnt.js               6.27 kB │ gzip:   1.63 kB
+dist/assets/unification-BBQfdf74.js         7.58 kB │ gzip:   1.99 kB
+dist/assets/index-MY0ZEUj-.js               7.59 kB │ gzip:   3.32 kB
+dist/assets/CodeEditor-Cmm7e-Ka.js          8.41 kB │ gzip:   3.02 kB
+dist/assets/index-BKa-24vD.js              14.68 kB │ gzip:   6.29 kB
+dist/assets/clike-B9uivgTg.js              22.30 kB │ gzip:   7.79 kB
+dist/assets/index-CTj-__hp.js              26.36 kB │ gzip:   8.80 kB
+dist/assets/index-C_n_nE4p.js              28.42 kB │ gzip:   9.98 kB
+dist/assets/index-D3mSym0X.js              29.00 kB │ gzip:   9.60 kB
+dist/assets/index-C-6-827R.js              31.02 kB │ gzip:  12.43 kB
+dist/assets/index-Bcrx0CQI.js              32.51 kB │ gzip:  13.04 kB
+dist/assets/index-Bp08qjJU.js              38.17 kB │ gzip:  13.75 kB
+dist/assets/index-Bgj-x0iL.js              40.91 kB │ gzip:  16.23 kB
+dist/assets/index-DLGEqzt1.js              45.30 kB │ gzip:  18.74 kB
+dist/assets/index-Bmy1dOFq.js              49.01 kB │ gzip:  16.39 kB
+dist/assets/index-C_ISGuZN.js              70.97 kB │ gzip:  25.14 kB
+dist/assets/index--XJ5QEJr.js              87.25 kB │ gzip:  33.76 kB
+dist/assets/index-CaeW0Hho.js             100.73 kB │ gzip:  32.61 kB
+dist/assets/index-DmGVvEH7.js             199.70 kB │ gzip:  64.88 kB
+dist/assets/pdf-DIs5UlQS.js               448.21 kB │ gzip: 132.48 kB
+dist/assets/index-B2k6kQ3D.js           1,247.35 kB │ gzip: 348.58 kB
+✓ built in 1.87s
