@@ -642,11 +642,13 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
           );
 
           if (existingFps.length > 0) {
-            const dupMatches = findNearDuplicates(newFingerprints, existingFps, 0.7);
+            // Single O(N*M) pass at the broader 0.5 threshold; the 0.7 dedup set
+            // is just the >= 0.7 subset of it — no need to scan the fingerprints twice.
+            const allSimilarities = findNearDuplicates(newFingerprints, existingFps, 0.5);
+            const dupMatches = allSimilarities.filter(m => m.similarity >= 0.7);
 
             // Persist all similarity pairs >= 0.5 (broader than dedup threshold)
             try {
-              const allSimilarities = findNearDuplicates(newFingerprints, existingFps, 0.5);
               if (allSimilarities.length > 0) {
                 await ChunkSimilarities.createBatch(
                   allSimilarities.map(m => ({ chunkAId: m.newChunkId, chunkBId: m.existingChunkId, similarity: m.similarity }))

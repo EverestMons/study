@@ -114,11 +114,12 @@ export default function MaterialsPanel() {
                       setStatus("Retrying " + failed + " failed chunk(s)...");
                       extractionCancelledRef.current = false;
                       try {
+                        // Retry of an already-imported material — dedup ran at import; skip the O(N*M) MinHash pass.
                         var result = await runExtractionV2(active.id, mat.id, {
                           onStatus: setStatus,
                           onNotif: addNotif,
                           onChapterComplete: (ch, cnt) => setStatus("Chapter " + ch + ": " + cnt + " skills"),
-                        });
+                        }, { skipNearDedupCheck: true });
                         var refreshed = await loadCoursesNested();
                         var updatedCourse = refreshed.find(c => c.id === active.id);
                         if (updatedCourse) { setCourses(refreshed); setActive(updatedCourse); }
@@ -168,11 +169,12 @@ export default function MaterialsPanel() {
                             setBusy(true);
                             extractionCancelledRef.current = false;
                             try {
+                              // Re-extracting a chunk the user explicitly re-enabled — skip dedup (it would just re-flag it).
                               await runExtractionV2(active.id, mat.id, {
                                 onStatus: setStatus,
                                 onNotif: addNotif,
                                 onChapterComplete: (ch2, cnt) => setStatus("Chapter " + ch2 + ": " + cnt + " skills"),
-                              });
+                              }, { skipNearDedupCheck: true });
                               var refreshed = await loadCoursesNested();
                               var refreshedCourse = refreshed.find(c => c.id === active.id);
                               if (refreshedCourse) { setCourses(refreshed); setActive(refreshedCourse); }

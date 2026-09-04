@@ -275,7 +275,8 @@ export default function MaterialsScreen() {
                 });
                 try {
                   await Chunks.resetForRetry(mat.id);
-                  var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") });
+                  // Retry of an already-imported material \u2014 dedup ran at import; skip the O(N*M) MinHash pass.
+                  var result = await runExtractionV2(active.id, mat.id, { onStatus: setStatus, onNotif: addNotif, onChapterComplete: (ch, cnt) => setStatus(mat.name + " \u2014 " + ch + ": " + cnt + " skills") }, { skipNearDedupCheck: true });
                   var refreshed = await loadCoursesNested(); var uc = refreshed.find(c => c.id === active.id);
                   if (uc) { setCourses(refreshed); setActive(uc); }
                   refreshMaterialSkillCounts(active.id);
