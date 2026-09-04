@@ -120,3 +120,17 @@ Walks 1-3 each read the plan text against the same five lenses and each returned
 **Walk 6 total: 2 findings (instruction 2 / record 0), 1 of 2 fold-introduced. All folded; fold-check clean (5 signals held). Bar NOT met (2 instruction-class). No restructuring fold.**
 
 ---
+
+## Walk 7 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w7-1 | 7 | Weak spots | is the load-bearing question's first part answerable by the method it names? | pre-existing | Q2(a) said "run a probe and report where the credential comes from" — but `claude -p`'s JSON output carries no field naming the credential source. The probe cannot answer the question, so the agent would infer from the fact that the call succeeded, which is precisely the inference w2-1's positive control exists to forbid. The plan named a method that does not reach its own answer | `Specifically: (a) run a probe and report where the credential comes from;` | folded: (a) now names a method that does reach it — the CLI's `auth` subcommand for account and auth mode, paired with one working `claude -p` call — and states explicitly that `-p`'s output names no credential source, so a probe alone cannot answer (a) |
+| — | 7 | Destruction | — | — | DRY — no new side effects; the fold adds a read-only subcommand call inside the existing Q2 probe allocation | — | no fold |
+| — | 7 | Vulnerabilities | — | — | DRY — the main-checkout path Q4 names is read-only, and w5-2's value-masking covers the only credential-adjacent output the step produces | — | no fold |
+| — | 7 | Integration-record | — | — | DRY | — | no fold |
+| — | 7 | ACID | — | — | DRY | — | no fold |
+
+**Walk 7 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met (1 instruction-class) — an instruction-class finding re-opens the walk regardless of the mechanical verdict, which read BAR_MET at walk 6 on its plateau heuristic while two instruction-class findings stood. Four of five lenses dry.**
+
+---
