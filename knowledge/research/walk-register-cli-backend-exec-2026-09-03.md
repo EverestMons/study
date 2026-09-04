@@ -190,3 +190,17 @@ Walks 1-3 read the plan against itself. Walk 4 holds the lenses and points them 
 **Walk 9 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met. Four of five lenses dry.**
 
 ---
+
+## Walk 10 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w10-1 | 10 | Weak spots | do the step's own instructions contradict each other on the likeliest branch? | pre-existing | Step 2's pre-edit block opened "STOP and report if any line disagrees" and its item 1 then said that if `claude --version` differs from `2.1.178`, re-run the probes and proceed. A version bump is the MOST likely disagreement — the CLI auto-updates — and the agent would face a blanket stop instruction and a specific proceed instruction covering the same case. The likely outcome is a halted plan on a routine version bump | `> **Pre-edit verification (run first, paste the output, and STOP and report if any line disagrees):**\n> 1. claude --version — 583's blocks are pinned to 2.1.178. If it differs, re-run the two probes in items 2-3 before building on their shapes.` | folded: the stop condition narrowed to what it should always have been — a version difference is explicitly NOT a stop and items 2-4 become re-measurement; the stop fires only if those probes disagree with the described shapes, because then the invocation contract itself is gone and the plan needs rewriting rather than executing |
+| — | 10 | Destruction | — | — | DRY | — | no fold |
+| — | 10 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 10 | Integration-record | — | — | DRY — header (`qa_steps: 5`, `pause_for_verdict: after_qa_step`, `Execution: Steps 1-5`) agrees with the five step headers; the Context's six inherited findings plus the Planner correction are each referenced where they bind | — | no fold |
+| — | 10 | ACID | — | — | DRY | — | no fold |
+
+**Walk 10 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met. Four of five lenses dry for the second consecutive walk.**
+
+---
