@@ -204,3 +204,19 @@ Walks 1-3 read the plan against itself. Walk 4 holds the lenses and points them 
 **Walk 10 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met. Four of five lenses dry for the second consecutive walk.**
 
 ---
+
+## Walk 11 — five-lens sequential walk (real; both findings swept by CLASS, not spot-fixed)
+
+Walks 5-10 each found one or two items that were damage from the previous walk's fold — the circling signature. Walk 11 changed method rather than target: for each finding, grep the whole artifact for every sibling of that CLASS before folding, and report the counts. Both classes came back clean afterwards.
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w11-1 | 11 | Integration-record | does the load-bearing invariant still name a thing that exists? | fold-introduced (by w6-1) | w6-1 split construction into an environment builder and an argument builder. The invariant paragraph — the one place the whole feature's auth guarantee is stated — still said "write it once in a shared argument-builder helper", and the closing verification still said the `env_remove` must sit "in the shared builder". An agent following the invariant literally would put `env_remove` in the ARGUMENT builder, which `/usr/bin/env` never calls, so Step 5's test would pass against a function the shipping path does not use | `every std::process::Command this step constructs calls .env_remove("ANTHROPIC_API_KEY") before spawning. Write it once in a shared argument-builder helper so no future command can be added without it, and put a comment on that line naming diagnostic 583 as the reason.` | folded: swept all three stale sites — the invariant now names the ENVIRONMENT builder explicitly and disclaims the argument builder; the `cli_env` definition is labelled "the single place the invariant above lives"; the verification checks `env_remove` sits inside `cli_env` and is not duplicated per command. Post-sweep grep for `shared argument-builder` returns 0 |
+| w11-2 | 11 | Weak spots | did walk 7's fix cover its own class? | fold-introduced (by w7-2) | w7-2 removed `cd src-tauri &&` on the reasoning that a `cd` leaks into every later command — but only swept for `cd src-tauri`, leaving `cd /tmp && claude …` in Step 2's pre-edit probe. That one leaks the working directory into the three probes that follow it, and those probes are the ones re-establishing the invocation contract the whole plan rests on | `> 2. Buffered shape: cd /tmp && claude -p "Say PONG"` | folded: wrapped in a subshell — `(cd /tmp && …)` — since the probe genuinely must run outside the repo (so `CLAUDE.md` is not picked up) but must not leak; the reason is stated inline. Post-sweep grep for `cd <path> &&` returns exactly the one subshell form |
+| — | 11 | Destruction | — | — | DRY | — | no fold |
+| — | 11 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 11 | ACID | — | — | DRY | — | no fold |
+
+**Walk 11 total: 2 findings (instruction 2 / record 0), 2 of 2 fold-introduced. Both swept by class with post-sweep grep counts reported (0 stale builder references; 1 `cd` form, the intended subshell). Bar NOT met. Three of five lenses dry.**
+
+---
