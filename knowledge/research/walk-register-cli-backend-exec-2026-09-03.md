@@ -176,3 +176,17 @@ Walks 1-3 read the plan against itself. Walk 4 holds the lenses and points them 
 **Walk 8 total: 2 findings (instruction 2 / record 0), 0 of 2 fold-introduced — both pre-existing gaps between the Rust and JS halves that seven prior walks had not reached. All folded. Bar NOT met. Yield flat at 2; three of five lenses dry for the second consecutive walk.**
 
 ---
+
+## Walk 9 — five-lens sequential walk (real; untargeted, focused on the least-walked steps)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w9-1 | 9 | Weak spots | what does the plan verify about the UI it ships? | pre-existing | nothing. Step 4 builds a selector, a Discover action and a Test action, and its only verification is eslint plus a successful build; Step 5 never drives the modal either. The three controls the CEO will actually touch first are unexercised — and the QA report, which already carries one residual-risk sentence about the HTTP path, would have read as full coverage on the UI too | `**State the residual risk explicitly in the QA report rather than implying full coverage:** the HTTP path is verified by diff inspection and a successful build, NOT by a live API call, because doing so would require the CEO's API key which QA does not hold. Say that in one sentence.` | folded: two required residual-risk sentences instead of one — the HTTP path, and the Settings UI as verified by lint and build only — with the second labelled a deliberate choice for a local-only single-user feature rather than an oversight, so a reader is not left to assume the UI was driven |
+| — | 9 | Destruction | — | — | DRY | — | no fold |
+| — | 9 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 9 | Integration-record | — | — | DRY — every symbol Step 4 binds to (`getModelBackend`/`setModelBackend`, `getCliPath`/`setCliPath`, `discoverCliPath`, `testCliConnection`) is exported by Step 3, checked one by one | — | no fold |
+| — | 9 | ACID | — | — | DRY | — | no fold |
+
+**Walk 9 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met. Four of five lenses dry.**
+
+---
