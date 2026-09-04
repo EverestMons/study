@@ -162,3 +162,17 @@ Walks 1-3 read the plan against itself. Walk 4 holds the lenses and points them 
 **Walk 7 total: 2 findings (instruction 2 / record 0), 1 of 2 fold-introduced. All folded. Bar NOT met. Yield fell 4 → 2; three of five lenses dry.**
 
 ---
+
+## Walk 8 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w8-1 | 8 | Weak spots | is there a race between setting up to listen and causing the thing to speak? | pre-existing | `callClaudeStreamCLI` was told to "subscribe to the events, call `claude_cli_stream`" — correct in order, but Tauri's `listen()` returns a PROMISE of an unlisten function. Without awaiting it, the invoke fires while registration is still pending and the earliest deltas are emitted to nobody. The symptom is not an error: the tutor's reply simply starts mid-sentence, intermittently, and only under fast responses | `subscribe to the events Step 2 emits **filtered by that id**, call claude_cli_stream,` | folded: `await` the listener registration before invoking, stated with the failure it prevents so it is not read as boilerplate |
+| w8-2 | 8 | Integration-record | do the module's exports cover what the later step calls? | pre-existing | Step 4's Discover button was specified as "calling `claude_cli_discover()`" — the Rust command — while Step 3's module exported `resolveCliPath` and `testCliConnection` but no discover wrapper. The UI step would have had to `invoke()` a Rust command directly, splitting the CLI contract across two files after Step 3 was written explicitly to own it | `a **Discover** action calling claude_cli_discover() that fills the field` | folded: `discoverCliPath()` added to Step 3's module exports, and Step 4 re-pointed at it with the reason — go through the module, never `invoke()` from a component |
+| — | 8 | Destruction | — | — | DRY | — | no fold |
+| — | 8 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 8 | ACID | — | — | DRY — Step 3 commits its three files together; Steps 1 and 5 write disjoint files into the shared evidence directory in sequence | — | no fold |
+
+**Walk 8 total: 2 findings (instruction 2 / record 0), 0 of 2 fold-introduced — both pre-existing gaps between the Rust and JS halves that seven prior walks had not reached. All folded. Bar NOT met. Yield flat at 2; three of five lenses dry for the second consecutive walk.**
+
+---
