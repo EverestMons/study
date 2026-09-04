@@ -1,7 +1,8 @@
 import React from "react";
 import { T, CSS } from "../lib/theme.jsx";
-import { getApiKey, setApiKey, getDb, getSetting, setSetting } from "../lib/db.js";
+import { getApiKey, setApiKey, getDb, getSetting, setSetting, getModelBackend, setModelBackend, getCliPath, setCliPath } from "../lib/db.js";
 import { testApiKey } from "../lib/api.js";
+import { discoverCliPath, testCliConnection } from "../lib/claudeCli.js";
 import { useStudy } from "../StudyContext.jsx";
 
 const OCR_LANGS = [
@@ -28,11 +29,22 @@ export default function SettingsModal() {
 
   var [ocrLangs, setOcrLangs] = React.useState(["eng"]);
   var [ocrLangsLoaded, setOcrLangsLoaded] = React.useState(false);
+  var [backend, setBackendState] = React.useState("api");
+  var [cliPathInput, setCliPathInput] = React.useState("");
+  var [backendLoaded, setBackendLoaded] = React.useState(false);
+  var [cliTesting, setCliTesting] = React.useState(false);
+  var [cliTestResult, setCliTestResult] = React.useState(null);
+  var [discovering, setDiscovering] = React.useState(false);
 
   React.useEffect(() => {
     getSetting("ocr_languages").then(v => {
       try { if (v) setOcrLangs(JSON.parse(v)); } catch {}
       setOcrLangsLoaded(true);
+    });
+    Promise.all([getModelBackend(), getCliPath()]).then(([b, p]) => {
+      setBackendState(b);
+      setCliPathInput(p);
+      setBackendLoaded(true);
     });
   }, []);
 
@@ -41,6 +53,80 @@ export default function SettingsModal() {
       <style>{CSS}</style>
       <div style={{ background: T.sf, borderRadius: 16, padding: 28, maxWidth: 420, width: "90%" }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: T.tx, marginBottom: 20 }}>Settings</div>
+        {backendLoaded && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Model Backend</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <button onClick={async () => { setBackendState("api"); await setModelBackend("api"); setCliTestResult(null); }}
+                style={{ flex: 1, padding: "10px 12px", borderRadius: 8, fontSize: 12, fontWeight: backend === "api" ? 600 : 400, cursor: "pointer", border: "1px solid " + (backend === "api" ? T.ac : T.bd), background: backend === "api" ? T.acS : "transparent", color: backend === "api" ? T.ac : T.txD }}>
+                Anthropic API key
+              </button>
+              <button onClick={async () => { setBackendState("cli"); await setModelBackend("cli"); setCliTestResult(null); }}
+                style={{ flex: 1, padding: "10px 12px", borderRadius: 8, fontSize: 12, fontWeight: backend === "cli" ? 600 : 400, cursor: "pointer", border: "1px solid " + (backend === "cli" ? T.ac : T.bd), background: backend === "cli" ? T.acS : "transparent", color: backend === "cli" ? T.ac : T.txD }}>
+                Claude Code CLI (local)
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: T.txM }}>
+              {backend === "cli"
+                ? "Uses your local Claude subscription instead of API credits. Bulk extraction runs roughly 6–11× slower (~13 min vs ~1–2 min for a full course import)."
+                : "Uses Anthropic API credits with your API key."}
+            </div>
+          </div>
+        )}
+        {backendLoaded && backend === "cli" && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>CLI Path</div>
+            <input
+              type="text"
+              value={cliPathInput}
+              onChange={(e) => { setCliPathInput(e.target.value); setCliTestResult(null); }}
+              placeholder="/opt/homebrew/bin/claude"
+              style={{ width: "100%", padding: 14, background: T.bg, border: "1px solid " + T.bd, borderRadius: 8, color: T.tx, fontSize: 14, outline: "none", marginBottom: 8 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={async () => {
+                  setDiscovering(true);
+                  setCliTestResult(null);
+                  var found = await discoverCliPath();
+                  setDiscovering(false);
+                  if (found) {
+                    setCliPathInput(found);
+                    await setCliPath(found);
+                    setCliTestResult({ valid: true, message: "Found at " + found });
+                  } else {
+                    setCliTestResult({ valid: false, message: "Claude CLI not found. Install it or enter the path manually." });
+                  }
+                }}
+                disabled={discovering}
+                style={{ flex: 1, padding: 10, background: "transparent", border: "1px solid " + T.bd, borderRadius: 8, color: discovering ? T.txD : T.tx, fontSize: 12, cursor: discovering ? "default" : "pointer", opacity: discovering ? 0.6 : 1 }}>
+                {discovering ? "Searching..." : "Discover"}
+              </button>
+              <button onClick={async () => {
+                  var path = cliPathInput.trim();
+                  if (!path) return;
+                  setCliTesting(true);
+                  setCliTestResult(null);
+                  await setCliPath(path);
+                  var result = await testCliConnection(path);
+                  setCliTesting(false);
+                  if (result.valid) {
+                    setCliTestResult({ valid: true, message: "v" + result.version + " — " + result.authMethod + " (" + result.subscriptionType + ")" });
+                  } else {
+                    setCliTestResult({ valid: false, message: result.error });
+                  }
+                }}
+                disabled={!cliPathInput.trim() || cliTesting}
+                style={{ flex: 1, padding: 10, background: !cliPathInput.trim() || cliTesting ? T.sfH : T.ac, border: "none", borderRadius: 8, color: !cliPathInput.trim() || cliTesting ? T.txD : T.bg, fontSize: 12, fontWeight: 600, cursor: !cliPathInput.trim() || cliTesting ? "default" : "pointer" }}>
+                {cliTesting ? "Testing..." : "Test"}
+              </button>
+            </div>
+            {cliTestResult && (
+              <div style={{ fontSize: 12, color: cliTestResult.valid ? T.gn : T.rd, marginTop: 8 }}>
+                {cliTestResult.message}
+              </div>
+            )}
+          </div>
+        )}
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, color: T.txD, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Anthropic API Key</div>
           <input
