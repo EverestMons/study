@@ -134,3 +134,47 @@ Walks 1-3 each read the plan text against the same five lenses and each returned
 **Walk 7 total: 1 finding (instruction 1 / record 0), 0 of 1 fold-introduced. Folded. Bar NOT met (1 instruction-class) — an instruction-class finding re-opens the walk regardless of the mechanical verdict, which read BAR_MET at walk 6 on its plateau heuristic while two instruction-class findings stood. Four of five lenses dry.**
 
 ---
+
+## Walk 8 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w8-1 | 8 | Weak spots | do any two instructions claim the same slot? | fold-introduced (by w4-3) | the fail-honest paragraph ends "Deposit the Gap Assessment as the last section" and w4-3's fold immediately follows with "Close with a `### Verification Blocks` section." Two instructions both claim the final position, and the agent must silently disobey one — most likely dropping the Verification Blocks, the newer and less emphatic of the two, which is the whole guard against this T-7 file rotting under a CLI version bump | `Deposit the Gap Assessment as the last section so the executable can lift it directly.` | folded: replaced with an explicit whole-file ORDER — Q2 verdict first, numbered answers, Gap Assessment, `### Verification Blocks` last — and w4-3's opener restated from "Close with" to "The final section is", so the two clauses agree instead of competing |
+| — | 8 | Destruction | — | — | DRY | — | no fold |
+| — | 8 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 8 | Integration-record | — | — | DRY | — | no fold |
+| — | 8 | ACID | — | — | DRY | — | no fold |
+
+**Walk 8 total: 1 finding (instruction 1 / record 0), 1 of 1 fold-introduced. Folded. Bar NOT met (1 instruction-class). Four of five lenses dry.**
+
+---
+
+## Walk 9 — five-lens sequential walk (real; closing pass)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w9-1 | 9 | Integration-record | do all three scope statements agree after w5-3? | fold-introduced (by w5-3) | w5-3 reconciled the Identity's scope to name both the deposit directory and the scratch directory, but left the HEADER's Test Scope still reading "creates only `study/knowledge/research/`" — which the scratch-directory licence contradicts. Record-class: the Identity is what an agent reads for scope and it is correct, so no agent behaviour changes; but a header contradicting the step it heads is what a later reader cites | `creates only study/knowledge/research/. (The word "Test" appears in Q4 only as the name of a Settings-panel button, not a test suite.)` | folded: header restated to "deposits only to `study/knowledge/research/`, with probe inputs written to a scratch directory outside the repo" |
+| — | 9 | Weak spots | — | — | DRY | — | no fold |
+| — | 9 | Destruction | — | — | DRY | — | no fold |
+| — | 9 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 9 | ACID | — | — | DRY | — | no fold |
+
+**Walk 9 total: 1 finding (instruction 0 / record 1), 1 of 1 fold-introduced. BAR MET — zero instruction-class findings, four of five lenses dry, and no restructuring fold on the closing walk. Cycle CLOSED; the plan awaits CEO go before its single atomic deposit.**
+
+---
+
+## Cycle summary
+
+| walk | findings | instruction | record | fold-introduced | note |
+|---|---|---|---|---|---|
+| 1 | 6 | 5 | 1 | 1 | first pass over the draft; direction verdict PROCEED |
+| 2 | 5 | 5 | 0 | 2 | — |
+| 3 | 5 | 5 | 0 | 2 | flat yield flagged; corrected a real count error (13 sites, not 12) |
+| 4 | 4 | 4 | 0 | 0 | examination axis CHANGED to consumer + environment |
+| 5 | 3 | 2 | 1 | 3 | all fold damage; caught walk 4's own env-dump writing a live credential to a committed file |
+| 6 | 2 | 2 | 0 | 1 | `cycle_check` returned BAR_MET here; overridden — two instruction-class findings stood |
+| 7 | 1 | 1 | 0 | 0 | — |
+| 8 | 1 | 1 | 0 | 1 | — |
+| 9 | 1 | 0 | 1 | 1 | **BAR MET** |
+
+Totals: 28 findings, 25 instruction-class, 3 record-class, 11 of 28 fold-introduced.
