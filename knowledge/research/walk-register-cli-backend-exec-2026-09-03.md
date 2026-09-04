@@ -220,3 +220,38 @@ Walks 5-10 each found one or two items that were damage from the previous walk's
 **Walk 11 total: 2 findings (instruction 2 / record 0), 2 of 2 fold-introduced. Both swept by class with post-sweep grep counts reported (0 stale builder references; 1 `cd` form, the intended subshell). Bar NOT met. Three of five lenses dry.**
 
 ---
+
+## Walk 12 — five-lens sequential walk (real; closing pass)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w12-1 | 12 | Integration-record | do the numbers in the cycle log still describe the artifact? | fold-introduced (by w4-1) | the direction verdict still called this "the four-step shape" — true when it was written after walk 1, outdated the moment walk 4 promoted a worktree-preparation step ahead of the other four. Record-class: nothing an agent does depends on it, and every instruction-bearing count was corrected at w2-4 and re-swept at w5-1 | `the four-step shape (Rust transport → JS backend + branching → Settings UI → QA) held under all five lenses; walk 1's findings changed a mechanism inside that shape, not the shape.` | folded: the step count dropped from the phrase and the four-to-five change stated explicitly as walk 4's restructuring rather than a change of direction |
+| — | 12 | Weak spots | — | — | DRY | — | no fold |
+| — | 12 | Destruction | — | — | DRY | — | no fold |
+| — | 12 | Vulnerabilities | — | — | DRY | — | no fold |
+| — | 12 | ACID | — | — | DRY | — | no fold |
+
+**Walk 12 total: 1 finding (instruction 0 / record 1), 1 of 1 fold-introduced. BAR MET — zero instruction-class, four of five lenses dry, no restructuring fold on the closing walk. Class sweeps from walk 11 re-run clean at close: `shared argument-builder` = 0, leaking `cd <path> &&` = 0, `## STEP 0` = 0.**
+
+---
+
+## Cycle summary
+
+| walk | findings | instruction | record | fold-introduced | note |
+|---|---|---|---|---|---|
+| 1 | 4 | 3 | 1 | 0 | direction verdict PROCEED; two authoring FAILs caught mechanically before any lens ran |
+| 2 | 4 | 4 | 0 | 3 | ⚠️ `ESCALATE:yield-rising`. Caught prompts passed via argv (ARG_MAX) → stdin |
+| 3 | 3 | 3 | 0 | 2 | — |
+| 4 | 4 | 4 | 0 | 2 | ⚠️ `ESCALATE:yield-rising`. Axis → environment: worktree has no `node_modules`/`target`. RESTRUCTURING (Step 0 promoted); clock reset |
+| 5 | 3 | 3 | 0 | 3 | first pass over the new arrangement — caught that `## STEP 0` is never executed |
+| 6 | 4 | 4 | 0 | 4 | ⚠️ `ESCALATE:yield-rising`. The env test could not have been written; its setup would have poisoned the other canaries |
+| 7 | 2 | 2 | 0 | 1 | — |
+| 8 | 2 | 2 | 0 | 0 | Tauri `listen()` race; missing module export |
+| 9 | 1 | 1 | 0 | 0 | UI verified only by lint+build — residual stated |
+| 10 | 1 | 1 | 0 | 0 | contradictory stop condition on a version bump |
+| 11 | 2 | 2 | 0 | 2 | ⚠️ `ESCALATE:yield-rising`. **Method changed: sweep by CLASS, report post-sweep counts** |
+| 12 | 1 | 0 | 1 | 1 | **BAR MET** |
+
+Totals: 27 findings, 25 instruction-class, 2 record-class, 18 of 27 fold-introduced.
+
+**Honest read of this cycle.** It did not converge smoothly. Four `yield-rising` escalations, and walks 5-11 were dominated by damage from earlier folds — the circling signature the drafting cycle warns about. What broke the circling was a change of METHOD at walk 11 (sweep every finding by class across the whole artifact, report the counts) rather than another pass over the same text. The findings themselves were worth the cost: five of them — argv `ARG_MAX`, the missing `--include-partial-messages`, `## STEP 0` never executing, the absent `node_modules` in a worktree, and an environment test that could not have been written — would each have produced a plan that failed or, worse, appeared to succeed.
