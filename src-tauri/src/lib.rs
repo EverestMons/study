@@ -135,7 +135,9 @@ fn claude_cli_probe(path: String) -> CliProbeResult {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
-                let logged_in = json.get("authenticated")
+                // CLI emits `loggedIn`; accept legacy `authenticated` as a fallback.
+                let logged_in = json.get("loggedIn")
+                    .or_else(|| json.get("authenticated"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 let auth_method = json.get("authMethod")
@@ -166,7 +168,10 @@ fn claude_cli_probe(path: String) -> CliProbeResult {
                 }
             } else {
                 let raw = stdout.trim().to_string();
-                let logged_in = raw.contains("authenticated") && !raw.contains("not authenticated");
+                let logged_in = (raw.contains("loggedIn") || raw.contains("authenticated"))
+                    && !raw.contains("not authenticated")
+                    && !raw.contains("\"loggedIn\": false")
+                    && !raw.contains("\"loggedIn\":false");
                 CliProbeResult {
                     status: if logged_in { "ok" } else { "not_logged_in" }.into(),
                     message: raw,
