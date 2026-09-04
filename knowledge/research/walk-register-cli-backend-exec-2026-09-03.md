@@ -148,3 +148,17 @@ Walks 1-3 read the plan against itself. Walk 4 holds the lenses and points them 
 **Walk 6 total: 4 findings (instruction 4 / record 0), 4 of 4 fold-introduced — every one was damage from an earlier walk's fold, the noise-floor signature. All folded; `plan_lint` 0 FAIL, Step 5 deposits back to 7 parsed paths. Bar NOT met. ⚠️ Instruction yield rose 3 → 4 (third escalation of the cycle). No restructuring fold.**
 
 ---
+
+## Walk 7 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w7-1 | 7 | Integration-record | does the step's own Identity still describe the step? | fold-introduced (by w5-3) | w5-3 gave the preparation step a committed artifact, but its Identity still opened "This step writes no source file and **commits nothing**" — flatly contradicting item 3 and the closing `git commit` instruction two paragraphs below. The Identity is the first thing an agent reads and the sentence it is most likely to obey, so the likeliest outcome was an agent skipping the deposit and the step reading as the no-op w5-3 existed to prevent | `> **Identity:** You are preparing the build environment. **This step writes no source file and commits nothing.** It exists because every later step's verification depends on toolchain state that a Bellows worktree does not have.` | folded: restated to "writes no SOURCE file — its only commit is the one evidence file in item 3", which is both true and consistent with the rest of the step |
+| w7-2 | 7 | Weak spots | do the shell commands survive being run as separate calls? | pre-existing | three commands used the `cd src-tauri && cargo …` form. A `cd` persists for every later command in the same session, and this shop has a recorded history of exactly that mis-targeting subsequent commands. `cargo` accepts an explicit manifest path, so the `cd` bought nothing | `cd src-tauri && cargo check` | folded: all three rewritten to `cargo check\|test --manifest-path src-tauri/Cargo.toml`, with the reason given once in Step 1 and referenced from Step 5; a grep confirms no executable `cd src-tauri` remains, only the explanatory mention |
+| — | 7 | Destruction | — | — | DRY | — | no fold |
+| — | 7 | Vulnerabilities | — | — | DRY — the environment invariant, the temp-file residue path and the inline-env rule are all closed and none of this walk's folds reopened them | — | no fold |
+| — | 7 | ACID | — | — | DRY — Steps 1 and 5 both write to `knowledge/qa/evidence-cli-backend-2026-09-03/` but never the same file, and they run in sequence | — | no fold |
+
+**Walk 7 total: 2 findings (instruction 2 / record 0), 1 of 2 fold-introduced. All folded. Bar NOT met. Yield fell 4 → 2; three of five lenses dry.**
+
+---
