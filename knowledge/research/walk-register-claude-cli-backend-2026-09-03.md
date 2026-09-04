@@ -106,3 +106,17 @@ Walks 1-3 each read the plan text against the same five lenses and each returned
 **Walk 5 total: 3 findings (instruction 2 / record 1), 3 of 3 fold-introduced. All folded; fold-check clean (5 signals held). Bar NOT met (2 instruction-class). No restructuring fold. Every finding this walk was damage from a previous walk's folds — the noise-floor signature, and the reason walk 6 runs.**
 
 ---
+
+## Walk 6 — five-lens sequential walk (real; untargeted)
+
+| id | walk | lens | sub_question | origin | finding | pre_fold_text | resolution |
+|---|---|---|---|---|---|---|---|
+| w6-1 | 6 | Vulnerabilities | does the plan forbid the only method by which one of its questions could be answered? | fold-introduced (by w2-4) | Q3(a) asks whether the Tauri `shell:allow-execute` scope grammar admits a variable binary path — a question whose obvious method is to write a capability and build. w2-4 forbade the build. The agent would be left inferring from memory or reaching for network docs, on the question that decides the transport recommendation | `determine whether the scope grammar admits a user-configurable binary path at all (a variable path, a $HOME-relative path, a glob), or whether it forces a hardcoded candidate list.` | folded: pointed at `src-tauri/gen/schemas/desktop-schema.json`, the generated ACL schema already committed in the repo — verified at authoring to contain the `shell:allow-execute` identifier — with an instruction to read and quote the `cmd`/`args`/`sidecar` field types. A local, non-mutating source of truth that the build prohibition does not block |
+| w6-2 | 6 | Weak spots | does the question have a single answer, or does it only look like it does? | pre-existing | Q6(c) asked the agent to "count how many sequential model calls a full syllabus import makes" — but several of those calls sit inside loops over chunks, materials and assignments, so the count is a function of input size and no single number is honest. An agent forced to produce one would pick an input silently, and the CEO's before/after would rest on an assumption nobody stated | `(c) count how many sequential model calls a full syllabus import and a full skill extraction actually make (trace syllabusParser.js, skills.js, extraction.js — do not guess), and multiply by measured per-call wall time to give a real before/after for the CEO;` | folded: the answer is required as a FORMULA in each path's input variable with the loop's source location named, then one worked example at a stated input size — assumptions visible rather than silent |
+| — | 6 | Destruction | — | — | DRY — side effects unchanged from walk 5; both folds this walk narrow method rather than widening reach | — | no fold |
+| — | 6 | Integration-record | — | — | DRY — deposit path, Identity scope, header Test Scope and the Deposits block now all name `study/knowledge/research/`; cycle log matches this register walk for walk | — | no fold |
+| — | 6 | ACID | — | — | DRY | — | no fold |
+
+**Walk 6 total: 2 findings (instruction 2 / record 0), 1 of 2 fold-introduced. All folded; fold-check clean (5 signals held). Bar NOT met (2 instruction-class). No restructuring fold.**
+
+---
