@@ -1,4 +1,5 @@
-import { getApiKey } from './db.js';
+import { getApiKey, getModelBackend } from './db.js';
+import { callClaudeCLI, callClaudeStreamCLI } from './claudeCli.js';
 
 // --- Tauri HTTP client for API calls ---
 let tauriFetch = null;
@@ -37,6 +38,8 @@ export const getCurrentDateContext = () => {
 
 // --- Claude API ---
 export const callClaude = async (system, messages, maxTokens, useHaiku = false) => {
+  const backend = await getModelBackend();
+  if (backend === 'cli') return callClaudeCLI(system, messages, maxTokens, useHaiku);
   const apiKey = await getApiKey();
   if (!apiKey) return "Error: No API key set. Go to Settings to add your Anthropic API key.";
   const httpFetch = await initTauriFetch();
@@ -78,6 +81,8 @@ export const callClaude = async (system, messages, maxTokens, useHaiku = false) 
 
 // Streaming version for chat -- calls onChunk with partial text as tokens arrive
 export const callClaudeStream = async (system, messages, onChunk, maxTokens) => {
+  const backend = await getModelBackend();
+  if (backend === 'cli') return callClaudeStreamCLI(system, messages, onChunk, maxTokens);
   const apiKey = await getApiKey();
   if (!apiKey) return "Error: No API key set. Go to Settings to add your Anthropic API key.";
 
@@ -95,7 +100,7 @@ export const callClaudeStream = async (system, messages, onChunk, maxTokens) => 
         "anthropic-dangerous-direct-browser-access": "true"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: MODEL_SONNET,
         max_tokens: maxTokens || 16384,
         system,
         messages,

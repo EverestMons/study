@@ -132,6 +132,22 @@ export const setSetting = async (key, value) => {
   );
 };
 
+export const getModelBackend = async () => {
+  return (await getSetting('model_backend')) || 'api';
+};
+
+export const setModelBackend = async (backend) => {
+  await setSetting('model_backend', backend);
+};
+
+export const getCliPath = async () => {
+  return (await getSetting('claude_cli_path')) || '';
+};
+
+export const setCliPath = async (path) => {
+  await setSetting('claude_cli_path', path);
+};
+
 // ============================================================
 // Parent Skills
 // ============================================================
