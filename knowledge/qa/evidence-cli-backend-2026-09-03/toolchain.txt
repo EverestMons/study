@@ -1,0 +1,11 @@
+node --version
+v22.23.1
+
+npm --version
+10.9.8
+
+cargo --version
+cargo 1.96.0 (30a34c682 2026-05-25) (Homebrew)
+
+claude --version
+2.1.178 (Claude Code)
