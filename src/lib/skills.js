@@ -615,6 +615,13 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
   try {
     // --- Content dedup: skip if this material's chunks are already extracted ---
     const newChunks = await Chunks.getByMaterial(materialId);
+
+    // A material with any already-extracted chunk is a RETRY, not a first import.
+    // Near-dedup only guards fresh imports against duplicating existing course
+    // content — on a retry it's pure redundant O(N*M) work that freezes the UI.
+    const isRetry = newChunks.some(c => c.status === 'extracted');
+    const runNearDedup = !skipNearDedupCheck && !isRetry;
+
     if (newChunks.length > 0) {
       const hashChecks = await Promise.all(
         newChunks
@@ -632,7 +639,7 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
     }
 
     // --- Near-dedup check (MinHash) ---
-    if (!skipNearDedupCheck) {
+    if (runNearDedup) {
       try {
         const newFingerprints = await ChunkFingerprints.getByMaterial(materialId);
         if (newFingerprints.length > 0) {
@@ -719,7 +726,6 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
       onNotif('info', 'All sections already processed.');
       return { success: true, totalSkills: 0, skipped: true, issues: [] };
     }
-
     const existingV2 = await SubSkills.getByCourse(courseId);
 
     let result;
@@ -747,33 +753,40 @@ export const runExtractionV2 = async (courseId, materialId, callbacks, { skipNea
       } else {
         onNotif('warn', 'Retry completed but no new skills extracted.');
       }
-      // --- Concept link generation (non-blocking) ---
-      if (result.createdSkillIds?.length > 0) {
+      // --- Post-extraction enrichment — SKIPPED ON RETRIES ---
+      // For a large course the concept-link / facet-link / unification passes are a
+      // huge LLM fan-out (generateFacetConceptLinks is O(new × all-existing facets),
+      // ~one Claude call per 60×60 facet block) that scales with course size and
+      // froze the UI. A retry only needs to re-extract the failed chunks and add
+      // their skills; the relationship graph is (re)built on a full (non-retry) run.
+      if (!isRetry) {
+        if (result.createdSkillIds?.length > 0) {
+          try {
+            const { generateConceptLinks, generateFacetConceptLinks } = await import('./conceptLinks.js');
+            const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
+            if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} skill links created`);
+            if (result.createdFacetIds?.length > 0) {
+              const { preMergeDuplicateFacets, rankBindingsForFacets } = await import('./extraction.js');
+              const mergeResult = await preMergeDuplicateFacets(result.createdFacetIds);
+              if (mergeResult.merged > 0) console.log(`[PreMerge] ${mergeResult.merged} duplicate facets merged`);
+              const rankResult = await rankBindingsForFacets(result.createdFacetIds);
+              if (rankResult.totalRanked > 0) console.log(`[QualityRank] ${rankResult.totalRanked} bindings ranked across ${rankResult.facetsProcessed} facets`);
+              const fclResult = await generateFacetConceptLinks(courseId, result.createdFacetIds);
+              if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
+            }
+          } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
+          // --- Cross-course skill unification ---
+          try {
+            const { detectAndUnify } = await import('./unification.js');
+            const uniResult = await detectAndUnify();
+            if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
+          } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
+        }
+        // --- Chunk prerequisite inference ---
         try {
-          const { generateConceptLinks, generateFacetConceptLinks } = await import('./conceptLinks.js');
-          const clResult = await generateConceptLinks(courseId, result.createdSkillIds);
-          if (clResult.linksCreated > 0) console.log(`[ConceptLinks] ${clResult.linksCreated} skill links created`);
-          if (result.createdFacetIds?.length > 0) {
-            const { preMergeDuplicateFacets, rankBindingsForFacets } = await import('./extraction.js');
-            const mergeResult = await preMergeDuplicateFacets(result.createdFacetIds);
-            if (mergeResult.merged > 0) console.log(`[PreMerge] ${mergeResult.merged} duplicate facets merged`);
-            const rankResult = await rankBindingsForFacets(result.createdFacetIds);
-            if (rankResult.totalRanked > 0) console.log(`[QualityRank] ${rankResult.totalRanked} bindings ranked across ${rankResult.facetsProcessed} facets`);
-            const fclResult = await generateFacetConceptLinks(courseId, result.createdFacetIds);
-            if (fclResult.linksCreated > 0) console.log(`[FacetConceptLinks] ${fclResult.linksCreated} facet links created`);
-          }
-        } catch (e) { console.warn('[ConceptLinks] Generation failed (non-critical):', e); }
-        // --- Cross-course skill unification (non-blocking) ---
-        try {
-          const { detectAndUnify } = await import('./unification.js');
-          const uniResult = await detectAndUnify();
-          if (uniResult.pairsUnified > 0) console.log(`[Unification] ${uniResult.pairsUnified} cross-course skill pairs unified`);
-        } catch (e) { console.warn('[Unification] Failed (non-critical):', e); }
+          await inferChunkPrerequisites(materialId, courseId);
+        } catch (e) { console.warn('[ChunkPrereqs] Prerequisite inference failed:', e); }
       }
-      // --- Chunk prerequisite inference (non-blocking) ---
-      try {
-        await inferChunkPrerequisites(materialId, courseId);
-      } catch (e) { console.warn('[ChunkPrereqs] Prerequisite inference failed:', e); }
       return { success: result.totalSkills > 0, totalSkills: result.totalSkills, issues: result.issues || [] };
 
     } else {
